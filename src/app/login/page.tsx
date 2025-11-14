@@ -3,26 +3,54 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 
+const API_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://192.168.13.75:8000/api";
+
 export default function LoginPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
+    setError("");
 
-    // 🔒 Mock auth check (replace with API later)
-    if (email === 'admin@example.com' && password === 'password') {
-      localStorage.setItem('auth', 'true');
-      router.push('/dashboard');
-    } else {
-      setError('Invalid email or password.');
+    try {
+      const response = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!response.ok) {
+        setError("Invalid email or password.");
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      const { session_token, user } = data;
+
+      // 🔐 Authorization condition
+      if (!user.is_admin && !user.is_pharmacist) {
+        setError("Not authorized to access dashboard.");
+        setLoading(false);
+        return;
+      }
+
+      // Save token + user
+      localStorage.setItem("session_token", session_token);
+      localStorage.setItem("user", JSON.stringify(user));
+
+      router.push("/dashboard");
+    } catch (err) {
+      setError("Server error. Please try again.");
+      console.error(err);
     }
+
     setLoading(false);
   };
 
@@ -58,7 +86,7 @@ export default function LoginPage() {
             <label className="text-sm text-neutral-300 mb-1 block">Password</label>
             <div className="relative">
               <input
-                type={showPassword ? 'text' : 'password'}
+                type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -89,19 +117,16 @@ export default function LoginPage() {
             ) : (
               <LogIn size={18} />
             )}
-            {loading ? 'Signing In...' : 'Sign In'}
+            {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-neutral-400">
-          Don’t have an account?{' '}
-          <a
-            href="#"
-            className="text-blue-400 hover:text-blue-300 transition"
-          >
+        {/* <p className="mt-6 text-center text-sm text-neutral-400">
+          Don’t have an account?{" "}
+          <a href="#" className="text-blue-400 hover:text-blue-300 transition">
             Contact Admin
           </a>
-        </p>
+        </p> */}
       </div>
     </div>
   );
