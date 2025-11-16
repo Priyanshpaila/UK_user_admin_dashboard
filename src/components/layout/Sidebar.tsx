@@ -16,6 +16,7 @@ import {
   Archive,
   LucideIcon,
   LogOut,
+  Atom
 } from "lucide-react";
 
 type MenuItem = {
@@ -53,6 +54,10 @@ const menu: SidebarEntry[] = [
   {
     group: "Operations",
     items: [{ key: "/dashboard/services", label: "Services", icon: Settings }],
+  },
+    {
+    group: "Tenant",
+    items: [{ key: "/dashboard/tenant", label: "Tenant", icon: Atom  }],
   },
   {
     group: "People",

@@ -3,8 +3,6 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 
-const API_URL = process.env.NEXT_PUBLIC_BASE_URL || "http://192.168.13.75:8000/api";
-
 export default function LoginPage() {
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
@@ -13,13 +11,19 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Get the current frontend domain (like http://localhost:3000)
+  const frontendDomain = window.location.origin;  // e.g., http://localhost:3000
+
+  // Append the backend domain (always on port 8000) to the frontend domain
+  const backendDomain = `${frontendDomain.replace(/:\d+$/, ':8000')}/api`;
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
+      const response = await fetch(`${backendDomain}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -120,13 +124,6 @@ export default function LoginPage() {
             {loading ? "Signing In..." : "Sign In"}
           </button>
         </form>
-
-        {/* <p className="mt-6 text-center text-sm text-neutral-400">
-          Don’t have an account?{" "}
-          <a href="#" className="text-blue-400 hover:text-blue-300 transition">
-            Contact Admin
-          </a>
-        </p> */}
       </div>
     </div>
   );
