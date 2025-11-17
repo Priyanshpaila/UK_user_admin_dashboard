@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -105,6 +105,20 @@ const menu: SidebarEntry[] = [
 export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const path = usePathname() || "/dashboard";
   const router = useRouter();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw);
+      // your saved object: { "userId": "...", "email": "...", "is_admin": false, ... }
+      setIsAdmin(!!parsed.is_admin);
+    } catch (err) {
+      console.error("Failed to read user from localStorage", err);
+    }
+  }, []);
 
   const logout = () => {
     localStorage.removeItem("session_token");
@@ -112,11 +126,19 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
     router.push("/login");
   };
 
+  // 🔐 Hide Tenant group if user is not admin
+  const filteredMenu = menu.filter((m) => {
+    if ("group" in m && m.group === "Tenant" && !isAdmin) {
+      return false;
+    }
+    return true;
+  });
+
   return (
     <aside className="w-64 bg-[#0b0b0c] border-r border-neutral-800 min-h-screen flex flex-col">
       {/* Scrollable menu */}
       <div className="flex-1 px-2 overflow-y-auto custom-scrollbar">
-        {menu.map((m, idx) =>
+        {filteredMenu.map((m, idx) =>
           "group" in m ? (
             <div key={idx} className="mt-4">
               <div className="px-3 text-xs text-neutral-400 uppercase tracking-wider">

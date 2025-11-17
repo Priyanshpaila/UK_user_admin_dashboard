@@ -282,3 +282,36 @@ export async function updateMedicineApi(
   // if your backend expects /medicines?id=... instead, change URL here
   return formDataRequest<any>(`${base}/medicines/${id}`, "PUT", payload);
 }
+
+
+// api.ts
+export type ServiceMedicinePayload = {
+  service_id: string;
+  medicine_id: string;
+  active: boolean;
+  sort_order: number;
+  min_qty: number;
+  max_qty: number;
+};
+
+export async function createServiceMedicineApi(
+  payload: ServiceMedicinePayload
+) {
+  const base = getBackendBase();
+  const res = await fetch(`${base}/service-medicines`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    console.error("Failed to link service & medicine:", txt);
+    throw new Error("Failed to link service and medicine");
+  }
+
+  return res.json();
+}
+
