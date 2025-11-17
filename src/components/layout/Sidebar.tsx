@@ -16,7 +16,8 @@ import {
   Archive,
   LucideIcon,
   LogOut,
-  Atom
+  Atom,
+  Pill,
 } from "lucide-react";
 
 type MenuItem = {
@@ -49,15 +50,20 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "Notifications",
-    items: [{ key: "/dashboard/appointments", label: "Appointments", icon: Bell }],
+    items: [
+      { key: "/dashboard/appointments", label: "Appointments", icon: Bell },
+    ],
   },
   {
     group: "Operations",
-    items: [{ key: "/dashboard/services", label: "Services", icon: Settings }],
+    items: [
+      { key: "/dashboard/services", label: "Services", icon: Settings },
+      { key: "/dashboard/medicine", label: "Medicines", icon: Pill },
+    ],
   },
-    {
+  {
     group: "Tenant",
-    items: [{ key: "/dashboard/tenant", label: "Tenant", icon: Atom  }],
+    items: [{ key: "/dashboard/tenant", label: "Tenant", icon: Atom }],
   },
   {
     group: "People",
@@ -69,11 +75,15 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "Logs",
-    items: [{ key: "/dashboard/clinic-logs", label: "Clinic Logs", icon: Archive }],
+    items: [
+      { key: "/dashboard/clinic-logs", label: "Clinic Logs", icon: Archive },
+    ],
   },
   {
     group: "Scheduling",
-    items: [{ key: "/dashboard/schedules", label: "Schedules", icon: CalendarDays }],
+    items: [
+      { key: "/dashboard/schedules", label: "Schedules", icon: CalendarDays },
+    ],
   },
   {
     group: "Orders",
@@ -104,7 +114,6 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
 
   return (
     <aside className="w-64 bg-[#0b0b0c] border-r border-neutral-800 min-h-screen flex flex-col">
-
       {/* Scrollable menu */}
       <div className="flex-1 px-2 overflow-y-auto custom-scrollbar">
         {menu.map((m, idx) =>
@@ -149,7 +158,9 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
               >
                 <div
                   className={`p-2 rounded-md transition-colors ${
-                    path === m.key ? "bg-blue-600/30" : "bg-neutral-800 group-hover:bg-neutral-700"
+                    path === m.key
+                      ? "bg-blue-600/30"
+                      : "bg-neutral-800 group-hover:bg-neutral-700"
                   }`}
                 >
                   <m.icon

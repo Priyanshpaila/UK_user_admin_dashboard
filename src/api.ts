@@ -192,3 +192,93 @@ export async function createPharmacistApi(
     body: JSON.stringify(payload),
   });
 }
+
+
+/* ------------------- Medicines APIs ------------------- */
+
+export type MedicinePayload = {
+  sku: string;
+  name: string;
+  variations: string;
+  strength?: string | null;
+  qty: number;
+  unitMinor: number;
+  totalMinor: number;
+  variation: string;
+  price: number;
+  image_path?: string | File;
+  description?: string;
+  status: string;
+};
+
+// Helper just for FormData requests (no JSON Content-Type)
+async function formDataRequest<T>(
+  url: string,
+  method: "POST" | "PUT",
+  payload: MedicinePayload
+): Promise<T> {
+  const formData = new FormData();
+
+  formData.append("sku", payload.sku);
+  formData.append("name", payload.name);
+  formData.append("variations", payload.variations);
+  formData.append("variation", payload.variation);
+  formData.append("qty", String(payload.qty));
+  formData.append("unitMinor", String(payload.unitMinor));
+  formData.append("totalMinor", String(payload.totalMinor));
+  formData.append("price", String(payload.price));
+  formData.append("status", payload.status);
+
+  if (payload.strength != null) {
+    formData.append("strength", payload.strength);
+  }
+
+  if (payload.description) {
+    formData.append("description", payload.description);
+  }
+
+  if (payload.image_path) {
+    if (payload.image_path instanceof File) {
+      // file upload
+      formData.append("image_path", payload.image_path);
+    } else {
+      // URL string
+      formData.append("image_path", payload.image_path);
+    }
+  }
+
+  const res = await fetch(url, {
+    method,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// GET /medicines  -> list of medicines
+export async function getMedicinesApi() {
+  const base = getBackendBase();
+  // assuming response like { data: [...], meta: {...} }
+  return jsonFetch<any>(`${base}/medicines`);
+}
+
+// POST /medicines  -> create medicine (FormData body)
+export async function createMedicineApi(payload: MedicinePayload) {
+  const base = getBackendBase();
+  return formDataRequest<any>(`${base}/medicines`, "POST", payload);
+}
+
+// PUT /medicines/:id  -> update medicine (FormData body)
+export async function updateMedicineApi(
+  id: string,
+  payload: MedicinePayload
+) {
+  const base = getBackendBase();
+  // if your backend expects /medicines?id=... instead, change URL here
+  return formDataRequest<any>(`${base}/medicines/${id}`, "PUT", payload);
+}
