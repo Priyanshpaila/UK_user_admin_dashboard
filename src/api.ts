@@ -1,0 +1,194 @@
+// src/api.ts
+const ENV_BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || "";        // e.g. http://192.168.13.75:8000/api
+const ENV_BASE_ONLY_URL = process.env.NEXT_PUBLIC_ONLY_URL || "";   // e.g. 192.168.13.75:8000/api
+
+const isIp = (host: string) => /^\d+\.\d+\.\d+\.\d+$/.test(host);
+
+const stripProtocol = (url: string) => url.replace(/^https?:\/\//, "");
+
+/**
+ * For cases with **no subdomain**:
+ * - localhost / 127.0.0.1 / plain IP
+ * - or a 2-part domain like mydomain.com
+ *
+ * Always prefer NEXT_PUBLIC_BASE_URL, and fall back only if missing.
+ */
+function resolveBaseForNoSubdomain(protocol: string): string {
+  if (ENV_BASE_URL) {
+    // Already a full URL like http://192.168.13.75:8000/api
+    return ENV_BASE_URL;
+  }
+
+  if (ENV_BASE_ONLY_URL) {
+    // If someone misconfigured and only gave ONLY_URL, still try to use it.
+    return `${protocol}//${stripProtocol(ENV_BASE_ONLY_URL)}`;
+  }
+
+  // Dev fallback (shouldn't be hit in your setup)
+  return `${protocol}//localhost:8000/api`;
+}
+
+/**
+ * Base URL for the "main" backend (used by login, services, etc.).
+ *
+ * - When there is **no subdomain** -> use NEXT_PUBLIC_BASE_URL
+ * - When there **is** subdomain (xyz.mydomain.com) -> http(s)://xyz.NEXT_PUBLIC_ONLY_URL
+ */
+export function getBackendBase(): string {
+  if (typeof window === "undefined") {
+    // SSR safety fallback
+    return ENV_BASE_URL || "http://localhost:8000/api";
+  }
+
+  const { protocol, hostname } = window.location;
+
+  const isLocal =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    isIp(hostname);
+
+  const parts = hostname.split(".");
+
+  // We treat "has subdomain" as:
+  // - not localhost/IP
+  // - and at least 3 segments: sub.domain.tld
+  const hasSubdomain = !isLocal && parts.length > 2;
+
+  if (!hasSubdomain) {
+    // No subdomain -> ALWAYS use NEXT_PUBLIC_BASE_URL
+    return resolveBaseForNoSubdomain(protocol);
+  }
+
+  // Subdomain case: xyz.mydomain.com -> xyz
+  const subdomain = parts[0].toLowerCase();
+  const baseOnly = stripProtocol(
+    ENV_BASE_ONLY_URL || "192.168.13.75:8000/api" // safe fallback
+  );
+
+  // Result: http(s)://xyz.192.168.13.75:8000/api
+  return `${protocol}//${subdomain}.${baseOnly}`;
+}
+
+/**
+ * Base URL for "master" backend (used for dns/subdomain creation).
+ * This should ALWAYS be without tenant subdomain.
+ * So we just use NEXT_PUBLIC_BASE_URL.
+ */
+export function getMasterBase(): string {
+  return ENV_BASE_URL || "http://localhost:8000/api";
+}
+
+/* ------------------- Generic helper ------------------- */
+
+async function jsonFetch<T>(
+  url: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Request failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/* ------------------- Auth APIs ------------------- */
+
+export async function loginApi(email: string, password: string) {
+  const base = getBackendBase();
+  return jsonFetch<{
+    session_token: string;
+    user: any;
+  }>(`${base}/auth/login`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+/* ------------------- Services APIs ------------------- */
+
+export type ServicePayload = {
+  name: string;
+  slug: string;
+  description: string;
+  booking_flow: Record<string, string | null>;
+  reorder_flow: Record<string, string | null>;
+  forms_assignment: Record<string, unknown>;
+  status: string;
+  active: boolean;
+  view_type: string;
+  cta_text: string;
+  image: string | null;
+};
+
+export async function createServiceApi(payload: ServicePayload) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/services`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getServiceApi(id: string | string[]) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/services/${id}`);
+}
+
+export async function updateServiceApi(
+  id: string | string[],
+  payload: ServicePayload
+) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/services/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+/* ------------------- Tenant APIs ------------------- */
+
+export async function createSubdomainApi(subdomain: string, ttl = 600) {
+  const base = getMasterBase(); // master backend, no tenant subdomain
+  return jsonFetch<any>(`${base}/dns/subdomain`, {
+    method: "POST",
+    body: JSON.stringify({ subdomain, ttl }),
+  });
+}
+
+export type PharmacistPayload = {
+  firstName: string;
+  lastName: string;
+  gender: string;
+  email: string;
+  phone: string;
+  password: string;
+};
+
+export async function createPharmacistApi(
+  subdomain: string,
+  payload: PharmacistPayload
+) {
+  const protocol =
+    typeof window !== "undefined" ? window.location.protocol : "http:";
+
+  const baseOnly = stripProtocol(
+    ENV_BASE_ONLY_URL || "192.168.13.75:8000/api"
+  );
+
+  // Always use tenant backend: http(s)://subdomain.NEXT_PUBLIC_ONLY_URL
+  // Example: http://xyz.192.168.13.75:8000/api
+  const base = `${protocol}//${subdomain}.${baseOnly}`;
+
+  return jsonFetch<any>(`${base}/users/createPharmacist`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

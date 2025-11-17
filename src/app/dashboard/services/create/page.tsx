@@ -4,6 +4,9 @@ import React, { useState, memo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { Upload, Save, Plus, X } from "lucide-react";
+import { getBackendBase } from "../../../../api";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 const DEFAULT_FLOW_OPTIONS = [
   "Treatments",
@@ -13,9 +16,6 @@ const DEFAULT_FLOW_OPTIONS = [
   "Payment",
 ];
 
-/* ---------------------------------------------------
-   REUSABLE SECTION COMPONENT
---------------------------------------------------- */
 const SectionCard = memo(function SectionCard({
   title,
   children,
@@ -33,9 +33,6 @@ const SectionCard = memo(function SectionCard({
   );
 });
 
-/* ---------------------------------------------------
-   FLOW EDITOR COMPONENT
---------------------------------------------------- */
 const FlowEditor = memo(function FlowEditor({
   title,
   list,
@@ -66,7 +63,6 @@ const FlowEditor = memo(function FlowEditor({
   return (
     <SectionCard title={title}>
       <div className="space-y-6">
-        {/* SELECT PREDEFINED */}
         <select
           value={selectedOption}
           className="w-full bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-md text-neutral-200"
@@ -85,7 +81,6 @@ const FlowEditor = memo(function FlowEditor({
           ))}
         </select>
 
-        {/* ADD CUSTOM STEP */}
         <div className="flex gap-3">
           <input
             placeholder="Add custom step..."
@@ -105,7 +100,6 @@ const FlowEditor = memo(function FlowEditor({
           </button>
         </div>
 
-        {/* DRAG LIST */}
         <DragDropContext onDragEnd={reorderList}>
           <Droppable droppableId={title}>
             {(provided) => (
@@ -154,22 +148,18 @@ const FlowEditor = memo(function FlowEditor({
   );
 });
 
-/* ---------------------------------------------------
-   MAIN PAGE (NO RE-RENDER BUGS)
---------------------------------------------------- */
 export default function CreateServicePage() {
   const router = useRouter();
 
-  /* BASIC INFO */
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
-  const [ctaText, setCtaText] = useState(""); // 🚀 NEW CTA TEXT
-
+  const [ctaText, setCtaText] = useState("");
   const [viewType, setViewType] = useState("card");
-  const [image, setImage] = useState<string | null>(null);
 
-  /* FLOWS */
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+
   const [bookingFlow, setBookingFlow] = useState<string[]>([]);
   const [reorderFlow, setReorderFlow] = useState<string[]>([]);
 
@@ -179,59 +169,73 @@ export default function CreateServicePage() {
   const [selectedBookingOption, setSelectedBookingOption] = useState("");
   const [selectedReorderOption, setSelectedReorderOption] = useState("");
 
-  /* ---------------------------------------------------
-     SUBMIT FORM
-  --------------------------------------------------- */
+  const [submitting, setSubmitting] = useState(false);
+
   const submitForm = async () => {
-    const makeFlow = (arr: string[]) =>
-      Object.fromEntries(
-        Array.from({ length: 6 }).map((_, i) => [
-          `step${i + 1}`,
-          arr[i] ?? null,
-        ])
-      );
-
-    const payload = {
-      name,
-      slug,
-      description,
-      booking_flow: makeFlow(bookingFlow),
-      reorder_flow: makeFlow(reorderFlow),
-      forms_assignment: {},
-      status: "published",
-      active: true,
-      view_type: viewType,
-      cta_text: ctaText || "Book Now", // 👈 uses custom CTA
-      image,
-    };
-
+    setSubmitting(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/services`, {
+      const makeFlow = (arr: string[]) =>
+        Object.fromEntries(
+          Array.from({ length: 6 }).map((_, i) => [
+            `step${i + 1}`,
+            arr[i] ?? null,
+          ])
+        );
+
+      const booking = makeFlow(bookingFlow);
+      const reorder = makeFlow(reorderFlow);
+
+      const formData = new FormData();
+
+      formData.append("name", name);
+      formData.append("slug", slug);
+      formData.append("description", description);
+      formData.append("view_type", viewType);
+      formData.append("cta_text", ctaText || "Book Now");
+      formData.append("status", "published");
+
+      formData.append("booking_flow", JSON.stringify(booking));
+      formData.append("reorder_flow", JSON.stringify(reorder));
+      formData.append("forms_assignment", JSON.stringify({}));
+
+      if (imageFile) {
+        formData.append("image", imageFile);
+      }
+
+      const base = getBackendBase();
+      const res = await fetch(`${base}/services`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: formData,
       });
 
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.error("Service create failed:", txt);
+        toast.error("Error creating service");
+        return;
+      }
+
+      toast.success("Service created successfully");
       router.push("/dashboard/services");
     } catch (err) {
-      alert("Error creating service");
+      console.error(err);
+      toast.error("Error creating service");
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  /* ---------------------------------------------------
-     UI SECTION
-  --------------------------------------------------- */
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-10">
+      {/* Toasts */}
+      <ToastContainer position="top-right" autoClose={3000} />
+
       <h1 className="text-3xl font-semibold tracking-wide mb-4">
         Create New Service
       </h1>
 
-      {/* BASIC INFO */}
       <SectionCard title="Basic Information">
         <div className="grid gap-6">
-          {/* NAME */}
           <div>
             <label className="text-sm text-neutral-300">Service Name</label>
             <input
@@ -244,7 +248,6 @@ export default function CreateServicePage() {
             />
           </div>
 
-          {/* SLUG */}
           <div>
             <label className="text-sm text-neutral-300">Slug</label>
             <input
@@ -254,7 +257,6 @@ export default function CreateServicePage() {
             />
           </div>
 
-          {/* DESCRIPTION */}
           <div>
             <label className="text-sm text-neutral-300">Description</label>
             <textarea
@@ -265,7 +267,6 @@ export default function CreateServicePage() {
             />
           </div>
 
-          {/* CTA TEXT — NEW */}
           <div>
             <label className="text-sm text-neutral-300">CTA Button Text</label>
             <input
@@ -278,26 +279,23 @@ export default function CreateServicePage() {
         </div>
       </SectionCard>
 
-      {/* IMAGE */}
       <SectionCard title="Service Image">
         <div className="flex items-center gap-4">
-          {/* IMAGE PREVIEW BOX */}
           <div
             className="relative w-40 h-40 rounded-lg bg-neutral-800 border border-neutral-700 
                  flex items-center justify-center cursor-pointer overflow-hidden shadow"
             onClick={() =>
-              !image && document.getElementById("upload-img")?.click()
+              !imagePreview && document.getElementById("upload-img")?.click()
             }
           >
-            {image ? (
+            {imagePreview ? (
               <>
-                <img src={image} className="w-full h-full object-cover" />
-
-                {/* REMOVE IMAGE BUTTON */}
+                <img src={imagePreview} className="w-full h-full object-cover" />
                 <button
                   onClick={(e) => {
-                    e.stopPropagation(); // prevent open-file trigger
-                    setImage(null);
+                    e.stopPropagation();
+                    setImagePreview(null);
+                    setImageFile(null);
                   }}
                   className="absolute top-2 right-2 bg-red-600/80 hover:bg-red-700 text-white 
                        rounded-full p-1 shadow transition"
@@ -310,21 +308,21 @@ export default function CreateServicePage() {
             )}
           </div>
 
-          {/* FILE INPUT */}
           <input
             id="upload-img"
             type="file"
+            accept="image/*"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (!file) return;
-              setImage(URL.createObjectURL(file));
+              setImageFile(file);
+              setImagePreview(URL.createObjectURL(file));
             }}
           />
         </div>
       </SectionCard>
 
-      {/* VIEW TYPE */}
       <SectionCard title="View Type">
         <select
           value={viewType}
@@ -336,7 +334,6 @@ export default function CreateServicePage() {
         </select>
       </SectionCard>
 
-      {/* FLOWS */}
       <FlowEditor
         title="Booking Flow"
         list={bookingFlow}
@@ -357,14 +354,14 @@ export default function CreateServicePage() {
         setSelectedOption={setSelectedReorderOption}
       />
 
-      {/* SAVE */}
       <div className="flex justify-end">
         <button
           onClick={submitForm}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition"
+          disabled={submitting}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 shadow-lg transition disabled:opacity-60"
         >
           <Save size={18} />
-          Save Service
+          {submitting ? "Saving..." : "Save Service"}
         </button>
       </div>
     </div>

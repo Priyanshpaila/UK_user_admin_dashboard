@@ -1,7 +1,8 @@
-'use client';
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
+"use client";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Eye, EyeOff, LogIn } from "lucide-react";
+import { loginApi } from "../../api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,48 +12,28 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Get the current frontend domain (like http://localhost:3000)
-  const frontendDomain = window.location.origin;  // e.g., http://localhost:3000
-
-  // Append the backend domain (always on port 8000) to the frontend domain
-  const backendDomain = `${frontendDomain.replace(/:\d+$/, ':8000')}/api`;
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
     try {
-      const response = await fetch(`${backendDomain}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        setError("Invalid email or password.");
-        setLoading(false);
-        return;
-      }
-
-      const data = await response.json();
+      const data = await loginApi(email, password);
       const { session_token, user } = data;
 
-      // 🔐 Authorization condition
       if (!user.is_admin && !user.is_pharmacist) {
         setError("Not authorized to access dashboard.");
         setLoading(false);
         return;
       }
 
-      // Save token + user
       localStorage.setItem("session_token", session_token);
       localStorage.setItem("user", JSON.stringify(user));
 
       router.push("/dashboard");
     } catch (err) {
-      setError("Server error. Please try again.");
       console.error(err);
+      setError("Invalid email or password.");
     }
 
     setLoading(false);
@@ -60,11 +41,9 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0b0b0c] to-[#111113] text-white relative overflow-hidden">
-      {/* Background glow */}
       <div className="absolute -top-20 -right-20 w-[400px] h-[400px] bg-blue-600/20 blur-[120px] rounded-full"></div>
       <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-purple-600/20 blur-[120px] rounded-full"></div>
 
-      {/* Card */}
       <div className="relative w-full max-w-md bg-neutral-900/80 backdrop-blur-xl border border-neutral-800 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.4)] p-8 z-10">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold mb-2">Welcome Back</h1>
@@ -87,7 +66,9 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="text-sm text-neutral-300 mb-1 block">Password</label>
+            <label className="text-sm text-neutral-300 mb-1 block">
+              Password
+            </label>
             <div className="relative">
               <input
                 type={showPassword ? "text" : "password"}

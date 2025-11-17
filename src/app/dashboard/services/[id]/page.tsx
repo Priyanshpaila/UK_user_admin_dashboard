@@ -4,24 +4,23 @@ import React, { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Loader2, Save, Upload, X, Plus } from "lucide-react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { getServiceApi, getBackendBase } from "../../../../api";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 const DEFAULT_FLOW_OPTIONS = ["Treatments", "Login", "RAF", "Calendar", "Payment"];
 
-/* -----------------------------------------------------
-   REUSABLE SECTION
------------------------------------------------------ */
-function SectionCard({ title, children }: any) {
+function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="p-6 rounded-xl border border-neutral-800 bg-neutral-900 shadow-md">
-      <h2 className="text-xl font-semibold mb-4 tracking-wide text-white">{title}</h2>
+      <h2 className="text-xl font-semibold mb-4 tracking-wide text-white">
+        {title}
+      </h2>
       {children}
     </section>
   );
 }
 
-/* -----------------------------------------------------
-   FLOW EDITOR COMPONENT
------------------------------------------------------ */
 function FlowEditor({
   title,
   list,
@@ -46,8 +45,6 @@ function FlowEditor({
   return (
     <SectionCard title={title}>
       <div className="space-y-6">
-
-        {/* PREDEFINED STEP SELECT */}
         <select
           value={selectedOption}
           onChange={(e) => {
@@ -60,11 +57,12 @@ function FlowEditor({
         >
           <option value="">Select step...</option>
           {DEFAULT_FLOW_OPTIONS.map((step) => (
-            <option key={step} value={step}>{step}</option>
+            <option key={step} value={step}>
+              {step}
+            </option>
           ))}
         </select>
 
-        {/* CUSTOM ADD */}
         <div className="flex gap-3">
           <input
             placeholder="Add custom step..."
@@ -84,13 +82,20 @@ function FlowEditor({
           </button>
         </div>
 
-        {/* DRAGGABLE LIST */}
         <DragDropContext onDragEnd={reorderList}>
           <Droppable droppableId={`${title}-drop`}>
             {(provided) => (
-              <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-2">
+              <div
+                ref={provided.innerRef}
+                {...provided.droppableProps}
+                className="space-y-2"
+              >
                 {list.map((step: string, i: number) => (
-                  <Draggable key={`${title}-${i}`} draggableId={`${title}-${i}`} index={i}>
+                  <Draggable
+                    key={`${title}-${i}`}
+                    draggableId={`${title}-${i}`}
+                    index={i}
+                  >
                     {(provided) => (
                       <div
                         className="bg-neutral-800 px-4 py-2 border border-neutral-700 rounded-md flex justify-between items-center shadow-sm cursor-grab"
@@ -102,7 +107,10 @@ function FlowEditor({
                           Step {i + 1}: <b>{step}</b>
                         </span>
 
-                        <button onClick={() => removeStep(i)} className="text-red-400 hover:text-red-300">
+                        <button
+                          onClick={() => removeStep(i)}
+                          className="text-red-400 hover:text-red-300"
+                        >
                           <X size={16} />
                         </button>
                       </div>
@@ -115,22 +123,19 @@ function FlowEditor({
             )}
           </Droppable>
         </DragDropContext>
-
       </div>
     </SectionCard>
   );
 }
 
-/* -----------------------------------------------------
-   MAIN EDIT SERVICE PAGE
------------------------------------------------------ */
 export default function EditServicePage() {
   const router = useRouter();
   const params = useParams();
-  const id = params?.id;
+  const rawId = params?.id;
+  const id = Array.isArray(rawId) ? rawId[0] : (rawId as string | undefined);
 
-  /* States */
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -138,7 +143,11 @@ export default function EditServicePage() {
   const [ctaText, setCtaText] = useState("");
 
   const [viewType, setViewType] = useState("card");
-  const [image, setImage] = useState<string | null>(null);
+
+  // image preview + file + original path
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [existingImagePath, setExistingImagePath] = useState<string | null>(null);
 
   const [bookingFlow, setBookingFlow] = useState<string[]>([]);
   const [reorderFlow, setReorderFlow] = useState<string[]>([]);
@@ -149,47 +158,75 @@ export default function EditServicePage() {
   const [customBookingStep, setCustomBookingStep] = useState("");
   const [customReorderStep, setCustomReorderStep] = useState("");
 
-  /* -----------------------------------------------------
-     FETCH EXISTING SERVICE
-  ----------------------------------------------------- */
   useEffect(() => {
     if (!id) return;
 
     const loadService = async () => {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/services/${id}`);
-        if (!res.ok) throw new Error("Failed");
-
-        const data = await res.json();
+        const data = await getServiceApi(id);
 
         setName(data.name);
         setSlug(data.slug);
         setDescription(data.description);
         setCtaText(data.cta_text || "");
         setViewType(data.view_type);
-        setImage(data.image);
 
-        setBookingFlow([
-          data.booking_flow?.step1,
-          data.booking_flow?.step2,
-          data.booking_flow?.step3,
-          data.booking_flow?.step4,
-          data.booking_flow?.step5,
-          data.booking_flow?.step6,
-        ].filter(Boolean));
+        // IMAGE HANDLING
+        if (data.image) {
+          setExistingImagePath(data.image);
+          const baseForImage = getBackendBase().replace(/\/api\/?$/, ""); // strip /api
+          const fullUrl =
+            typeof data.image === "string" && data.image.startsWith("http")
+              ? data.image
+              : `${baseForImage}/${String(data.image).replace(/^\/+/, "")}`;
+          setImagePreview(fullUrl);
+        } else {
+          setExistingImagePath(null);
+          setImagePreview(null);
+        }
 
-        setReorderFlow([
-          data.reorder_flow?.step1,
-          data.reorder_flow?.step2,
-          data.reorder_flow?.step3,
-          data.reorder_flow?.step4,
-          data.reorder_flow?.step5,
-          data.reorder_flow?.step6,
-        ].filter(Boolean));
+        // BOOKING FLOW (stored as JSON string)
+        let bookingObj: any = {};
+        try {
+          bookingObj = data.booking_flow ? JSON.parse(data.booking_flow) : {};
+        } catch (e) {
+          console.warn("Failed to parse booking_flow JSON:", e);
+          bookingObj = {};
+        }
 
+        setBookingFlow(
+          [
+            bookingObj.step1,
+            bookingObj.step2,
+            bookingObj.step3,
+            bookingObj.step4,
+            bookingObj.step5,
+            bookingObj.step6,
+          ].filter(Boolean)
+        );
+
+        // REORDER FLOW (stored as JSON string)
+        let reorderObj: any = {};
+        try {
+          reorderObj = data.reorder_flow ? JSON.parse(data.reorder_flow) : {};
+        } catch (e) {
+          console.warn("Failed to parse reorder_flow JSON:", e);
+          reorderObj = {};
+        }
+
+        setReorderFlow(
+          [
+            reorderObj.step1,
+            reorderObj.step2,
+            reorderObj.step3,
+            reorderObj.step4,
+            reorderObj.step5,
+            reorderObj.step6,
+          ].filter(Boolean)
+        );
       } catch (err) {
         console.error(err);
-        alert("Failed to load service");
+        toast.error("Failed to load service");
       } finally {
         setLoading(false);
       }
@@ -198,64 +235,81 @@ export default function EditServicePage() {
     loadService();
   }, [id]);
 
-  /* -----------------------------------------------------
-     SAVE EDITS (PUT METHOD)
-  ----------------------------------------------------- */
   const saveService = async () => {
-    const formatFlow = (arr: string[]) =>
-      Object.fromEntries(
-        Array.from({ length: 6 }).map((_, i) => [`step${i + 1}`, arr[i] ?? null])
-      );
-
-    const payload = {
-      name,
-      slug,
-      description,
-      cta_text: ctaText || "Book Now",
-      view_type: viewType,
-      image,
-      booking_flow: formatFlow(bookingFlow),
-      reorder_flow: formatFlow(reorderFlow),
-      active: true,
-      status: "published",
-      forms_assignment: {},
-    };
-
+    if (!id) return;
+    setSaving(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/services/${id}`, {
+      const formatFlow = (arr: string[]) =>
+        Object.fromEntries(
+          Array.from({ length: 6 }).map((_, i) => [`step${i + 1}`, arr[i] ?? null])
+        );
+
+      const booking = formatFlow(bookingFlow);
+      const reorder = formatFlow(reorderFlow);
+
+      const formData = new FormData();
+
+      formData.append("name", name);
+      formData.append("slug", slug);
+      formData.append("description", description);
+      formData.append("cta_text", ctaText || "Book Now");
+      formData.append("view_type", viewType);
+      formData.append("status", "published");
+
+      formData.append("booking_flow", JSON.stringify(booking));
+      formData.append("reorder_flow", JSON.stringify(reorder));
+      formData.append("forms_assignment", JSON.stringify({}));
+
+      if (imageFile) {
+        formData.append("image", imageFile);
+      } else if (existingImagePath) {
+        // let backend keep old image if supported
+        formData.append("existingImage", existingImagePath);
+      }
+
+      const base = getBackendBase();
+      const res = await fetch(`${base}/services/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: formData,
       });
 
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        console.error("Update service failed:", txt);
+        toast.error("Error while saving service");
+        return;
+      }
+
+      toast.success("Service updated successfully");
       router.push("/dashboard/services");
     } catch (error) {
-      alert("Error while saving service");
+      console.error(error);
+      toast.error("Error while saving service");
+    } finally {
+      setSaving(false);
     }
   };
 
   if (loading) {
     return (
       <div className="flex justify-center py-20">
+        {/* Toast container here so errors during load still show */}
+        <ToastContainer position="top-right" autoClose={3000} />
         <Loader2 className="animate-spin text-neutral-400" size={40} />
       </div>
     );
   }
 
-  /* -----------------------------------------------------
-     RENDER UI
-  ----------------------------------------------------- */
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-10">
+      <ToastContainer position="top-right" autoClose={3000} />
+
       <h1 className="text-3xl font-semibold tracking-wide mb-4">
         Edit Service
       </h1>
 
-      {/* BASIC INFO */}
       <SectionCard title="Basic Information">
         <div className="grid gap-6">
-
           <div>
             <label className="text-sm text-neutral-300">Service Name</label>
             <input
@@ -296,20 +350,17 @@ export default function EditServicePage() {
               className="w-full mt-1 bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-md"
             />
           </div>
-
         </div>
       </SectionCard>
 
-      {/* IMAGE */}
       <SectionCard title="Service Image">
         <div className="flex items-start gap-6">
-
           <div
             className="w-40 h-40 bg-neutral-800 border border-neutral-700 rounded-lg flex items-center justify-center overflow-hidden cursor-pointer"
             onClick={() => document.getElementById("edit-img")?.click()}
           >
-            {image ? (
-              <img src={image} className="w-full h-full object-cover" />
+            {imagePreview ? (
+              <img src={imagePreview} className="w-full h-full object-cover" />
             ) : (
               <Upload size={34} className="text-neutral-400" />
             )}
@@ -318,16 +369,24 @@ export default function EditServicePage() {
           <input
             id="edit-img"
             type="file"
+            accept="image/*"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) setImage(URL.createObjectURL(file));
+              if (file) {
+                setImageFile(file);
+                setImagePreview(URL.createObjectURL(file));
+              }
             }}
           />
 
-          {image && (
+          {imagePreview && (
             <button
-              onClick={() => setImage(null)}
+              onClick={() => {
+                setImagePreview(null);
+                setImageFile(null);
+                setExistingImagePath(null);
+              }}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
             >
               Remove Image
@@ -336,7 +395,6 @@ export default function EditServicePage() {
         </div>
       </SectionCard>
 
-      {/* VIEW TYPE */}
       <SectionCard title="View Type">
         <select
           value={viewType}
@@ -348,7 +406,6 @@ export default function EditServicePage() {
         </select>
       </SectionCard>
 
-      {/* FLOWS */}
       <FlowEditor
         title="Booking Flow"
         list={bookingFlow}
@@ -369,14 +426,14 @@ export default function EditServicePage() {
         setSelectedOption={setSelectedReorderOption}
       />
 
-      {/* SAVE BUTTON */}
       <div className="flex justify-end">
         <button
           onClick={saveService}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white flex items-center gap-2 shadow-lg"
+          disabled={saving}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white flex items-center gap-2 shadow-lg disabled:opacity-60"
         >
           <Save size={18} />
-          Save Changes
+          {saving ? "Saving..." : "Save Changes"}
         </button>
       </div>
     </div>
