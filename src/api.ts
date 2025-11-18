@@ -295,3 +295,52 @@ export async function createServiceMedicineApi(
 
   return res.json();
 }
+
+
+/* ------------------- Patients APIs ------------------- */
+
+// GET /users/patients -> List of patients
+export async function getPatientsApi(page: number = 1, limit: number = 10) {
+  const base = getBackendBase(); // Get the correct backend base URL dynamically
+  const url = `${base}/users/patients?page=${page}&limit=${limit}`;
+
+  // Get the token from local storage or a global auth state (use your own method of getting it)
+  const token = localStorage.getItem("session_token");  // Adjust this based on your token storage method
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<any>(url, {
+    headers: {
+      "Authorization": `Bearer ${token}`,  // Add the Bearer token to the request
+    },
+  });
+}
+
+
+/* ------------------- Users APIs ------------------- */
+
+
+// PUT /users/:id -> Update a user by ID
+export async function updateUserApi(userId: string, payload: any) {
+  const base = getBackendBase(); // Get the correct backend base URL dynamically
+  const url = `${base}/users/${userId}`; // Construct the URL using the userId
+
+  // Get the token from local storage or a global auth state (use your own method of getting it)
+  const token = localStorage.getItem("auth_token");  // Adjust this based on your token storage method
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<any>(url, {
+    method: "PUT",
+    headers: {
+      "Authorization": `Bearer ${token}`,  // Add the Bearer token to the request
+      "Content-Type": "application/json",  // Specify content type for the payload
+    },
+    body: JSON.stringify(payload),  // Send the updated user data
+  });
+}
+
