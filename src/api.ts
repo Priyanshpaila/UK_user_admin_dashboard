@@ -20,7 +20,7 @@ export function getBackendBase(): string {
 
   // Split hostname to check for subdomain (e.g., xyz.mydomain.com)
   const parts = hostname.split(".");
-  
+
   // Check if there is a subdomain (at least 3 parts: subdomain.domain.tld)
   const hasSubdomain = parts.length >= 2;
 
@@ -88,7 +88,7 @@ async function jsonFetch<T>(
 /* ------------------- Auth APIs ------------------- */
 
 export async function loginApi(email: string, password: string) {
-  const base = getBackendBase();  // Get the correct backend base URL dynamically
+  const base = getBackendBase(); // Get the correct backend base URL dynamically
   return jsonFetch<{
     session_token: string;
     user: any;
@@ -123,13 +123,12 @@ export async function createServiceApi(payload: ServicePayload) {
 }
 
 export async function getServiceApi(id: string | string[]) {
-  const base = getBackendBase();  // Get the backend base URL dynamically based on subdomain
+  const base = getBackendBase(); // Get the backend base URL dynamically based on subdomain
   const url = `${base}/services/${id}`;
-  
+
   // Fetch the service data from the dynamic URL
   return jsonFetch<any>(url);
 }
-
 
 export async function updateServiceApi(
   id: string | string[],

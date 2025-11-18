@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, Loader2 } from "lucide-react";
+import { getServiceApi } from "../../../api";  // Import the getServiceApi function
 
 export default function ServicesPage() {
   const [services, setServices] = useState<any[]>([]);
@@ -15,12 +16,14 @@ export default function ServicesPage() {
   const fetchServices = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/services`);
+      const response = await getServiceApi("");  // Call the getServiceApi function from api.ts
 
-      if (!res.ok) throw new Error("Failed to fetch");
-
-      const data = await res.json();
-      setServices(data?.data || data || []); // supports multiple API formats
+      // Check if the response contains data and is an array
+      if (!response || !Array.isArray(response.data) || response.data.length === 0) {
+        setError("No services found.");
+      } else {
+        setServices(response.data);  // Set the services array from response.data
+      }
     } catch (err) {
       console.error(err);
       setError("Failed to load services.");
@@ -35,7 +38,6 @@ export default function ServicesPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-6">
-
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Services</h1>
@@ -58,13 +60,10 @@ export default function ServicesPage() {
         </div>
       )}
 
-      {/* Error */}
-      {error && !loading && (
-        <div className="text-center py-10 text-red-400">{error}</div>
-      )}
+   
 
       {/* Empty State */}
-      {!loading && services.length === 0 && !error && (
+      {!loading && services.length === 0  && (
         <div className="text-center py-14 border border-neutral-800 bg-neutral-900 rounded-xl">
           <p className="text-neutral-300">No services found.</p>
 
@@ -83,7 +82,7 @@ export default function ServicesPage() {
         <div className="rounded-xl border border-neutral-800 bg-neutral-900 divide-y divide-neutral-800">
           {services.map((svc) => (
             <div
-              key={svc.id}
+              key={svc._id}  // Use _id as the key
               className="p-4 flex justify-between items-center hover:bg-neutral-800 transition"
             >
               <div>
@@ -94,7 +93,7 @@ export default function ServicesPage() {
               </div>
 
               <Link
-                href={`/dashboard/services/${svc._id}`}
+                href={`/dashboard/services/${svc._id}`}  // Use _id to create the link
                 className="text-blue-400 hover:underline text-sm"
               >
                 Edit
