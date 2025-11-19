@@ -191,9 +191,30 @@ export type MedicinePayload = {
   totalMinor: number;
   variation: string;
   price: number;
-  image_path?: string | File;
+  image?: string | File;
   description?: string;
   status: string;
+};
+
+// DTO for medicines returned by backend (e.g. /medicines, /service-medicines/service/:id)
+export type MedicineDto = {
+  _id: string;
+  sku: string;
+  name: string;
+  variations: string;
+  strength: string | null;
+  qty: number;
+  unitMinor: number;
+  totalMinor: number;
+  variation: string;
+  price: number;
+  image: string;
+  description: string;
+  status: string;
+  deleted_at: string | null;
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
 };
 
 // Helper just for FormData requests (no JSON Content-Type)
@@ -207,10 +228,7 @@ async function formDataRequest<T>(
   formData.append("sku", payload.sku);
   formData.append("name", payload.name);
   formData.append("variations", payload.variations);
-  formData.append("variation", payload.variation);
   formData.append("qty", String(payload.qty));
-  formData.append("unitMinor", String(payload.unitMinor));
-  formData.append("totalMinor", String(payload.totalMinor));
   formData.append("price", String(payload.price));
   formData.append("status", payload.status);
 
@@ -222,13 +240,13 @@ async function formDataRequest<T>(
     formData.append("description", payload.description);
   }
 
-  if (payload.image_path) {
-    if (payload.image_path instanceof File) {
+  if (payload.image) {
+    if (payload.image instanceof File) {
       // file upload
-      formData.append("image_path", payload.image_path);
+      formData.append("image", payload.image);
     } else {
       // URL string
-      formData.append("image_path", payload.image_path);
+      formData.append("image", payload.image);
     }
   }
 
@@ -265,6 +283,15 @@ export async function updateMedicineApi(id: string, payload: MedicinePayload) {
   return formDataRequest<any>(`${base}/medicines/${id}`, "PUT", payload);
 }
 
+// GET /service-medicines/service/:service_id -> medicines linked to a service
+export async function getServiceMedicinesByServiceApi(
+  serviceId: string
+): Promise<MedicineDto[]> {
+  const base = getBackendBase();
+  const url = `${base}/service-medicines/service/${serviceId}`;
+  return jsonFetch<MedicineDto[]>(url);
+}
+
 // api.ts
 export type ServiceMedicinePayload = {
   service_id: string;
@@ -296,7 +323,6 @@ export async function createServiceMedicineApi(
   return res.json();
 }
 
-
 /* ------------------- Patients APIs ------------------- */
 
 // GET /users/patients -> List of patients
@@ -305,7 +331,7 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
   const url = `${base}/users/patients?page=${page}&limit=${limit}`;
 
   // Get the token from local storage or a global auth state (use your own method of getting it)
-  const token = localStorage.getItem("session_token");  // Adjust this based on your token storage method
+  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -313,14 +339,12 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
 
   return jsonFetch<any>(url, {
     headers: {
-      "Authorization": `Bearer ${token}`,  // Add the Bearer token to the request
+      Authorization: `Bearer ${token}`, // Add the Bearer token to the request
     },
   });
 }
 
-
 /* ------------------- Users APIs ------------------- */
-
 
 // PUT /users/:id -> Update a user by ID
 export async function updateUserApi(userId: string, payload: any) {
@@ -328,7 +352,7 @@ export async function updateUserApi(userId: string, payload: any) {
   const url = `${base}/users/${userId}`; // Construct the URL using the userId
 
   // Get the token from local storage or a global auth state (use your own method of getting it)
-  const token = localStorage.getItem("session_token");  // Adjust this based on your token storage method
+  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -337,13 +361,12 @@ export async function updateUserApi(userId: string, payload: any) {
   return jsonFetch<any>(url, {
     method: "PUT",
     headers: {
-      "Authorization": `Bearer ${token}`,  // Add the Bearer token to the request
-      "Content-Type": "application/json",  // Specify content type for the payload
+      Authorization: `Bearer ${token}`, // Add the Bearer token to the request
+      "Content-Type": "application/json", // Specify content type for the payload
     },
-    body: JSON.stringify(payload),  // Send the updated user data
+    body: JSON.stringify(payload), // Send the updated user data
   });
 }
-
 
 // POST /users -> Create a new user
 export async function createUserApi(payload: any) {
@@ -359,10 +382,9 @@ export async function createUserApi(payload: any) {
   return jsonFetch<any>(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,      // Bearer token
-      "Content-Type": "application/json",    // JSON body
+      Authorization: `Bearer ${token}`, // Bearer token
+      "Content-Type": "application/json", // JSON body
     },
     body: JSON.stringify(payload),
   });
 }
-
