@@ -388,3 +388,63 @@ export async function createUserApi(payload: any) {
     body: JSON.stringify(payload),
   });
 }
+
+
+// Single weekday config
+export type ScheduleWeekDay = {
+  day: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+  open: boolean;
+  start?: string; // "HH:MM" when open=true
+  end?: string;   // "HH:MM" when open=true
+  break_start?: string;  // NEW: "13:00"
+  break_end?: string;  // NEW: "14:00"
+};
+
+// Date override config
+export type ScheduleOverride = {
+  date: string;    // "YYYY-MM-DD"
+  open: boolean;
+  start?: string;  // "HH:MM" when open=true
+  end?: string;    // "HH:MM" when open=true
+  note?: string;   // optional note / reason
+};
+
+// Payload for POST /schedules
+export type SchedulePayload = {
+  name: string;          // "Travel Clinic" or "Global"
+  service_slug: string;  // "travel-clinic" or "global"
+  service_id?: string | null; // omit or null for Global schedule
+  timezone: string;      // e.g. "UTC" or "Europe/London"
+  slot_minutes: number;  // e.g. 15
+  capacity: number;      // e.g. 1
+  week: ScheduleWeekDay[];
+  overrides?: ScheduleOverride[];
+};
+
+// POST /schedules -> create schedule
+export async function createScheduleApi(payload: SchedulePayload) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/schedules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// GET /schedules -> list schedules
+export async function getSchedulesApi() {
+  const base = getBackendBase();
+  // if backend later returns { data, meta }, you can type it accordingly
+  return jsonFetch<any>(`${base}/schedules`);
+}
+
+/** PUT /schedules/:id -> update an existing schedule */
+export async function updateScheduleApi(
+  id: string,
+  payload: SchedulePayload
+) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/schedules/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
