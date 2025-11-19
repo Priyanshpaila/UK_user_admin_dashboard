@@ -4,6 +4,8 @@ import { useParams } from "next/navigation"; // To get the service ID from the U
 import { getServiceApi, getBackendBase } from "../../../../api"; // Import the API function to fetch service details
 import dynamic from "next/dynamic"; // Dynamically import Quill (so it doesn't cause issues during SSR)
 import "react-quill/dist/quill.snow.css";
+import { ArrowLeft } from "lucide-react";
+import Link from "next/link";
 import ReactTooltip from "react-tooltip"; // Tooltip library for React
 
 // Dynamically import ReactQuill (so it doesn't cause issues during SSR)
@@ -181,7 +183,7 @@ export default function Page() {
 
     // Ensure content is defined
     formData.append("content", content || "");
-    console.log(formData)
+    console.log(formData);
 
     const baseUrl = getBackendBase();
 
@@ -208,6 +210,15 @@ export default function Page() {
 
   return (
     <div className="max-w-7xl mx-auto p-6 bg-transparent text-white rounded-xl">
+      <div className="flex items-center gap-3 mb-4">
+        <Link
+          href="/dashboard/pages"
+          className="inline-flex items-center gap-1 text-sm text-neutral-400 hover:text-white"
+        >
+          <ArrowLeft size={16} />
+          Back to Pages
+        </Link>
+      </div>
       <h1 className="text-3xl font-semibold mb-6">Edit Page</h1>
 
       {/* Display Service Information */}

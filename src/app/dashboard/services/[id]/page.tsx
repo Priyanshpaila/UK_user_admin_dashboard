@@ -2,15 +2,28 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { Loader2, Save, Upload, X, Plus } from "lucide-react";
+import { Loader2, Save, Upload, X, Plus, ArrowLeft } from "lucide-react";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { getServiceApi, getBackendBase } from "../../../../api";
 import { toast, ToastContainer } from "react-toastify";
+import Link from "next/link";
 import "react-toastify/dist/ReactToastify.css";
 
-const DEFAULT_FLOW_OPTIONS = ["Treatments", "Login", "RAF", "Calendar", "Payment"];
+const DEFAULT_FLOW_OPTIONS = [
+  "Treatments",
+  "Login",
+  "RAF",
+  "Calendar",
+  "Payment",
+];
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+function SectionCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="p-6 rounded-xl border border-neutral-800 bg-neutral-900 shadow-md">
       <h2 className="text-xl font-semibold mb-4 tracking-wide text-white">
@@ -147,7 +160,9 @@ export default function EditServicePage() {
   // image preview + file + original path
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [existingImagePath, setExistingImagePath] = useState<string | null>(null);
+  const [existingImagePath, setExistingImagePath] = useState<string | null>(
+    null
+  );
 
   const [bookingFlow, setBookingFlow] = useState<string[]>([]);
   const [reorderFlow, setReorderFlow] = useState<string[]>([]);
@@ -241,7 +256,10 @@ export default function EditServicePage() {
     try {
       const formatFlow = (arr: string[]) =>
         Object.fromEntries(
-          Array.from({ length: 6 }).map((_, i) => [`step${i + 1}`, arr[i] ?? null])
+          Array.from({ length: 6 }).map((_, i) => [
+            `step${i + 1}`,
+            arr[i] ?? null,
+          ])
         );
 
       const booking = formatFlow(bookingFlow);
@@ -303,6 +321,15 @@ export default function EditServicePage() {
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-10">
       <ToastContainer position="top-right" autoClose={3000} />
+      <div className="flex items-center gap-3">
+        <Link
+          href="/dashboard/services"
+          className="inline-flex items-center gap-1 text-sm text-neutral-400 hover:text-white"
+        >
+          <ArrowLeft size={16} />
+          Back to Services
+        </Link>
+      </div>
 
       <h1 className="text-3xl font-semibold tracking-wide mb-4">
         Edit Service

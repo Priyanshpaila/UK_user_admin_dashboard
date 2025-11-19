@@ -328,7 +328,7 @@ export async function updateUserApi(userId: string, payload: any) {
   const url = `${base}/users/${userId}`; // Construct the URL using the userId
 
   // Get the token from local storage or a global auth state (use your own method of getting it)
-  const token = localStorage.getItem("auth_token");  // Adjust this based on your token storage method
+  const token = localStorage.getItem("session_token");  // Adjust this based on your token storage method
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -341,6 +341,28 @@ export async function updateUserApi(userId: string, payload: any) {
       "Content-Type": "application/json",  // Specify content type for the payload
     },
     body: JSON.stringify(payload),  // Send the updated user data
+  });
+}
+
+
+// POST /users -> Create a new user
+export async function createUserApi(payload: any) {
+  const base = getBackendBase();
+  const url = `${base}/users`;
+
+  const token = localStorage.getItem("session_token");
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<any>(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,      // Bearer token
+      "Content-Type": "application/json",    // JSON body
+    },
+    body: JSON.stringify(payload),
   });
 }
 
