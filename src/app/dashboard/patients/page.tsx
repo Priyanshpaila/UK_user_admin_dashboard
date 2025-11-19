@@ -106,12 +106,7 @@ export default function PatientsPage() {
         </Link>
       </div>
 
-      {/* Error message */}
-      {error && !loading && (
-        <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
-      )}
+
 
       {/* Loading State */}
       {loading && (
