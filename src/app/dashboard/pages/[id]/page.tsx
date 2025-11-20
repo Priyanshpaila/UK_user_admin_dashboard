@@ -56,35 +56,61 @@ export default function Page() {
   const [serviceId, setServiceId] = useState("");
 
   // Fetch service data when the page loads
-  useEffect(() => {
-    const fetchService = async () => {
-      try {
-        const data = await getServiceApi(id);
-        setService(data); // Set the fetched data to state
-        setServiceId(data._id);
-        setTitle(data.name);
-        setSlug(data.slug);
-        setDescription(data.description);
-        setContent(data.content);
-        setMetaTitle(data.meta_title);
-        setMetaDescription(data.meta_description);
-        setMetaKeywords(data.meta.keywords.join(", "));
-        setTemplate(data.template);
-        setVisibility(data.visibility);
-        setStatus(data.status);
-        setActive(data.active);
-        setGallery(data.gallery || []);
-      } catch (error) {
-        console.error("Error fetching service:", error);
-      } finally {
-        setLoading(false); // Set loading to false once data is fetched
-      }
-    };
+useEffect(() => {
+  const fetchService = async () => {
+    try {
+      const data = await getServiceApi(id);
 
-    if (id) {
-      fetchService();
+      setService(data);
+
+      // MAIN BASIC FIELDS
+      setServiceId(data._id ?? "");
+      setTitle(data.name ?? "");
+      setSlug(data.slug ?? "");
+      setDescription(data.description ?? "");
+
+      // BASIC CONTENT
+      setContent(data.content ?? "");
+
+      // META FIELDS — safe even if missing
+      setMetaTitle(data.meta_title ?? "");
+      setMetaDescription(data.meta_description ?? "");
+
+      // meta keywords safe-parsing
+      if (data.meta && Array.isArray(data.meta.keywords)) {
+        setMetaKeywords(data.meta.keywords.join(", "));
+      } else {
+        setMetaKeywords("");
+      }
+
+      // TEMPLATE / VISIBILITY / STATUS
+      setTemplate(data.template ?? "default");
+      setVisibility(data.visibility ?? "public");
+      setStatus(data.status ?? "published");
+
+      // ACTIVE (Boolean)
+      setActive(typeof data.active === "boolean" ? data.active : true);
+
+      // GALLERY — if stored as paths, prepend base URL
+      if (Array.isArray(data.gallery)) {
+        const base = getBackendBase().replace("/api", "");
+        const formattedGallery = data.gallery.map((img: string) =>
+          img.startsWith("/") ? base + img : img
+        );
+        setGallery(formattedGallery);
+      } else {
+        setGallery([]);
+      }
+    } catch (error) {
+      console.error("Error fetching service:", error);
+    } finally {
+      setLoading(false);
     }
-  }, [id]);
+  };
+
+  if (id) fetchService();
+}, [id]);
+
 
   // Register Quill modules when ReactQuill is initialized
   useEffect(() => {
