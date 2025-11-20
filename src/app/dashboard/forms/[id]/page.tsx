@@ -10,10 +10,11 @@ import {
   Save,
   ArrowLeft,
 } from "lucide-react";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { createClinicFormApi, getBackendBase } from "../../../../api";
-import Link from "next/link";
+import { getBackendBase, updateClinicFormApi } from "../../../../api";
 
 /* ---------- Types aligned with backend ---------- */
 
@@ -25,7 +26,7 @@ type FieldType =
   | "textarea"
   | "date"
   | "select"
-  | "dropdown" // UX-only; backend gets type "select" + multiple = false
+  | "dropdown"
   | "radio"
   | "checkbox"
   | "file"
@@ -54,7 +55,7 @@ type BaseField = {
   id: string;
   type: FieldType;
   label: string;
-  key: string; // used as data.key in backend
+  key: string;
   required?: boolean;
   helpText?: string;
   showIf?: ShowIf;
@@ -104,49 +105,6 @@ function createId() {
   return Math.random().toString(36).slice(2, 9);
 }
 
-function defaultLabelForType(type: FieldType) {
-  switch (type) {
-    case "section":
-      return "Section title";
-    case "text":
-      return "Text input";
-    case "email":
-      return "Email";
-    case "number":
-      return "Number";
-    case "textarea":
-      return "Textarea";
-    case "date":
-      return "Date";
-    case "select":
-      return "Select (multi)";
-    case "dropdown":
-      return "Dropdown";
-    case "radio":
-      return "Radio group";
-    case "checkbox":
-      return "Checkbox group";
-    case "file":
-      return "File upload";
-    case "signature":
-      return "Signature";
-    case "textBlock":
-      return "Text block";
-    case "divider":
-      return "Divider";
-    case "image":
-      return "Image";
-    case "pageBreak":
-      return "Page break";
-    default:
-      return "Field";
-  }
-}
-
-function defaultKeyForType(type: FieldType) {
-  return type + "_" + createId();
-}
-
 function defaultShowIf(): ShowIf {
   return {
     enabled: false,
@@ -155,62 +113,6 @@ function defaultShowIf(): ShowIf {
     in: [],
     truthy: false,
     notEquals: null,
-  };
-}
-
-function createDefaultField(type: FieldType): FormField {
-  const id = createId();
-  const base: BaseField = {
-    id,
-    type,
-    label: defaultLabelForType(type),
-    key: defaultKeyForType(type),
-    required: false,
-    showIf: defaultShowIf(),
-  };
-
-  if (["select", "dropdown", "radio", "checkbox"].includes(type)) {
-    const opts: Option[] = [
-      { id: createId(), label: "Option 1", value: "option_1" },
-      { id: createId(), label: "Option 2", value: "option_2" },
-    ];
-    return {
-      ...base,
-      options: opts,
-      multiple: type === "select", // dropdown = single, select = multi
-    };
-  }
-
-  if (type === "textBlock") {
-    return {
-      ...base,
-      content: "This is a static text block. You can edit this content.",
-    };
-  }
-
-  if (type === "image") {
-    return {
-      ...base,
-      imageUrl: "",
-      helpText: "Paste image URL or configure later.",
-    };
-  }
-
-  if (type === "file") {
-    return {
-      ...base,
-      fileMultiple: true,
-      helpText: "Max 10MB. PDF or image.",
-    };
-  }
-
-  if (type === "divider" || type === "pageBreak" || type === "section") {
-    return base;
-  }
-
-  return {
-    ...base,
-    placeholder: "",
   };
 }
 
@@ -232,9 +134,17 @@ function labelToTypeValue(label: string) {
     .replace(/^_+|_+$/g, "");
 }
 
-/* ---------- Page Component ---------- */
+/* ---------- Edit Page ---------- */
 
-export default function Page() {
+export default function EditClinicFormPage() {
+  const params = useParams();
+  const router = useRouter();
+  const rawId = params?.id;
+  const id = Array.isArray(rawId) ? rawId[0] : (rawId as string | undefined);
+
+  // top-level loading
+  const [pageLoading, setPageLoading] = useState(true);
+
   // ----- Meta / header fields -----
   const [formName, setFormName] = useState("");
   const [description, setDescription] = useState("");
@@ -271,7 +181,7 @@ export default function Page() {
     [fields, selectedFieldId]
   );
 
-  /* ---------- Load services for dropdown ---------- */
+  /* ---------- load services ---------- */
 
   useEffect(() => {
     const loadServices = async () => {
@@ -279,9 +189,7 @@ export default function Page() {
         setServicesLoading(true);
         const base = getBackendBase();
         const res = await fetch(`${base}/services`);
-        if (!res.ok) {
-          throw new Error("Failed to fetch services");
-        }
+        if (!res.ok) throw new Error("Failed to fetch services");
         const json = await res.json();
         const list: ServiceLite[] = (json.data || json || []).map((s: any) => ({
           _id: s._id,
@@ -296,7 +204,6 @@ export default function Page() {
         setServicesLoading(false);
       }
     };
-
     loadServices();
   }, []);
 
@@ -312,7 +219,220 @@ export default function Page() {
     setServiceSlug(svc.slug);
   };
 
-  /* ---------- Form type adding ---------- */
+  /* ---------- parse backend schema -> FormField[] ---------- */
+
+  function parseBackendFieldToFormField(f: any): FormField {
+    const type: string = f.type;
+    const data = f.data || {};
+    const showIf: ShowIf = {
+      enabled: !!data.showIf?.enabled,
+      field: data.showIf?.field ?? null,
+      equals: data.showIf?.equals ?? null,
+      in: data.showIf?.in ?? [],
+      truthy: !!data.showIf?.truthy,
+      notEquals: data.showIf?.notEquals ?? null,
+    };
+
+    const base: BaseField = {
+      id: createId(),
+      type: "text",
+      label: data.label ?? "",
+      key: data.key ?? createId(),
+      required: !!data.required,
+      helpText: data.help ?? null,
+      showIf,
+    };
+
+    // map types
+    if (type === "section") {
+      return {
+        ...base,
+        type: "section",
+      };
+    }
+
+    if (type === "textarea") {
+      return {
+        ...base,
+        type: "textarea",
+        placeholder: data.placeholder ?? "",
+        hidden: !!data.hidden,
+        disabled: !!data.disabled,
+      };
+    }
+
+    if (type === "date") {
+      return {
+        ...base,
+        type: "date",
+        placeholder: "",
+      };
+    }
+
+    if (type === "select") {
+      const optsArray =
+        data.options?.map((o: any) => ({
+          id: createId(),
+          label: o.label,
+          value: o.value,
+        })) || [];
+      const multiple = !!data.multiple;
+      return {
+        ...base,
+        type: multiple ? "select" : "dropdown",
+        multiple,
+        options: optsArray,
+      };
+    }
+
+    if (type === "radio") {
+      const optsArray =
+        data.options?.map((o: any) => ({
+          id: createId(),
+          label: o.label,
+          value: o.value,
+        })) || [];
+      return {
+        ...base,
+        type: "radio",
+        options: optsArray,
+      };
+    }
+
+    if (type === "checkbox") {
+      const optsArray =
+        data.options?.map((o: any) => ({
+          id: createId(),
+          label: o.label,
+          value: o.value,
+        })) || [];
+      return {
+        ...base,
+        type: "checkbox",
+        options: optsArray,
+        multiple: true,
+      };
+    }
+
+    if (type === "file_upload") {
+      return {
+        ...base,
+        type: "file",
+        fileMultiple: !!data.multiple,
+      };
+    }
+
+    if (type === "text_block") {
+      return {
+        ...base,
+        type: "textBlock",
+        content: data.content ?? "",
+      };
+    }
+
+    if (type === "image") {
+      return {
+        ...base,
+        type: "image",
+        imageUrl: data.url ?? "",
+      };
+    }
+
+    if (type === "signature") {
+      return {
+        ...base,
+        type: "signature",
+      };
+    }
+
+    if (type === "divider") {
+      return {
+        ...base,
+        type: "divider",
+      };
+    }
+
+    if (type === "page_break") {
+      return {
+        ...base,
+        type: "pageBreak",
+      };
+    }
+
+    // default: text input with inputType
+    const inputType = data.inputType as
+      | "text"
+      | "email"
+      | "number"
+      | "date"
+      | undefined;
+
+    const mappedType: FieldType =
+      inputType === "email"
+        ? "email"
+        : inputType === "number"
+        ? "number"
+        : inputType === "date"
+        ? "date"
+        : "text";
+
+    return {
+      ...base,
+      type: mappedType,
+      placeholder: data.placeholder ?? "",
+      hidden: !!data.hidden,
+      disabled: !!data.disabled,
+    };
+  }
+
+  /* ---------- load existing form ---------- */
+
+  useEffect(() => {
+    if (!id) return;
+
+    const loadForm = async () => {
+      try {
+        setPageLoading(true);
+        const base = getBackendBase();
+        const res = await fetch(`${base}/clinic-forms/${id}`);
+        if (!res.ok) throw new Error("Failed to fetch form");
+        const form = await res.json();
+
+        // meta
+        setFormName(form.name || "");
+        setDescription(form.description || "");
+        setServiceId(form.service_id || "");
+        setServiceSlug(form.service_slug || "");
+        setTreatmentSlug(form.treatment_slug || "");
+        setIsActive(form.is_active ?? true);
+        setRafStatus(form.raf_status ?? "draft");
+        setFormType(form.form_type || "raf");
+
+        // ensure current form_type is in options
+        if (form.form_type && !formTypeOptions.includes(form.form_type)) {
+          setFormTypeOptions((prev) => [...prev, form.form_type]);
+        }
+
+        // schema
+        const incomingSchema = form.schema || [];
+        const parsedFields: FormField[] = incomingSchema.map(
+          parseBackendFieldToFormField
+        );
+        setFields(parsedFields);
+        if (parsedFields.length) setSelectedFieldId(parsedFields[0].id);
+      } catch (err) {
+        console.error(err);
+        toast.error("Failed to load form");
+      } finally {
+        setPageLoading(false);
+      }
+    };
+
+    loadForm();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  /* ---------- form type adding ---------- */
 
   const handleAddFormType = () => {
     const slug = labelToTypeValue(newFormTypeLabel);
@@ -334,36 +454,28 @@ export default function Page() {
 
   /* ---------- Builder handlers ---------- */
 
-  const handleAddField = (type: FieldType) => {
-    const newField = createDefaultField(type);
-    setFields((prev) => [...prev, newField]);
-    setSelectedFieldId(newField.id);
+  const updateField = (fid: string, patch: Partial<FormField>) => {
+    setFields((prev) => prev.map((f) => (f.id === fid ? { ...f, ...patch } : f)));
   };
 
-  const updateField = (id: string, patch: Partial<FormField>) => {
-    setFields((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...patch } : f))
-    );
-  };
-
-  const updateShowIf = (id: string, patch: Partial<ShowIf>) => {
+  const updateShowIf = (fid: string, patch: Partial<ShowIf>) => {
     setFields((prev) =>
       prev.map((f) => {
-        if (f.id !== id) return f;
+        if (f.id !== fid) return f;
         const current = f.showIf || defaultShowIf();
         return { ...f, showIf: { ...current, ...patch } };
       })
     );
   };
 
-  const deleteField = (id: string) => {
-    setFields((prev) => prev.filter((f) => f.id !== id));
-    if (selectedFieldId === id) setSelectedFieldId(null);
+  const deleteField = (fid: string) => {
+    setFields((prev) => prev.filter((f) => f.id !== fid));
+    if (selectedFieldId === fid) setSelectedFieldId(null);
   };
 
-  const moveField = (id: string, direction: "up" | "down") => {
+  const moveField = (fid: string, direction: "up" | "down") => {
     setFields((prev) => {
-      const index = prev.findIndex((f) => f.id === id);
+      const index = prev.findIndex((f) => f.id === fid);
       if (index === -1) return prev;
       const newIndex = direction === "up" ? index - 1 : index + 1;
       if (newIndex < 0 || newIndex >= prev.length) return prev;
@@ -419,7 +531,7 @@ export default function Page() {
     );
   };
 
-  /* ---------- Build backend-compatible schema ---------- */
+  /* ---------- build backend schema from fields ---------- */
 
   const apiSchema = useMemo(
     () =>
@@ -590,11 +702,8 @@ export default function Page() {
               },
             };
 
-          // text, email, number -> "text" with inputType
-          case "text":
-          case "email":
-          case "number":
           default:
+            // text/email/number/date (text-based)
             return {
               type: "text",
               data: {
@@ -619,7 +728,7 @@ export default function Page() {
       name: formName || "Untitled form",
       description: description || "",
       schema: apiSchema,
-      service_id: serviceId || "",
+      service_id: serviceId || undefined,
       service_slug: serviceSlug || "",
       treatment_slug: treatmentSlug || "",
       version: 1,
@@ -653,6 +762,7 @@ export default function Page() {
   };
 
   const handleSave = async () => {
+    if (!id) return;
     if (!formName.trim()) {
       toast.error("Please enter a form name");
       return;
@@ -664,12 +774,12 @@ export default function Page() {
 
     try {
       setSaving(true);
-      await createClinicFormApi(formPayload);
-      toast.success("Form created successfully");
-      // Optionally reset state here
+      await updateClinicFormApi(id, formPayload);
+      toast.success("Form updated successfully");
+      router.push("/dashboard/forms");
     } catch (err) {
       console.error(err);
-      toast.error("Failed to create form");
+      toast.error("Failed to update form");
     } finally {
       setSaving(false);
     }
@@ -677,31 +787,52 @@ export default function Page() {
 
   /* ---------- UI ---------- */
 
+  if (!id) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-10 text-neutral-100">
+        <p>Invalid form id</p>
+      </div>
+    );
+  }
+
+  if (pageLoading) {
+    return (
+      <div className="flex items-center justify-center h-[60vh] text-neutral-400">
+        <ToastContainer position="top-right" autoClose={3000} />
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 border-2 border-neutral-700 border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm">Loading form...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 text-neutral-100">
       <ToastContainer position="top-right" autoClose={3000} />
 
-      <Link
-        href="/dashboard/forms"
-        className="inline-flex items-center gap-1 text-xs font-medium text-neutral-400 hover:text-neutral-100"
-      >
-        <ArrowLeft size={14} />
-        Back to Forms
-      </Link>
-
       {/* Top header + actions */}
       <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl sm:text-3xl font-semibold">
-            Create Clinic Form
-          </h1>
-          <p className="text-sm text-neutral-400">
-            Design a dynamic form and save it directly to{" "}
-            <span className="font-semibold text-neutral-100">
-              /clinic-forms
-            </span>
-            .
-          </p>
+        <div className="space-y-2">
+          <Link
+            href="/dashboard/forms"
+            className="inline-flex items-center gap-1 text-xs text-neutral-400 hover:text-neutral-100"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to forms
+          </Link>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-semibold">
+              Edit Clinic Form
+            </h1>
+            <p className="text-sm text-neutral-400">
+              Update fields and metadata. Changes will be saved to{" "}
+              <span className="font-semibold text-neutral-100">
+                /clinic-forms/{id}
+              </span>
+              .
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -720,7 +851,7 @@ export default function Page() {
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs sm:text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-60 shadow-lg"
           >
             <Save className="h-4 w-4" />
-            {saving ? "Saving..." : "Save form"}
+            {saving ? "Saving..." : "Save changes"}
           </button>
         </div>
       </div>
@@ -760,7 +891,13 @@ export default function Page() {
               Service (optional)
             </label>
             <select
-              value={serviceId || (serviceSlug === "" ? "global" : "")}
+              value={
+                serviceId
+                  ? serviceId
+                  : serviceSlug === ""
+                  ? "global"
+                  : ""
+              }
               onChange={(e) => handleServiceChange(e.target.value)}
               className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
             >
@@ -834,8 +971,7 @@ export default function Page() {
                 ))}
               </select>
               <p className="mt-1 text-[11px] text-neutral-500">
-                Under the hood this is saved as snake_case, e.g.{" "}
-                <code>advice_notes</code>.
+                Saved as snake_case, e.g. <code>advice_notes</code>.
               </p>
 
               <div className="mt-2 flex items-center gap-2">
@@ -867,7 +1003,7 @@ export default function Page() {
                 onChange={(e) => setIsActive(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
               />
-              <label
+            <label
                 htmlFor="active-toggle"
                 className="text-xs text-neutral-300"
               >
@@ -894,7 +1030,7 @@ export default function Page() {
 
       {/* Main 3-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1.6fr)_minmax(0,1.1fr)] gap-5">
-        {/* Palette */}
+        {/* Palette (read-only in edit; but you can still add fields) */}
         <aside className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-3">
           <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em] mb-3">
             Field types
@@ -904,7 +1040,86 @@ export default function Page() {
               <button
                 key={item.type}
                 type="button"
-                onClick={() => handleAddField(item.type)}
+                onClick={() => {
+                  const newField: FormField = (() => {
+                    // reuse mapping logic from create page; here we create minimal defaults:
+                    const base: BaseField = {
+                      id: createId(),
+                      type: item.type,
+                      label: item.label,
+                      key: `${item.type}_${createId()}`,
+                      required: false,
+                      showIf: defaultShowIf(),
+                    };
+
+                    if (
+                      item.type === "select" ||
+                      item.type === "dropdown" ||
+                      item.type === "radio" ||
+                      item.type === "checkbox"
+                    ) {
+                      return {
+                        ...base,
+                        options: [
+                          {
+                            id: createId(),
+                            label: "Option 1",
+                            value: "option_1",
+                          },
+                          {
+                            id: createId(),
+                            label: "Option 2",
+                            value: "option_2",
+                          },
+                        ],
+                        multiple: item.type === "select",
+                      };
+                    }
+
+                    if (item.type === "textBlock") {
+                      return {
+                        ...base,
+                        type: "textBlock",
+                        content:
+                          "This is a static text block. You can edit this content.",
+                      };
+                    }
+
+                    if (item.type === "image") {
+                      return {
+                        ...base,
+                        type: "image",
+                        imageUrl: "",
+                        helpText: "Paste image URL or configure later.",
+                      };
+                    }
+
+                    if (item.type === "file") {
+                      return {
+                        ...base,
+                        type: "file",
+                        fileMultiple: true,
+                        helpText: "Max 10MB. PDF or image.",
+                      };
+                    }
+
+                    if (
+                      item.type === "divider" ||
+                      item.type === "pageBreak" ||
+                      item.type === "section"
+                    ) {
+                      return { ...base, type: item.type };
+                    }
+
+                    return {
+                      ...base,
+                      placeholder: "",
+                    };
+                  })();
+
+                  setFields((prev) => [...prev, newField]);
+                  setSelectedFieldId(newField.id);
+                }}
                 className="w-full text-left text-sm px-3 py-1.5 rounded-md bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800/80 hover:border-blue-500/60 text-neutral-100 transition-colors"
               >
                 {item.label}
@@ -926,8 +1141,7 @@ export default function Page() {
 
           {fields.length === 0 ? (
             <div className="mt-4 rounded-xl border border-dashed border-neutral-700 bg-neutral-900/70 px-4 py-6 text-center text-sm text-neutral-400">
-              No fields yet. Use the field types on the left to start building
-              your form.
+              No fields yet. Use the field types on the left to add fields.
             </div>
           ) : (
             <div className="space-y-3">
@@ -1161,13 +1375,9 @@ export default function Page() {
               </div>
 
               {/* Required */}
-              {![
-                "section",
-                "divider",
-                "textBlock",
-                "image",
-                "pageBreak",
-              ].includes(selectedField.type) && (
+              {!["section", "divider", "textBlock", "image", "pageBreak"].includes(
+                selectedField.type
+              ) && (
                 <div className="flex items-center gap-2">
                   <input
                     id="required-toggle"
@@ -1321,7 +1531,9 @@ export default function Page() {
                         />
                         <button
                           type="button"
-                          onClick={() => deleteOption(selectedField.id, opt.id)}
+                          onClick={() =>
+                            deleteOption(selectedField.id, opt.id)
+                          }
                           className="p-1 rounded-md text-red-400 hover:bg-red-500/10"
                         >
                           <Trash2 className="h-3 w-3" />
@@ -1444,7 +1656,8 @@ export default function Page() {
           {/* JSON preview */}
           <div className="pt-4 border-t border-neutral-800 mt-4">
             <p className="text-xs font-semibold text-neutral-300 mb-2">
-              Payload preview (what will be sent to <code>/clinic-forms</code>)
+              Payload preview (what will be sent to{" "}
+              <code>/clinic-forms/{id}</code>)
             </p>
             <pre className="max-h-60 overflow-auto rounded-md bg-neutral-950 border border-neutral-800 p-2 text-[10px] leading-relaxed text-neutral-300">
               {JSON.stringify(formPayload, null, 2)}

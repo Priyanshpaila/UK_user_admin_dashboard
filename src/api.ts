@@ -448,3 +448,76 @@ export async function updateScheduleApi(
     body: JSON.stringify(payload),
   });
 }
+
+/* ------------------- Clinic Forms APIs ------------------- */
+
+export type ClinicFormField = {
+  type:
+    | "section"
+    | "text"
+    | "email"
+    | "number"
+    | "textarea"
+    | "date"
+    | "select"
+    | "radio"
+    | "checkbox"
+    | "file_upload"
+    | "signature"
+    | "text_block"
+    | "divider"
+    | "image"
+    | "page_break"
+    | string;
+  data: any;
+};
+
+export type ClinicFormPayload = {
+  name: string;
+  description?: string;
+  schema: ClinicFormField[];
+
+  service_id: string;
+  service_slug: string;
+  treatment_slug?: string;
+
+  version?: number;
+  is_active?: boolean;
+
+  raf_schema?: any[];
+  raf_version?: number;
+  raf_status?: string;
+
+  form_type?: string; // e.g. "raf"
+};
+
+export async function createClinicFormApi(payload: ClinicFormPayload) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/clinic-forms`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export type ClinicForm = ClinicFormPayload & {
+  _id: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export async function getClinicFormsApi() {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/clinic-forms`);
+}
+
+export async function updateClinicFormApi(
+  id: string,
+  payload: Partial<ClinicFormPayload>
+) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/clinic-forms/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}

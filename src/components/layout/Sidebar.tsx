@@ -96,8 +96,7 @@ const menu: SidebarEntry[] = [
   {
     group: "Forms",
     items: [
-      { key: "/dashboard/forms/create", label: "Create Form", icon: File },
-      { key: "/dashboard/forms/edit", label: "Edit Form", icon: File },
+      { key: "/dashboard/forms", label: "Forms", icon: File },
     ],
   },
 ];
