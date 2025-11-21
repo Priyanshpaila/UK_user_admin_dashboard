@@ -87,6 +87,26 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 8px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 
+/* Center image when block is aligned center */
+.ql-editor .ql-align-center img {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Right align image */
+.ql-editor .ql-align-right img {
+  display: block;
+  margin-left: auto;
+}
+
+/* Left align image (optional, usually default) */
+.ql-editor .ql-align-left img {
+  display: block;
+  margin-right: auto;
+}
+
+
 @keyframes slideIn {
   from {
     transform: translateX(-100%);
