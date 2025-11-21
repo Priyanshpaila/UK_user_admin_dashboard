@@ -1,8 +1,17 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { getPatientsApi, updateUserApi } from "../../../api";
-import { Plus, Loader2 } from "lucide-react";
+import {
+  Plus,
+  Loader2,
+  Search,
+  UserCircle2,
+  RefreshCw,
+  MapPin,
+  Mail,
+  Phone,
+} from "lucide-react";
 import Link from "next/link";
 
 export default function PatientsPage() {
@@ -10,8 +19,9 @@ export default function PatientsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editingPatient, setEditingPatient] = useState<any | null>(null);
-  const [dobInput, setDobInput] = useState<string>(""); // YYYY-MM-DD for the input
+  const [dobInput, setDobInput] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
 
   /* ----------------------------------------
       FETCH PATIENTS
@@ -35,6 +45,7 @@ export default function PatientsPage() {
     } catch (err) {
       console.error(err);
       setError("Failed to load patients.");
+      setPatients([]);
     } finally {
       setLoading(false);
     }
@@ -63,14 +74,9 @@ export default function PatientsPage() {
         country: editingPatient.country ?? "",
       };
 
-      // --- DOB handling ---
-      // You want: "dob": "1995-08-20"
       if (dobInput) {
-        payload.dob = dobInput; // exactly "YYYY-MM-DD"
+        payload.dob = dobInput; // "YYYY-MM-DD"
       }
-      // If dobInput is empty and backend allows optional, we simply do NOT send dob
-      // If backend requires dob, you can enforce it here:
-      // else { payload.dob = (editingPatient.dob || "").substring(0, 10); }
 
       await updateUserApi(editingPatient._id, payload);
 
@@ -89,87 +95,225 @@ export default function PatientsPage() {
   }, []);
 
   /* ----------------------------------------
+      FILTERED PATIENTS (SEARCH)
+  ---------------------------------------- */
+  const filteredPatients = useMemo(() => {
+    if (!search.trim()) return patients;
+    const q = search.toLowerCase();
+
+    return patients.filter((p) =>
+      [
+        p.firstName,
+        p.lastName,
+        p.email,
+        p.phone,
+        p.city,
+        p.postalcode,
+        p.country,
+      ]
+        .filter(Boolean)
+        .some((val: string) => val.toLowerCase().includes(q))
+    );
+  }, [patients, search]);
+
+  /* ----------------------------------------
       RENDER
   ---------------------------------------- */
   return (
     <div className="max-w-7xl mx-auto px-6 py-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Patients</h1>
-
-        <Link
-          href="/dashboard/patients/create"
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow"
-        >
-          <Plus size={18} />
-          Add Patient
-        </Link>
-      </div>
-
-
-
-      {/* Loading State */}
-      {loading && (
-        <div className="flex justify-center py-16">
-          <Loader2 className="animate-spin text-neutral-400" size={32} />
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold flex items-center gap-2">
+            <UserCircle2 size={22} className="text-neutral-400" />
+            Patients
+          </h1>
+          <p className="text-xs text-neutral-500 mt-1">
+            Managing{" "}
+            <span className="font-medium text-neutral-200">
+              {patients.length}
+            </span>{" "}
+            patient{patients.length === 1 ? "" : "s"}
+          </p>
         </div>
-      )}
 
-      {/* Empty State */}
-      {!loading && patients.length === 0 && (
-        <div className="text-center py-14 border border-neutral-800 bg-neutral-900 rounded-xl">
-          <p className="text-neutral-300">No patients found.</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={fetchPatients}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral-700 text-sm text-neutral-300 hover:bg-neutral-800"
+          >
+            <RefreshCw size={16} className="shrink-0" />
+            Refresh
+          </button>
 
           <Link
             href="/dashboard/patients/create"
-            className="mt-4 inline-flex gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow"
           >
             <Plus size={18} />
-            Create First Patient
+            Add Patient
           </Link>
+        </div>
+      </div>
+
+      {/* Toolbar: search */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-5">
+        <div className="relative w-full md:max-w-sm">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500"
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, email, phone, city…"
+            className="w-full pl-9 pr-3 py-2 rounded-lg bg-neutral-900 border border-neutral-800 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
+
+        {!loading && (
+          <p className="text-xs text-neutral-500">
+            Showing{" "}
+            <span className="font-medium text-neutral-200">
+              {filteredPatients.length}
+            </span>{" "}
+            of{" "}
+            <span className="font-medium text-neutral-200">
+              {patients.length}
+            </span>{" "}
+            patient{patients.length === 1 ? "" : "s"}
+          </p>
+        )}
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <div className="flex flex-col items-center justify-center py-16 border border-neutral-800 bg-neutral-900/60 rounded-xl">
+          <Loader2 className="animate-spin text-neutral-400 mb-3" size={32} />
+          <p className="text-neutral-300 text-sm">Loading patients…</p>
         </div>
       )}
 
-      {/* Patients List */}
-      {!loading && patients.length > 0 && (
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900 divide-y divide-neutral-800">
-          {patients.map((patient) => (
-            <div
-              key={patient._id}
-              className="p-4 flex justify-between items-center hover:bg-neutral-800 transition"
-            >
-              <div>
-                <p className="text-white font-medium">
-                  {patient.firstName} {patient.lastName}
-                </p>
-                <p className="text-neutral-400 text-sm">
-                  {patient.email || "No email"} · {patient.phone || "No phone"}
-                </p>
-                <p className="text-neutral-500 text-xs mt-1 capitalize">
-                  {patient.gender} {patient.city ? `• ${patient.city}` : ""}
-                </p>
-              </div>
+      {/* Empty / Error State */}
+      {!loading && (error || filteredPatients.length === 0) && (
+        <div className="text-center py-14 border border-neutral-800 bg-neutral-900 rounded-xl">
+          <p className="text-neutral-300 mb-2">
+            {error || "No patients match your search."}
+          </p>
 
-              <button
-                onClick={() => {
-                  setEditingPatient(patient);
-                  setDobInput(
-                    patient.dob ? (patient.dob as string).substring(0, 10) : ""
-                  ); // keep YYYY-MM-DD for the input
-                }}
-                className="text-blue-400 hover:underline text-sm"
+          <button
+            onClick={fetchPatients}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-neutral-700 text-sm text-neutral-300 hover:bg-neutral-800 mt-3"
+          >
+            <RefreshCw size={16} />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Patients Grid */}
+      {!loading && filteredPatients.length > 0 && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredPatients.map((patient) => {
+            const fullName = `${patient.firstName ?? ""} ${
+              patient.lastName ?? ""
+            }`.trim();
+            const hasContact = patient.email || patient.phone;
+
+            return (
+              <div
+                key={patient._id}
+                className="group rounded-xl border border-neutral-800 bg-neutral-900/70 hover:bg-neutral-800 transition shadow-sm flex flex-col"
               >
-                Edit
-              </button>
-            </div>
-          ))}
+                <div className="p-4 flex-1 flex flex-col gap-2">
+                  {/* Top row: avatar + name + gender */}
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 text-sm font-semibold text-neutral-200">
+                      {fullName
+                        ? fullName
+                            .split(" ")
+                            .map((s: string) => s[0])
+                            .join("")
+                            .slice(0, 2)
+                            .toUpperCase()
+                        : "PT"}
+                    </div>
+
+                    <div className="flex-1">
+                      <h2 className="text-sm font-semibold text-white line-clamp-1">
+                        {fullName || "Unnamed patient"}
+                      </h2>
+                      <p className="text-[11px] text-neutral-400 capitalize">
+                        {patient.gender || "unspecified"}
+                        {patient.city ? ` • ${patient.city}` : ""}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Email / Phone */}
+                  {hasContact && (
+                    <div className="flex flex-col gap-1 mt-2">
+                      {patient.email && (
+                        <div className="inline-flex items-center gap-1 text-xs text-neutral-300">
+                          <Mail size={12} className="text-neutral-500" />
+                          <span className="truncate">{patient.email}</span>
+                        </div>
+                      )}
+                      {patient.phone && (
+                        <div className="inline-flex items-center gap-1 text-xs text-neutral-300">
+                          <Phone size={12} className="text-neutral-500" />
+                          <span className="truncate">{patient.phone}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Address snippet */}
+                  {(patient.city ||
+                    patient.postalcode ||
+                    patient.country) && (
+                    <div className="mt-2 flex items-center gap-1 text-[11px] text-neutral-400">
+                      <MapPin size={11} className="text-neutral-500" />
+                      <span className="line-clamp-1">
+                        {[patient.city, patient.postalcode, patient.country]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer: actions */}
+                <div className="px-4 py-3 border-t border-neutral-800 flex items-center justify-between">
+                  {/* Simple tag: patient type */}
+                  <span className="text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300 bg-neutral-900/60">
+                    Patient
+                  </span>
+
+                  <button
+                    onClick={() => {
+                      setEditingPatient(patient);
+                      setDobInput(
+                        patient.dob
+                          ? (patient.dob as string).substring(0, 10)
+                          : ""
+                      );
+                    }}
+                    className="text-xs font-medium text-blue-400 group-hover:text-blue-300 hover:underline"
+                  >
+                    Edit details
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* Edit Patient Modal */}
       {editingPatient && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-neutral-900 p-6 rounded-xl max-w-2xl w-full border border-neutral-700 max-h-[90vh] overflow-y-auto">
+          <div className="bg-neutral-900 p-6 rounded-xl max-w-2xl w-full border border-neutral-700 max-h-[90vh] overflow-y-auto shadow-2xl">
             <h2 className="text-2xl font-semibold mb-4">
               Edit Patient – {editingPatient.firstName}{" "}
               {editingPatient.lastName}
@@ -231,7 +375,7 @@ export default function PatientsPage() {
                 </select>
               </div>
 
-              {/* DOB – bound to dobInput (YYYY-MM-DD) */}
+              {/* DOB */}
               <div>
                 <label className="block text-sm text-neutral-300">
                   Date of Birth
