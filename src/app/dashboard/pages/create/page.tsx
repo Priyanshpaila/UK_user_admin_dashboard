@@ -76,64 +76,60 @@ export default function CreatePage() {
     }
   };
 
+  const handleCreatePage = async () => {
+    if (!selectedService) return toast.error("Please select a service");
+    if (!title.trim()) return toast.error("Title is required");
+    if (!slug.trim()) return toast.error("Slug is required");
 
+    setSaving(true);
 
+    try {
+      const keywordsArr = metaKeywords
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
 
-const handleCreatePage = async () => {
-  if (!selectedService) return toast.error("Please select a service");
-  if (!title.trim()) return toast.error("Title is required");
-  if (!slug.trim()) return toast.error("Slug is required");
+      // Whatever meta shape you want
+      const meta = {
+        keywords: keywordsArr,
+        // you can extend this later with background, author, etc.
+        // background: { enabled: false }
+      };
 
-  setSaving(true);
+      const fd = new FormData();
 
-  try {
-    const keywordsArr = metaKeywords
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean);
+      fd.append("title", title);
+      fd.append("slug", slug);
+      fd.append("description", description);
+      fd.append("template", template);
+      fd.append("visibility", visibility);
+      fd.append("status", status);
+      fd.append("active", String(active));
+      fd.append("meta_title", metaTitle);
+      fd.append("meta_description", metaDescription);
 
-    // Whatever meta shape you want
-    const meta = {
-      keywords: keywordsArr,
-      // you can extend this later with background, author, etc.
-      // background: { enabled: false }
-    };
+      // 🔴 IMPORTANT: meta as JSON string
+      fd.append("meta", JSON.stringify(meta));
 
-    const fd = new FormData();
+      fd.append("content", content);
+      fd.append("service_id", selectedService._id);
+      fd.append("published_at", new Date().toISOString());
 
-    fd.append("title", title);
-    fd.append("slug", slug);
-    fd.append("description", description);
-    fd.append("template", template);
-    fd.append("visibility", visibility);
-    fd.append("status", status);
-    fd.append("active", String(active));
-    fd.append("meta_title", metaTitle);
-    fd.append("meta_description", metaDescription);
+      gallery.forEach((file) => {
+        fd.append("gallery", file); // field name must match Multer config
+      });
 
-    // 🔴 IMPORTANT: meta as JSON string
-    fd.append("meta", JSON.stringify(meta));
+      await createPageApi(fd); // keep this as FormData
 
-    fd.append("content", content);
-    fd.append("service_id", selectedService._id);
-    fd.append("published_at", new Date().toISOString());
-
-    gallery.forEach((file) => {
-      fd.append("gallery", file); // field name must match Multer config
-    });
-
-    await createPageApi(fd); // keep this as FormData
-
-    toast.success("Page created successfully!");
-    window.location.href = "/dashboard/pages";
-  } catch (error: any) {
-    console.error(error);
-    toast.error(error?.message || "Failed to create page");
-  } finally {
-    setSaving(false);
-  }
-};
-
+      toast.success("Page created successfully!");
+      window.location.href = "/dashboard/pages";
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error?.message || "Failed to create page");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto p-6 text-white">
@@ -157,11 +153,19 @@ const handleCreatePage = async () => {
             <Loader2 className="animate-spin text-neutral-400" size={28} />
           </div>
         ) : (
+          // inside your <select onChange=...>
+
           <select
             className="w-full bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-md"
             onChange={(e) => {
-              const svc = services.find((s) => s._id === e.target.value);
-              setSelectedService(svc || null);
+              const svc =
+                services.find((s) => s._id === e.target.value) || null;
+              setSelectedService(svc);
+
+              // 🔹 Auto-fill slug from service.slug
+              if (svc?.slug) {
+                setSlug(svc.slug);
+              }
             }}
             defaultValue=""
           >
