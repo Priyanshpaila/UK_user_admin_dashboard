@@ -19,9 +19,12 @@ const QuillEmoji = dynamic(() => import("quill-emoji"), { ssr: false });
 const QuillMention = dynamic(() => import("quill-mention"), { ssr: false });
 const QuillTable = dynamic(() => import("quill-table"), { ssr: false });
 
+/** 🔹 Toolbar now supports font sizes etc. */
 const modules = {
   toolbar: [
-    [{ header: "1" }, { header: "2" }, { font: [] }],
+    [{ header: [1, 2, 3, 4, 5, 6, false] }],
+    [{ font: [] }],
+    [{ size: ["small", false, "large", "huge"] }],
     [{ list: "ordered" }, { list: "bullet" }],
     [{ align: [] }],
     ["bold", "italic", "underline", "strike"],
@@ -29,10 +32,54 @@ const modules = {
     [{ color: [] }, { background: [] }],
     ["blockquote", "code-block"],
     [{ direction: "rtl" }],
-    ["undo", "redo"],
     [{ table: [] }, { insertRow: [] }, { deleteRow: [] }],
     ["emoji", "mention"],
+    ["clean"],
   ],
+};
+
+/** 🔹 Allowed formats so Quill keeps size / align / image formats */
+const formats = [
+  "header",
+  "font",
+  "size",
+  "bold",
+  "italic",
+  "underline",
+  "strike",
+  "color",
+  "background",
+  "align",
+  "list",
+  "bullet",
+  "blockquote",
+  "code-block",
+  "direction",
+  "link",
+  "image",
+  "video",
+  "table",
+  "emoji",
+  "mention",
+];
+
+// 🔹 Helper: use backend base, remove /api at the end, then append image path
+const resolveImageUrl = (imagePath: string) => {
+  if (!imagePath) return "";
+
+  // If already a full URL, just return it
+  if (/^https?:\/\//i.test(imagePath)) {
+    return imagePath;
+  }
+
+  // Ensure path starts with "/"
+  const normalizedPath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase();
+  // remove trailing /api or /api/
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+
+  return `${cleanBase}${normalizedPath}`;
 };
 
 export default function Page() {
@@ -133,12 +180,6 @@ export default function Page() {
     return <div className="flex justify-center py-20">Page not found.</div>;
   }
 
-  const getFullImageUrl = (imagePath: string) => {
-    const baseUrl = getBackendBase();
-    const cleanBaseUrl = baseUrl.replace(/\/api$/, "");
-    return `${cleanBaseUrl}${imagePath}`;
-  };
-
   const handleEditorChange = (value: string) => {
     setContent(value);
   };
@@ -197,10 +238,9 @@ export default function Page() {
       toast.success("Page updated successfully!");
 
       window.location.href = "/dashboard/pages";
-      // you can add toast.success here if you want
     } catch (error) {
       console.error("Error while updating page:", error);
-      // add toast.error here if needed
+      toast.error("Failed to update page");
     }
   };
 
@@ -227,7 +267,7 @@ export default function Page() {
                 <div className="w-20 h-20 bg-neutral-800 rounded-lg overflow-hidden">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={getFullImageUrl(service.image)}
+                    src={resolveImageUrl(service.image)}
                     alt={service.name}
                     className="w-full h-full object-cover"
                   />
@@ -381,6 +421,7 @@ export default function Page() {
             onChange={handleEditorChange}
             theme="snow"
             modules={modules}
+            formats={formats}   // 🔹 enable size + align + image formats
             className="bg-neutral-800 text-white mb-3"
           />
           <h3 className="text-white text-lg">Generated HTML</h3>
@@ -401,7 +442,10 @@ export default function Page() {
           <div className="mt-4 flex flex-wrap gap-2">
             {gallery.map((item, idx) => {
               const src =
-                typeof item === "string" ? item : URL.createObjectURL(item);
+                typeof item === "string"
+                  ? resolveImageUrl(item)
+                  : URL.createObjectURL(item);
+
               return (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img

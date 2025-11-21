@@ -12,19 +12,53 @@ const QuillEmoji = dynamic(() => import("quill-emoji"), { ssr: false });
 const QuillMention = dynamic(() => import("quill-mention"), { ssr: false });
 const QuillTable = dynamic(() => import("quill-table"), { ssr: false });
 
+/** 🔹 Toolbar config – now with font sizes + alignment */
 const modules = {
   toolbar: [
-    [{ header: "1" }, { header: "2" }, { font: [] }],
-    [{ list: "ordered" }, { list: "bullet" }],
-    [{ align: [] }],
+    // Headings
+    [{ header: [1, 2, 3, 4, 5, 6, false] }],
+    // Font family + size
+    [{ font: [] }],
+    [{ size: ["small", false, "large", "huge"] }], // text size dropdown
+    // Inline styles
     ["bold", "italic", "underline", "strike"],
-    ["link", "image", "video"],
     [{ color: [] }, { background: [] }],
+    // Block styles
+    [{ align: [] }],
+    [{ list: "ordered" }, { list: "bullet" }],
     ["blockquote", "code-block"],
+    // Media
+    ["link", "image", "video"],
+    // Tables / extras
     [{ table: [] }],
     ["emoji", "mention"],
+    ["clean"], // remove formatting
   ],
 };
+
+/** 🔹 Allowed formats (important for size + align + image) */
+const formats = [
+  "header",
+  "font",
+  "size",
+  "bold",
+  "italic",
+  "underline",
+  "strike",
+  "color",
+  "background",
+  "align",
+  "list",
+  "bullet",
+  "blockquote",
+  "code-block",
+  "link",
+  "image",
+  "video",
+  "table",
+  "emoji",
+  "mention",
+];
 
 export default function CreatePage() {
   const [services, setServices] = useState<any[]>([]);
@@ -89,11 +123,8 @@ export default function CreatePage() {
         .map((k) => k.trim())
         .filter(Boolean);
 
-      // Whatever meta shape you want
       const meta = {
         keywords: keywordsArr,
-        // you can extend this later with background, author, etc.
-        // background: { enabled: false }
       };
 
       const fd = new FormData();
@@ -107,19 +138,16 @@ export default function CreatePage() {
       fd.append("active", String(active));
       fd.append("meta_title", metaTitle);
       fd.append("meta_description", metaDescription);
-
-      // 🔴 IMPORTANT: meta as JSON string
       fd.append("meta", JSON.stringify(meta));
-
       fd.append("content", content);
       fd.append("service_id", selectedService._id);
       fd.append("published_at", new Date().toISOString());
 
       gallery.forEach((file) => {
-        fd.append("gallery", file); // field name must match Multer config
+        fd.append("gallery", file);
       });
 
-      await createPageApi(fd); // keep this as FormData
+      await createPageApi(fd);
 
       toast.success("Page created successfully!");
       window.location.href = "/dashboard/pages";
@@ -153,8 +181,6 @@ export default function CreatePage() {
             <Loader2 className="animate-spin text-neutral-400" size={28} />
           </div>
         ) : (
-          // inside your <select onChange=...>
-
           <select
             className="w-full bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-md"
             onChange={(e) => {
@@ -162,7 +188,7 @@ export default function CreatePage() {
                 services.find((s) => s._id === e.target.value) || null;
               setSelectedService(svc);
 
-              // 🔹 Auto-fill slug from service.slug
+              // Auto-fill slug from service.slug
               if (svc?.slug) {
                 setSlug(svc.slug);
               }
@@ -275,8 +301,14 @@ export default function CreatePage() {
               onChange={setContent}
               theme="snow"
               modules={modules}
+              formats={formats}  
               className="bg-neutral-800 text-white"
             />
+
+            <h3 className="text-white text-lg mt-4">Generated HTML</h3>
+            <div className="mt-2 p-4 bg-neutral-700 rounded-lg max-h-64 overflow-auto text-sm">
+              <div className="whitespace-pre-wrap text-white">{content}</div>
+            </div>
           </div>
 
           {/* Gallery */}
