@@ -130,6 +130,8 @@ export async function getServiceApi(id: string | string[]) {
   return jsonFetch<any>(url);
 }
 
+
+
 export async function updateServiceApi(
   id: string | string[],
   payload: ServicePayload
@@ -521,3 +523,103 @@ export async function updateClinicFormApi(
     body: JSON.stringify(payload),
   });
 }
+
+
+/* ------------------- Pages APIs (with FormData for images) ------------------- */
+
+export async function getPagesApi() {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/pages`);
+}
+
+export async function getPageByIdApi(id: string) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/pages/${id}`);
+}
+
+export type PageMetaBackground = {
+  enabled: boolean;
+  background_upload?: string; // stored path in DB
+  url?: string;               // public URL
+  blur?: number;
+  overlay?: number;
+};
+
+export type PageMeta = {
+  keywords?: string[];
+  author?: string;
+  background?: PageMetaBackground;
+  [key: string]: any;
+};
+
+export type PageFormPayload = {
+  title: string;
+  slug: string;
+  description: string;
+  template: string;
+  visibility: string;
+  active: boolean;
+  meta_title: string;
+  meta_description: string;
+  meta: PageMeta;
+  status: string;
+  content: string;
+  service_id: string;
+  galleryFiles?: File[];   // for upload
+  galleryExisting?: string[]; // existing URLs when editing
+};
+
+export const createPageApi = async (formData: FormData) => {
+  const base = getBackendBase();
+
+  const res = await fetch(`${base}/pages`, {
+    method: "POST",
+    body: formData, // no headers here
+  });
+
+  if (!res.ok) throw new Error(await res.text());
+
+  return res.json();
+};
+
+export async function updatePageApi(id: string, payload: PageFormPayload) {
+  const base = getBackendBase();
+  const url = `${base}/pages/${id}`;
+
+  const fd = new FormData();
+
+  fd.append("title", payload.title);
+  fd.append("slug", payload.slug);
+  fd.append("description", payload.description);
+  fd.append("template", payload.template);
+  fd.append("visibility", payload.visibility);
+  fd.append("active", String(payload.active));
+  fd.append("meta_title", payload.meta_title);
+  fd.append("meta_description", payload.meta_description);
+  fd.append("status", payload.status);
+  fd.append("content", payload.content);
+  fd.append("service_id", payload.service_id);
+  fd.append("published_at", new Date().toISOString());
+  fd.append("meta", JSON.stringify(payload.meta || {}));
+
+  (payload.galleryExisting || []).forEach((g) => {
+    fd.append("gallery_existing", g);
+  });
+
+  (payload.galleryFiles || []).forEach((file) => {
+    fd.append("gallery", file);
+  });
+
+  const res = await fetch(url, {
+    method: "PUT",
+    body: fd,
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(txt || "Failed to update page");
+  }
+
+  return res.json();
+}
+
