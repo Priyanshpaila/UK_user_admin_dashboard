@@ -22,7 +22,8 @@ export function getBackendBase(): string {
   const parts = hostname.split(".");
 
   // Check if there is a subdomain (at least 3 parts: subdomain.domain.tld)
-  const hasSubdomain = parts.length >= 2;
+  // const hasSubdomain = parts.length >= 2; //for local host
+  const hasSubdomain = parts.length >= 4;// for our live domain : adminukproject.rrispat.in
 
   if (!hasSubdomain) {
     // If there's no subdomain, fall back to NEXT_PUBLIC_BASE_URL or localhost
