@@ -660,3 +660,148 @@ export async function uploadPageImageApi(
   return data as PageImageUploadResponse;
 }
 
+/* ------------------- Orders APIs ------------------- */
+
+// Shape of one item inside meta.lines
+export type OrderLine = {
+  index: number;
+  name: string;
+  qty: number;
+  variation: string | null;
+};
+
+// Shape of one item inside meta.items
+export type OrderItemMeta = {
+  sku: string;
+  name: string;
+  variations: string | null;
+  strength: string | null;
+  qty: number;
+  unitMinor: number;
+  totalMinor: number;
+  variation: string | null;
+};
+
+// Meta object (kept flexible with index signature)
+export type OrderMeta = {
+  lines?: OrderLine[];
+  type?: string;
+  items?: OrderItemMeta[];
+  selectedProduct?: {
+    name: string;
+    variation: string | null;
+    strength: string | null;
+    qty: number;
+    unitMinor: number;
+    totalMinor: number;
+  };
+  createdAt?: string;
+  totalMinor?: number;
+  service_slug?: string;
+  service?: string;
+  appointment_start_at?: string;
+  payment_status?: string;
+  email?: string;
+  [key: string]: any; // allow extra fields like formsQA, admin_notes, etc.
+};
+
+export type OrderDto = {
+  _id: string;
+  user_id: string;
+  reference: string;
+  status: string;
+  payment_status: string;
+  paid_at: string | null;
+  approved_at: string | null;
+  meta: OrderMeta;
+  service_id: string;
+  deleted_at: string | null;
+  schedule_id: string;
+  appointment_status: string;
+  is_appointment_booked: boolean;
+  first_name: string;
+  last_name: string;
+  email: string;
+  start_at: string;
+  end_at: string;
+  booked_by: string | null;
+  calendly_event_uuid: string | null;
+  calendly_invitee_uuid: string | null;
+  patient_name: string;
+  service_slug: string;
+  service_name: string;
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+};
+
+export type OrdersListMeta = {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type OrdersListResponse = {
+  data: OrderDto[];
+  meta: OrdersListMeta;
+};
+
+// Optional query filters – matches your QueryOrderDto on backend
+export type OrdersQuery = {
+  user_id?: string;
+  reference?: string;
+  status?: string;
+  payment_status?: string;
+  booking_status?: string;
+  include_deleted?: boolean;
+  page?: number;
+  limit?: number;
+};
+
+/**
+ * GET /orders – fetch orders list
+ * Example: getOrdersApi({ page: 1, limit: 20 })
+ */
+export async function getOrdersApi(
+  query: OrdersQuery = {}
+): Promise<OrdersListResponse> {
+  const base = getBackendBase(); // e.g. http://localhost:8000/api
+
+  const params = new URLSearchParams();
+
+  if (query.user_id) params.set("user_id", query.user_id);
+  if (query.reference) params.set("reference", query.reference);
+  if (query.status) params.set("status", query.status);
+  if (query.payment_status) params.set("payment_status", query.payment_status);
+  if (query.booking_status) params.set("booking_status", query.booking_status);
+  if (typeof query.include_deleted === "boolean") {
+    params.set("include_deleted", String(query.include_deleted));
+  }
+  if (typeof query.page === "number") params.set("page", String(query.page));
+  if (typeof query.limit === "number") params.set("limit", String(query.limit));
+
+  const qs = params.toString();
+  const url = qs ? `${base}/orders?${qs}` : `${base}/orders`;
+
+  return jsonFetch<OrdersListResponse>(url);
+}
+
+// Single order detail: GET /orders/:id
+export async function getOrderByIdApi(id: string) {
+  const base = getBackendBase();
+  // assumes backend route: GET /api/orders/:id
+  return jsonFetch<OrderDto>(`${base}/orders/${id}`);
+}
+
+
+export async function updateOrderStatusApi(
+  id: string,
+  payload: { status: "approved" | "rejected" }
+) {
+  const base = getBackendBase();
+  return jsonFetch<OrderDto>(`${base}/orders/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
