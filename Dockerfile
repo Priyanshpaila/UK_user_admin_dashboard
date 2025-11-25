@@ -42,10 +42,10 @@ EXPOSE ${PORT}
 CMD ["npm", "start"]
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/adminukproject_24_nov_2025 .      
-# docker run -d --name adminukproject_24_nov_2025 -p 80:80 adminukproject_24_nov_2025_image
+# docker build  --no-cache -t 192.168.13.72:5000/adminukproject_25_nov_2025 .      
+# docker run -d --name adminukproject_25_nov_2025 -p 80:80 adminukproject_25_nov_2025_image
 
-# docker tag adminukproject_24_nov_2025_image 192.168.13.72:5000/adminukproject_24_nov_2025
-# docker push 192.168.13.72:5000/adminukproject_24_nov_2025
-# docker pull 192.168.13.72:5000/adminukproject_24_nov_2025
-# docker run -d --name adminukproject_24_nov_2025 -p 8001:8001 192.168.13.72:5000/adminukproject_24_nov_2025
+# docker tag adminukproject_25_nov_2025_image 192.168.13.72:5000/adminukproject_25_nov_2025
+# docker push 192.168.13.72:5000/adminukproject_25_nov_2025
+# docker pull 192.168.13.72:5000/adminukproject_25_nov_2025
+# docker run -d --name adminukproject_25_nov_2025 -p 8001:8001 192.168.13.72:5000/adminukproject_25_nov_2025

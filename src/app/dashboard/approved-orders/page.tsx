@@ -188,10 +188,7 @@ export default function Page() {
             <span>Status:</span>
             <span className="font-medium text-emerald-400">Approved</span>
           </div>
-          <span className="text-xs text-neutral-500">
-            {totalPending} pending{" "}
-            {meta ? `• page ${meta.page} of ${meta.totalPages}` : ""}
-          </span>
+
         </div>
       </div>
 
