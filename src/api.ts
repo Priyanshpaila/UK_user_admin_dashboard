@@ -624,3 +624,39 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
   return res.json();
 }
 
+// Upload a single image for pages: POST /pages/upload-image
+export type PageImageUploadResponse = {
+  path: string;          // e.g. "/upload/pages/page-123.png"
+  [key: string]: any;    // allow backend to return extra fields
+};
+
+export async function uploadPageImageApi(
+  file: File
+): Promise<PageImageUploadResponse> {
+  const base = getBackendBase(); // e.g. http://tenant.domain:8000/api
+  const url = `${base}/pages/upload-image`;
+
+  const formData = new FormData();
+  formData.append("image", file); // adjust field name if backend expects something else
+
+  const res = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Page image upload failed: ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  // backend "gives a path" – usually under `path`
+  // keep it flexible in case it returns url or something else
+  if (!data.path && !data.url) {
+    console.warn("Unexpected upload response shape:", data);
+  }
+
+  return data as PageImageUploadResponse;
+}
+

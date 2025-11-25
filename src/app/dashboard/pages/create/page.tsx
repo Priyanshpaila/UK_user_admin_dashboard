@@ -1,42 +1,41 @@
 "use client";
-import React, { useEffect, useState } from "react";
-import { getServiceApi, createPageApi } from "../../../../api";
-import dynamic from "next/dynamic";
-import "react-quill/dist/quill.snow.css";
+
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import "react-quill/dist/quill.snow.css";
+import { ArrowLeft, Loader2, X } from "lucide-react";
 import { toast } from "react-toastify";
 
-const ReactQuill = dynamic(() => import("react-quill"), { ssr: false });
-const QuillEmoji = dynamic(() => import("quill-emoji"), { ssr: false });
-const QuillMention = dynamic(() => import("quill-mention"), { ssr: false });
-const QuillTable = dynamic(() => import("quill-table"), { ssr: false });
+import type ReactQuillType from "react-quill";
 
-/** 🔹 Toolbar config – now with font sizes + alignment */
-const modules = {
-  toolbar: [
-    // Headings
-    [{ header: [1, 2, 3, 4, 5, 6, false] }],
-    // Font family + size
-    [{ font: [] }],
-    [{ size: ["small", false, "large", "huge"] }], // text size dropdown
-    // Inline styles
-    ["bold", "italic", "underline", "strike"],
-    [{ color: [] }, { background: [] }],
-    // Block styles
-    [{ align: [] }],
-    [{ list: "ordered" }, { list: "bullet" }],
-    ["blockquote", "code-block"],
-    // Media
-    ["link", "image", "video"],
-    // Tables / extras
-    [{ table: [] }],
-    ["emoji", "mention"],
-    ["clean"], // remove formatting
-  ],
-};
+import {
+  getServiceApi,
+  createPageApi,
+  uploadPageImageApi,
+  getBackendBase,
+} from "../../../../api";
+import QuillEditor from "../../../../components/QuillEditor";
 
-/** 🔹 Allowed formats (important for size + align + image) */
+/** 🔹 Toolbar config – image button opens our modal */
+const toolbarOptions = [
+  [{ header: [1, 2, 3, 4, 5, 6, false] }],
+  [{ font: [] }],
+  [{ size: ["small", false, "large", "huge"] }],
+  ["bold", "italic", "underline", "strike"],
+  [{ color: [] }, { background: [] }],
+  [{ align: [] }],
+  [{ list: "ordered" }, { list: "bullet" }],
+  ["blockquote", "code-block"],
+  ["link", "image", "video"],
+  ["clean"],
+];
+
 const formats = [
   "header",
   "font",
@@ -55,10 +54,25 @@ const formats = [
   "link",
   "image",
   "video",
-  "table",
-  "emoji",
-  "mention",
 ];
+
+/** 🔹 Helper: resolve backend image path to full URL */
+const resolveImageUrl = (imagePath: string) => {
+  if (!imagePath) return "";
+
+  if (/^https?:\/\//i.test(imagePath)) {
+    return imagePath;
+  }
+
+  const normalizedPath = imagePath.startsWith("/")
+    ? imagePath
+    : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase();
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+
+  return `${cleanBase}${normalizedPath}`;
+};
 
 export default function CreatePage() {
   const [services, setServices] = useState<any[]>([]);
@@ -70,7 +84,7 @@ export default function CreatePage() {
   const [description, setDescription] = useState("");
   const [metaTitle, setMetaTitle] = useState("");
   const [metaDescription, setMetaDescription] = useState("");
-  const [metaKeywords, setMetaKeywords] = useState(""); // comma-separated
+  const [metaKeywords, setMetaKeywords] = useState("");
   const [template, setTemplate] = useState("default");
   const [visibility, setVisibility] = useState("public");
   const [status, setStatus] = useState("published");
@@ -78,14 +92,25 @@ export default function CreatePage() {
   const [content, setContent] = useState("");
   const [gallery, setGallery] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
-  const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
 
+  // ✅ This ref will now point to the real ReactQuill instance via QuillEditor
+  const quillRef = useRef<ReactQuillType | null>(null);
+
+  // 🔹 Image modal state
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageLink, setImageLink] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  /** Load services */
   useEffect(() => {
     const loadServices = async () => {
       try {
         const res = await getServiceApi("");
         setServices(res?.data || []);
       } catch (e) {
+        console.error(e);
         toast.error("Failed to load services");
       } finally {
         setLoadingServices(false);
@@ -94,15 +119,7 @@ export default function CreatePage() {
     loadServices();
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const QuillCore = require("quill");
-      QuillCore.register("modules/table", QuillTable);
-      QuillCore.register("modules/emoji", QuillEmoji);
-      QuillCore.register("modules/mention", QuillMention);
-    }
-  }, []);
-
+  /** Gallery file picker (page gallery, not Quill upload) */
   const handleGallery = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
@@ -110,6 +127,78 @@ export default function CreatePage() {
     }
   };
 
+  /** Open Quill image modal */
+  const openImageModal = useCallback(() => {
+    setImageError(null);
+    setImageFile(null);
+    setImageLink("");
+    setShowImageModal(true);
+  }, []);
+
+  /** Quill modules with toolbar handler */
+  const modules = useMemo(
+    () => ({
+      toolbar: {
+        container: toolbarOptions,
+        handlers: {
+          image: () => openImageModal(), // 👈 our custom handler
+        },
+      },
+    }),
+    [openImageModal]
+  );
+
+  /** Upload via /pages/upload-image and auto-fill link */
+  const handleUploadAndGetLink = useCallback(async () => {
+    if (!imageFile) {
+      setImageError("Please select an image file first.");
+      return;
+    }
+
+    setUploadingImage(true);
+    setImageError(null);
+
+    try {
+      // 👇 this calls http://localhost:8000/api/pages/upload-image
+      const res = await uploadPageImageApi(imageFile);
+      const rawPath = (res as any).url || (res as any).path;
+      if (!rawPath) {
+        throw new Error("Upload succeeded but no URL was returned.");
+      }
+
+      const fullUrl = resolveImageUrl(rawPath);
+      setImageLink(fullUrl);
+    } catch (err: any) {
+      console.error("Image upload failed:", err);
+      setImageError(err?.message || "Failed to upload image.");
+    } finally {
+      setUploadingImage(false);
+    }
+  }, [imageFile]);
+
+  /** Insert image into Quill from link (modal) */
+  const handleInsertImageFromModal = useCallback(() => {
+    if (!imageLink.trim()) {
+      setImageError("Please enter or fetch an image URL.");
+      return;
+    }
+
+    const editor = quillRef.current?.getEditor?.();
+    if (!editor) {
+      setImageError("Editor not ready. Please try again.");
+      return;
+    }
+
+    const url = imageLink.trim();
+    const range = editor.getSelection(true);
+    const index = range ? range.index : editor.getLength();
+
+    editor.insertEmbed(index, "image", url, "user");
+    editor.setSelection(index + 1, 0);
+    setShowImageModal(false);
+  }, [imageLink]);
+
+  /** Create page submit */
   const handleCreatePage = async () => {
     if (!selectedService) return toast.error("Please select a service");
     if (!title.trim()) return toast.error("Title is required");
@@ -188,10 +277,7 @@ export default function CreatePage() {
                 services.find((s) => s._id === e.target.value) || null;
               setSelectedService(svc);
 
-              // Auto-fill slug from service.slug
-              if (svc?.slug) {
-                setSlug(svc.slug);
-              }
+              if (svc?.slug) setSlug(svc.slug);
             }}
             defaultValue=""
           >
@@ -207,7 +293,7 @@ export default function CreatePage() {
         )}
       </div>
 
-      {/* STEP 2: Page Builder */}
+      {/* STEP 2: Builder */}
       {selectedService && (
         <div className="space-y-8">
           {/* Service Preview */}
@@ -296,12 +382,12 @@ export default function CreatePage() {
           <div className="p-6 rounded-xl border border-neutral-800 bg-neutral-900">
             <h2 className="text-xl mb-4 font-semibold">Content Editor</h2>
 
-            <ReactQuill
+            <QuillEditor
+              ref={quillRef}
               value={content}
               onChange={setContent}
-              theme="snow"
               modules={modules}
-              formats={formats}  
+              formats={formats}
               className="bg-neutral-800 text-white"
             />
 
@@ -327,11 +413,101 @@ export default function CreatePage() {
             <button
               disabled={saving}
               onClick={handleCreatePage}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white flex items-center gap-2"
+              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {saving && <Loader2 className="animate-spin" size={18} />}
               Create Page
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🔹 Image Insert Modal for Quill */}
+      {showImageModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-2xl bg-neutral-900 border border-neutral-700 p-5 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold text-white">
+                Insert Image
+              </h2>
+              <button
+                type="button"
+                onClick={() => !uploadingImage && setShowImageModal(false)}
+                className="text-neutral-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs text-neutral-300 mb-1 block">
+                  Select image file (optional)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    setImageFile(file);
+                    setImageError(null);
+                  }}
+                  className="w-full text-xs text-neutral-200"
+                />
+                <button
+                  type="button"
+                  onClick={handleUploadAndGetLink}
+                  disabled={!imageFile || uploadingImage}
+                  className="mt-2 inline-flex items-center justify-center rounded-full px-3 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {uploadingImage ? "Uploading…" : "Get link from upload"}
+                </button>
+              </div>
+
+              <div>
+                <label className="text-xs text-neutral-300 mb-1 block">
+                  Image URL
+                </label>
+                <input
+                  type="text"
+                  className="w-full bg-neutral-800 border border-neutral-700 px-3 py-2 rounded-md text-sm text-neutral-100"
+                  placeholder="https://example.com/image.png"
+                  value={imageLink}
+                  onChange={(e) => {
+                    setImageLink(e.target.value);
+                    setImageError(null);
+                  }}
+                />
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Paste an image URL, or upload a file and use “Get link”.
+                </p>
+              </div>
+
+              {imageError && (
+                <div className="rounded-lg border border-rose-400 bg-rose-950/40 px-3 py-2 text-xs text-rose-200">
+                  {imageError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImageModal(false)}
+                  className="px-4 py-1.5 rounded-full text-xs font-medium bg-neutral-700 hover:bg-neutral-600"
+                  disabled={uploadingImage}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleInsertImageFromModal}
+                  className="px-4 py-1.5 rounded-full text-xs font-medium bg-emerald-600 hover:bg-emerald-700"
+                  disabled={uploadingImage}
+                >
+                  Insert image
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
