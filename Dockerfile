@@ -22,7 +22,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV PORT=8001
-ENV NEXT_PUBLIC_BASE_URL=https://backend.pharma-health.co.uk/api
+ENV NEXT_PUBLIC_BASE_URL=http://backend.pharma-health.co.uk/api
 ENV NEXT_PUBLIC_ONLY_URL=backend.pharma-health.co.uk/api
 # optional: set this if you need to know external URL
 # ENV NEXT_PUBLIC_BASE_URL=https://yourdomain.com
@@ -42,10 +42,10 @@ EXPOSE ${PORT}
 CMD ["npm", "start"]
 
 
-# docker build  --no-cache -t 192.168.13.72:5000/adminukproject_25_nov_2025 .      
-# docker run -d --name adminukproject_25_nov_2025 -p 80:80 adminukproject_25_nov_2025_image
+# docker build  --no-cache -t 192.168.13.72:5000/adminukproject_26_nov_2025_http .      
+# docker run -d --name adminukproject_26_nov_2025_http -p 80:80 adminukproject_26_nov_2025_http_image
 
-# docker tag adminukproject_25_nov_2025_image 192.168.13.72:5000/adminukproject_25_nov_2025
-# docker push 192.168.13.72:5000/adminukproject_25_nov_2025
-# docker pull 192.168.13.72:5000/adminukproject_25_nov_2025
-# docker run -d --name adminukproject_25_nov_2025 -p 8001:8001 192.168.13.72:5000/adminukproject_25_nov_2025
+# docker tag adminukproject_26_nov_2025_http_image 192.168.13.72:5000/adminukproject_26_nov_2025_http
+# docker push 192.168.13.72:5000/adminukproject_26_nov_2025_http
+# docker pull 192.168.13.72:5000/adminukproject_26_nov_2025_http
+# docker run -d --name adminukproject_26_nov_2025_http -p 8001:8001 192.168.13.72:5000/adminukproject_26_nov_2025_http
