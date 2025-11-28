@@ -23,7 +23,7 @@ export function getBackendBase(): string {
 
   // Check if there is a subdomain (at least 3 parts: subdomain.domain.tld)
   // const hasSubdomain = parts.length >= 2; //for local host
-  const hasSubdomain = parts.length >= 4;// for our live domain : adminukproject.rrispat.in
+  const hasSubdomain = parts.length >= 4; // for our live domain : adminukproject.rrispat.in
 
   if (!hasSubdomain) {
     // If there's no subdomain, fall back to NEXT_PUBLIC_BASE_URL or localhost
@@ -131,8 +131,6 @@ export async function getServiceApi(id: string | string[]) {
   return jsonFetch<any>(url);
 }
 
-
-
 export async function updateServiceApi(
   id: string | string[],
   payload: ServicePayload
@@ -184,43 +182,64 @@ export async function createPharmacistApi(
 
 /* ------------------- Medicines APIs ------------------- */
 
+/** One variation row on a medicine */
+export type MedicineVariationPayload = {
+  title: string;
+  status: string; // e.g. "published" | "draft"
+  price: number;
+  stock: number;
+  max_qty: number;
+  sort_order: number;
+};
+
+export type MedicineVariationDto = {
+  _id?: string;
+  title: string;
+  status: string;
+  price: number;
+  stock: number;
+  max_qty: number;
+  sort_order: number;
+};
+
+/** Payload used when creating/updating a medicine */
 export type MedicinePayload = {
   sku: string;
   name: string;
-  variations: string;
-  strength?: string | null;
-  qty: number;
-  unitMinor: number;
-  totalMinor: number;
-  variation: string;
-  price: number;
-  image?: string | File;
-  description?: string;
-  status: string;
+  slug: string;
+  description: string;
+  status: string; // "draft" | "published" | etc.
+  max_bookable_quantity?: number; // default 2
+  allow_reorder?: boolean; // default true
+  is_virtual?: boolean; // default false
+  variations: MedicineVariationPayload[];
+  image?: string | File; // file upload or existing path/URL
 };
 
-// DTO for medicines returned by backend (e.g. /medicines, /service-medicines/service/:id)
+/** DTO for medicines returned by backend (e.g. /medicines) */
 export type MedicineDto = {
   _id: string;
   sku: string;
   name: string;
-  variations: string;
-  strength: string | null;
-  qty: number;
-  unitMinor: number;
-  totalMinor: number;
-  variation: string;
-  price: number;
-  image: string;
-  description: string;
+  slug: string;
+  description?: string;
   status: string;
-  deleted_at: string | null;
+  max_bookable_quantity: number;
+  allow_reorder: boolean;
+  is_virtual: boolean;
+  variations: MedicineVariationDto[];
+  image?: string;
+  deleted_at?: string | null;
   createdAt: string;
   updatedAt: string;
   __v: number;
 };
 
-// Helper just for FormData requests (no JSON Content-Type)
+/**
+ * Helper just for FormData requests (no JSON Content-Type).
+ * Includes Bearer token by default.
+ */
+// in src/api.ts
 async function formDataRequest<T>(
   url: string,
   method: "POST" | "PUT",
@@ -230,33 +249,35 @@ async function formDataRequest<T>(
 
   formData.append("sku", payload.sku);
   formData.append("name", payload.name);
-  formData.append("variations", payload.variations);
-  formData.append("qty", String(payload.qty));
-  formData.append("price", String(payload.price));
-  formData.append("status", payload.status);
+  formData.append("slug", payload.slug);
+  formData.append("description", payload.description ?? "");
+  formData.append("status", payload.status ?? "draft");
 
-  if (payload.strength != null) {
-    formData.append("strength", payload.strength);
-  }
+  formData.append(
+    "max_bookable_quantity",
+    String(payload.max_bookable_quantity ?? 2)
+  );
+  formData.append("allow_reorder", String(payload.allow_reorder ?? true));
+  formData.append("is_virtual", String(payload.is_virtual ?? false));
 
-  if (payload.description) {
-    formData.append("description", payload.description);
-  }
+  // ✅ send JSON string
+  formData.append("variations", JSON.stringify(payload.variations ?? []));
 
   if (payload.image) {
     if (payload.image instanceof File) {
-      // file upload
       formData.append("image", payload.image);
     } else {
-      // URL string
       formData.append("image", payload.image);
     }
   }
 
-  const res = await fetch(url, {
-    method,
-    body: formData,
-  });
+  let headers: HeadersInit | undefined;
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("session_token");
+    if (token) headers = { Authorization: `Bearer ${token}` };
+  }
+
+  const res = await fetch(url, { method, body: formData, headers });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -269,8 +290,21 @@ async function formDataRequest<T>(
 // GET /medicines  -> list of medicines
 export async function getMedicinesApi() {
   const base = getBackendBase();
-  // assuming response like { data: [...], meta: {...} }
-  return jsonFetch<any>(`${base}/medicines`);
+  const url = `${base}/medicines`;
+
+  let headers: HeadersInit = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("session_token");
+    if (token) {
+      headers = {
+        ...headers,
+        Authorization: `Bearer ${token}`,
+      };
+    }
+  }
+
+  // jsonFetch will add "Content-Type: application/json" (OK for GET)
+  return jsonFetch<any>(url, { headers });
 }
 
 // POST /medicines  -> create medicine (FormData body)
@@ -282,7 +316,6 @@ export async function createMedicineApi(payload: MedicinePayload) {
 // PUT /medicines/:id  -> update medicine (FormData body)
 export async function updateMedicineApi(id: string, payload: MedicinePayload) {
   const base = getBackendBase();
-  // if your backend expects /medicines?id=... instead, change URL here
   return formDataRequest<any>(`${base}/medicines/${id}`, "PUT", payload);
 }
 
@@ -309,11 +342,23 @@ export async function createServiceMedicineApi(
   payload: ServiceMedicinePayload
 ) {
   const base = getBackendBase();
+
+  let headers: HeadersInit = {
+    "Content-Type": "application/json",
+  };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("session_token");
+    if (token) {
+      headers = {
+        ...headers,
+        Authorization: `Bearer ${token}`,
+      };
+    }
+  }
+
   const res = await fetch(`${base}/service-medicines`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify(payload),
   });
 
@@ -392,34 +437,39 @@ export async function createUserApi(payload: any) {
   });
 }
 
-
 // Single weekday config
 export type ScheduleWeekDay = {
   day: "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
   open: boolean;
   start?: string; // "HH:MM" when open=true
-  end?: string;   // "HH:MM" when open=true
-  break_start?: string;  // NEW: "13:00"
-  break_end?: string;  // NEW: "14:00"
+  end?: string; // "HH:MM" when open=true
+  break_start?: string; // NEW: "13:00"
+  break_end?: string; // NEW: "14:00"
 };
 
 // Date override config
 export type ScheduleOverride = {
-  date: string;    // "YYYY-MM-DD"
+  date: string; // "YYYY-MM-DD"
   open: boolean;
-  start?: string;  // "HH:MM" when open=true
-  end?: string;    // "HH:MM" when open=true
-  note?: string;   // optional note / reason
+  start?: string; // "HH:MM" when open=true
+  end?: string; // "HH:MM" when open=true
+  note?: string; // optional note / reason
+
+  // NEW: service-specific override
+  service_slug?: string; // e.g. "travel-clinic"
+
+  // NEW: specific times to remove from that date/service
+  remove_times?: string[]; // e.g. ["10:00", "10:15"]
 };
 
 // Payload for POST /schedules
 export type SchedulePayload = {
-  name: string;          // "Travel Clinic" or "Global"
-  service_slug: string;  // "travel-clinic" or "global"
+  name: string; // "Travel Clinic" or "Global"
+  service_slug: string; // "travel-clinic" or "global"
   service_id?: string | null; // omit or null for Global schedule
-  timezone: string;      // e.g. "UTC" or "Europe/London"
-  slot_minutes: number;  // e.g. 15
-  capacity: number;      // e.g. 1
+  timezone: string; // e.g. "UTC" or "Europe/London"
+  slot_minutes: number; // e.g. 15
+  capacity: number; // e.g. 1
   week: ScheduleWeekDay[];
   overrides?: ScheduleOverride[];
 };
@@ -441,10 +491,7 @@ export async function getSchedulesApi() {
 }
 
 /** PUT /schedules/:id -> update an existing schedule */
-export async function updateScheduleApi(
-  id: string,
-  payload: SchedulePayload
-) {
+export async function updateScheduleApi(id: string, payload: SchedulePayload) {
   const base = getBackendBase();
   return jsonFetch<any>(`${base}/schedules/${id}`, {
     method: "PUT",
@@ -502,7 +549,6 @@ export async function createClinicFormApi(payload: ClinicFormPayload) {
   });
 }
 
-
 export type ClinicForm = ClinicFormPayload & {
   _id: string;
   createdAt?: string;
@@ -525,7 +571,6 @@ export async function updateClinicFormApi(
   });
 }
 
-
 /* ------------------- Pages APIs (with FormData for images) ------------------- */
 
 export async function getPagesApi() {
@@ -541,7 +586,7 @@ export async function getPageByIdApi(id: string) {
 export type PageMetaBackground = {
   enabled: boolean;
   background_upload?: string; // stored path in DB
-  url?: string;               // public URL
+  url?: string; // public URL
   blur?: number;
   overlay?: number;
 };
@@ -566,7 +611,7 @@ export type PageFormPayload = {
   status: string;
   content: string;
   service_id: string;
-  galleryFiles?: File[];   // for upload
+  galleryFiles?: File[]; // for upload
   galleryExisting?: string[]; // existing URLs when editing
 };
 
@@ -626,8 +671,8 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
 
 // Upload a single image for pages: POST /pages/upload-image
 export type PageImageUploadResponse = {
-  path: string;          // e.g. "/upload/pages/page-123.png"
-  [key: string]: any;    // allow backend to return extra fields
+  path: string; // e.g. "/upload/pages/page-123.png"
+  [key: string]: any; // allow backend to return extra fields
 };
 
 export async function uploadPageImageApi(
@@ -793,7 +838,6 @@ export async function getOrderByIdApi(id: string) {
   // assumes backend route: GET /api/orders/:id
   return jsonFetch<OrderDto>(`${base}/orders/${id}`);
 }
-
 
 export async function updateOrderStatusApi(
   id: string,

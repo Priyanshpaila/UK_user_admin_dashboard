@@ -23,6 +23,8 @@ import {
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
+import { useOrdersStats } from "../orders-badge-context";
+ // 👈 adjust path if needed
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -91,6 +93,9 @@ export default function Page() {
     "approved" | "rejected" | null
   >(null);
 
+  // 🔥 global stats actions (for sidebar badges)
+  const { applyStatusChange, refresh } = useOrdersStats();
+
   // 🔒 hard-coded filter
   const STATUS = "pending";
 
@@ -106,6 +111,9 @@ export default function Page() {
         if (cancelled) return;
         setOrders(res.data || []);
         setMeta(res.meta || null);
+
+        // keep global stats in sync too
+        await refresh();
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || "Failed to load orders");
@@ -118,7 +126,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, []); // always "pending"
+  }, [refresh]); // always "pending"
 
   // View details handler
   async function handleViewDetails(id: string) {
@@ -142,6 +150,8 @@ export default function Page() {
   async function handleChangeStatus(newStatus: "approved" | "rejected") {
     if (!selectedOrder) return;
 
+    const prevStatus = selectedOrder.status;
+
     setStatusAction(newStatus);
     setDetailError(null);
 
@@ -150,11 +160,11 @@ export default function Page() {
         status: newStatus,
       });
 
+      // 🔥 update global counters instantly (sidebar badges)
+      applyStatusChange(prevStatus, updated.status);
+
       // Remove from local list, as it's no longer pending
       setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-
-      // Optionally, keep detail open with updated info:
-      // setSelectedOrder(updated);
 
       // For pending page it's usually nice to close after action:
       setShowDetail(false);
@@ -449,9 +459,9 @@ export default function Page() {
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
-                          <span className="font-semibold text-white">
-                            {formatMoney(selectedOrder.meta?.totalMinor)}
-                          </span>
+                        <span className="font-semibold text-white">
+                          {formatMoney(selectedOrder.meta?.totalMinor)}
+                        </span>
                       </p>
                     </div>
 
@@ -525,27 +535,37 @@ export default function Page() {
                     <div className="flex flex-wrap gap-2 justify-end">
                       <button
                         type="button"
-                        disabled={statusAction === "rejected" || statusAction === "approved"}
+                        disabled={
+                          statusAction === "rejected" ||
+                          statusAction === "approved"
+                        }
                         onClick={() => handleChangeStatus("rejected")}
                         className="inline-flex items-center gap-1 rounded-full border border-rose-500/60 px-4 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {statusAction === "rejected" && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {statusAction === "rejected" ? "Rejecting…" : "Reject order"}
+                        {statusAction === "rejected"
+                          ? "Rejecting…"
+                          : "Reject order"}
                         <ThumbsDown className="h-3 w-3" />
                       </button>
 
                       <button
                         type="button"
-                        disabled={statusAction === "approved" || statusAction === "rejected"}
+                        disabled={
+                          statusAction === "approved" ||
+                          statusAction === "rejected"
+                        }
                         onClick={() => handleChangeStatus("approved")}
                         className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {statusAction === "approved" && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {statusAction === "approved" ? "Approving…" : "Approve order"}
+                        {statusAction === "approved"
+                          ? "Approving…"
+                          : "Approve order"}
                         <ThumbsUp className="h-3 w-3" />
                       </button>
                     </div>

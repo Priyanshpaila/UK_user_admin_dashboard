@@ -1,27 +1,32 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import {
-  getMedicinesApi,
-  getBackendBase,
-  createMedicineApi,
-  updateMedicineApi,
-} from "../../../api"; // centralized helpers
+import { getBackendBase } from "../../../api"; // centralized helper
+
+/* -------------------- Types (new schema) -------------------- */
+
+type Variation = {
+  _id?: string;
+  title: string;
+  status: string; // "published" | "draft" | ...
+  price: number;
+  stock: number;
+  max_qty: number;
+  sort_order: number;
+};
 
 type Medicine = {
   _id: string;
   sku: string;
   name: string;
-  variations: string;
-  variation: string;
-  strength: string | null;
-  qty: number;
-  unitMinor: number;
-  totalMinor: number;
-  price: number;
-  image?: string;
+  slug: string;
   description?: string;
-  status: string;
+  status: string; // "published" | "draft" | ...
+  max_bookable_quantity?: number;
+  allow_reorder?: boolean;
+  is_virtual?: boolean;
+  variations: Variation[];
+  image?: string;
 };
 
 type MedicinesListResponse = {
@@ -34,46 +39,50 @@ type MedicinesListResponse = {
   };
 };
 
+type VariationForm = {
+  title: string;
+  price: string;
+  stock: string;
+  max_qty: string;
+  sort_order: string;
+  status: string;
+};
+
 type FormState = {
   sku: string;
   name: string;
-  variations: string;
-  variation: string;
-  strength: string;
-  qty: string;
-  unitMinor: string;
-  totalMinor: string;
-  price: string;
+  slug: string;
   description: string;
   status: string;
+  variations: VariationForm[];
+};
+
+/* -------------------- Helpers -------------------- */
+
+const emptyVariation: VariationForm = {
+  title: "",
+  price: "",
+  stock: "",
+  max_qty: "",
+  sort_order: "0",
+  status: "published",
 };
 
 const emptyForm: FormState = {
   sku: "",
   name: "",
-  variations: "",
-  variation: "",
-  strength: "",
-  qty: "",
-  unitMinor: "",
-  totalMinor: "",
-  price: "",
+  slug: "",
   description: "",
-  status: "active",
+  status: "draft",
+  variations: [emptyVariation],
 };
 
-// ---- SKU generator: PARA500 from "Paracetamol" + "500mg" ----
-function generateSku(name: string, strength: string): string {
-  // Take letters from name, strip spaces/symbols
-  const letters = name.replace(/[^a-zA-Z]/g, "").toUpperCase();
-  const prefix = letters.slice(0, 4); // PARA
-
-  // Take all digits from strength (handles "500mg", "500 MG", "500/125mg", etc)
-  const digitsMatch = strength.match(/\d+/g);
-  const digits = digitsMatch ? digitsMatch.join("") : ""; // "500"
-
-  if (!prefix && !digits) return "";
-  return `${prefix}${digits}`;
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
 }
 
 export default function Page() {
@@ -93,17 +102,44 @@ export default function Page() {
     null
   );
 
-  // Track if user manually edited SKU (so we don't override their value)
+  // Track if user manually edited SKU / slug (so we don't override their value)
   const [skuManuallyEdited, setSkuManuallyEdited] = useState(false);
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
 
-  /* ------------ Fetch list ------------ */
+  /* -------------------- Load list -------------------- */
 
   const loadMedicines = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = (await getMedicinesApi()) as MedicinesListResponse;
-      setMedicines(res?.data || []);
+
+      const base = getBackendBase();
+
+      let token: string | null = null;
+      if (typeof window !== "undefined") {
+        token = localStorage.getItem("session_token");
+      }
+
+      const res = await fetch(`${base}/medicines`, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || "Failed to load medicines");
+      }
+
+      const json: MedicinesListResponse | Medicine[] = await res.json();
+
+      const data = Array.isArray(json)
+        ? json
+        : (json.data as Medicine[]) || [];
+
+      setMedicines(data);
+      // if you need meta later: if (!Array.isArray(json) && json.meta) setMeta(json.meta);
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to load medicines");
@@ -116,32 +152,45 @@ export default function Page() {
     loadMedicines();
   }, []);
 
-  /* ------------ Modal helpers ------------ */
+  /* -------------------- Modal helpers -------------------- */
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      variations: [emptyVariation],
+    });
     setImageFile(null);
     setImagePreview(null);
     setExistingImagePath(null);
-    setSkuManuallyEdited(false); // fresh auto-SKU generation for new item
+    setSkuManuallyEdited(false);
+    setSlugManuallyEdited(false);
     setIsModalOpen(true);
   };
 
   const openEdit = (med: Medicine) => {
     setEditing(med);
+
+    const mappedVariations: VariationForm[] =
+      med.variations && med.variations.length > 0
+        ? med.variations.map((v, idx) => ({
+            title: v.title || "",
+            price: v.price != null ? String(v.price) : "",
+            stock: v.stock != null ? String(v.stock) : "",
+            max_qty: v.max_qty != null ? String(v.max_qty) : "",
+            sort_order:
+              v.sort_order != null ? String(v.sort_order) : String(idx),
+            status: v.status || "published",
+          }))
+        : [emptyVariation];
+
     setForm({
       sku: med.sku || "",
       name: med.name || "",
-      variations: med.variations || "",
-      variation: med.variation || med.variations || "",
-      strength: med.strength || "",
-      qty: med.qty != null ? String(med.qty) : "",
-      unitMinor: med.unitMinor != null ? String(med.unitMinor) : "",
-      totalMinor: med.totalMinor != null ? String(med.totalMinor) : "",
-      price: med.price != null ? String(med.price) : "",
+      slug: med.slug || slugify(med.name || ""),
       description: med.description || "",
-      status: med.status || "active",
+      status: med.status || "draft",
+      variations: mappedVariations,
     });
 
     setImageFile(null);
@@ -157,8 +206,9 @@ export default function Page() {
       setImagePreview(null);
     }
 
-    // When editing, treat SKU as "manual" so we don't auto-change it if they tweak name/strength
+    // Editing existing: treat slug/sku as manually set
     setSkuManuallyEdited(true);
+    setSlugManuallyEdited(true);
     setIsModalOpen(true);
   };
 
@@ -171,7 +221,7 @@ export default function Page() {
     setExistingImagePath(null);
   };
 
-  /* ------------ Form handlers ------------ */
+  /* -------------------- Form handlers -------------------- */
 
   const handleChange = (
     e: React.ChangeEvent<
@@ -180,23 +230,17 @@ export default function Page() {
   ) => {
     const { name, value } = e.target;
 
-    // If user types directly in SKU, mark it as manually edited and update as-is
-    if (name === "sku") {
-      setSkuManuallyEdited(true);
-      setForm((prev) => ({ ...prev, sku: value }));
-      return;
-    }
-
-    // For name/strength, auto-generate SKU when user hasn't manually changed SKU yet
-    if (name === "name" || name === "strength") {
+    // When name changes -> auto slug + sku unless manually overridden
+    if (name === "name") {
       setForm((prev) => {
-        const updated: FormState = { ...prev, [name]: value };
+        const updated: FormState = { ...prev, name: value };
+        const autoSlug = slugify(value);
 
+        if (!slugManuallyEdited) {
+          updated.slug = autoSlug;
+        }
         if (!skuManuallyEdited) {
-          updated.sku = generateSku(
-            name === "name" ? value : updated.name,
-            name === "strength" ? value : updated.strength
-          );
+          updated.sku = autoSlug;
         }
 
         return updated;
@@ -204,8 +248,48 @@ export default function Page() {
       return;
     }
 
-    // Default for other fields
+    if (name === "slug") {
+      setSlugManuallyEdited(true);
+    }
+
+    if (name === "sku") {
+      setSkuManuallyEdited(true);
+    }
+
     setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleVariationChange = (
+    index: number,
+    field: keyof VariationForm,
+    value: string
+  ) => {
+    setForm((prev) => {
+      const updated = [...prev.variations];
+      updated[index] = { ...updated[index], [field]: value };
+      return { ...prev, variations: updated };
+    });
+  };
+
+  const addVariation = () => {
+    setForm((prev) => ({
+      ...prev,
+      variations: [
+        ...prev.variations,
+        {
+          ...emptyVariation,
+          sort_order: String(prev.variations.length),
+        },
+      ],
+    }));
+  };
+
+  const removeVariation = (index: number) => {
+    setForm((prev) => {
+      if (prev.variations.length <= 1) return prev; // keep at least one
+      const updated = prev.variations.filter((_, i) => i !== index);
+      return { ...prev, variations: updated };
+    });
   };
 
   const handleRemoveImage = () => {
@@ -220,29 +304,96 @@ export default function Page() {
     setError(null);
 
     try {
-      // Build payload for the helper (matches MedicinePayload in api.ts)
-      const payload: any = {
-        sku: form.sku.trim(),
-        name: form.name.trim(),
-        variations: form.variations.trim(),
-        strength: form.strength.trim() || null,
-        qty: Number(form.qty || 0),
-        price: Number(form.price || 0),
-        status: form.status.trim() || "active",
-        description: form.description.trim() || "",
-      };
-
-      // Image handling – matches updated api.ts field name: image
-      if (imageFile) {
-        payload.image = imageFile;
-      } else if (existingImagePath) {
-        payload.image = existingImagePath;
+      if (!form.name.trim()) {
+        throw new Error("Name is required.");
+      }
+      if (!form.sku.trim()) {
+        throw new Error("SKU is required.");
       }
 
-      if (editing?._id) {
-        await updateMedicineApi(editing._id, payload);
-      } else {
-        await createMedicineApi(payload);
+      const variationsPayload = form.variations
+        .filter((v) => v.title.trim())
+        .map((v, index) => ({
+          title: v.title.trim(),
+          status: v.status || "published",
+          price: Number(v.price || 0),
+          stock: Number(v.stock || 0),
+          max_qty: Number(v.max_qty || 0),
+          sort_order: v.sort_order
+            ? Number(v.sort_order)
+            : Number.isFinite(index)
+            ? index
+            : 0,
+        }));
+
+      if (variationsPayload.length === 0) {
+        throw new Error("At least one variation is required.");
+      }
+
+      const payload = {
+        sku: form.sku.trim(),
+        name: form.name.trim(),
+        slug: (form.slug || slugify(form.name)).trim(),
+        description: form.description.trim(),
+        status: form.status || "draft",
+
+        // 🔒 These are NOT taken from user
+        max_bookable_quantity: 2,
+        allow_reorder: true,
+        is_virtual: false,
+
+        variations: variationsPayload,
+      };
+
+      const base = getBackendBase();
+      const url = editing?._id
+        ? `${base}/medicines/${editing._id}`
+        : `${base}/medicines`;
+      const method = editing?._id ? "PUT" : "POST";
+
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("session_token")
+          : null;
+
+      if (!token) {
+        throw new Error("No authentication token found.");
+      }
+
+      // Use FormData so we can still send image file + JSON payload
+      const fd = new FormData();
+      fd.append("sku", payload.sku);
+      fd.append("name", payload.name);
+      fd.append("slug", payload.slug);
+      fd.append("description", payload.description);
+      fd.append("status", payload.status);
+      fd.append(
+        "max_bookable_quantity",
+        String(payload.max_bookable_quantity)
+      );
+      fd.append("allow_reorder", String(payload.allow_reorder));
+      fd.append("is_virtual", String(payload.is_virtual));
+      fd.append("variations", JSON.stringify(payload.variations));
+
+      if (imageFile) {
+        fd.append("image", imageFile);
+      } else if (existingImagePath) {
+        // backend can treat this as existing path
+        fd.append("image", existingImagePath);
+      }
+
+      const res = await fetch(url, {
+        method,
+        body: fd,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          // ⚠️ Do NOT set Content-Type here; browser will set correct boundary for FormData
+        },
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Failed to save medicine");
       }
 
       await loadMedicines();
@@ -255,7 +406,7 @@ export default function Page() {
     }
   };
 
-  /* ------------ UI ------------ */
+  /* -------------------- UI -------------------- */
 
   const baseForImageList = getBackendBase().replace(/\/api\/?$/, "");
 
@@ -297,8 +448,7 @@ export default function Page() {
             No medicines yet
           </h2>
           <p className="mb-6 text-sm text-neutral-400">
-            Start by creating your first medicine. You can later edit details
-            and update stock.
+            Start by creating your first medicine with variations and pricing.
           </p>
           <button
             type="button"
@@ -323,13 +473,10 @@ export default function Page() {
                   SKU
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Variation
+                  Variations
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Price
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Qty
+                  From price
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">
                   Status
@@ -348,12 +495,21 @@ export default function Page() {
                     : `${baseForImageList}/${med.image.replace(/^\/+/, "")}`;
                 }
 
+                const prices = (med.variations || [])
+                  .map((v) => v.price)
+                  .filter((p) => typeof p === "number" && !Number.isNaN(p));
+                const minPrice =
+                  prices.length > 0 ? Math.min(...prices) : undefined;
+
+                const isActive =
+                  med.status === "active" || med.status === "published";
+
                 return (
                   <tr key={med._id} className="hover:bg-neutral-900/60">
                     <td className="px-4 py-3 align-middle">
                       <div className="flex items-center gap-3">
                         {imgSrc && (
-                          <div className="h-8 w-8 overflow-hidden rounded-md bg-neutral-800">
+                          <div className="h-8 w-8 overflow-hidden rounded-md bg-neutral-808">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={imgSrc}
@@ -366,6 +522,9 @@ export default function Page() {
                           <div className="font-medium text-neutral-50">
                             {med.name}
                           </div>
+                          <p className="text-[11px] text-neutral-500">
+                            {med.slug}
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -373,18 +532,39 @@ export default function Page() {
                       {med.sku}
                     </td>
                     <td className="px-4 py-3 align-middle text-neutral-300">
-                      {med.variation || med.variations}
+                      {med.variations && med.variations.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {med.variations.slice(0, 3).map((v, idx) => (
+                            <span
+                              key={`${med._id}-var-${idx}`}
+                              className="inline-flex rounded-full bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200"
+                            >
+                              {v.title}
+                            </span>
+                          ))}
+                          {med.variations.length > 3 && (
+                            <span className="text-[11px] text-neutral-500">
+                              +{med.variations.length - 3} more
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-neutral-500">
+                          No variations
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 align-middle text-right text-neutral-100">
-                      ₹{med.price?.toFixed?.(2) ?? med.price}
-                    </td>
-                    <td className="px-4 py-3 align-middle text-right text-neutral-100">
-                      {med.qty}
+                      {minPrice != null ? (
+                        <>₹{minPrice.toFixed(2)}</>
+                      ) : (
+                        <span className="text-xs text-neutral-500">–</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 align-middle text-right">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
-                          med.status === "active"
+                          isActive
                             ? "bg-emerald-500/10 text-emerald-300"
                             : "bg-neutral-700 text-neutral-200"
                         }`}
@@ -454,7 +634,7 @@ export default function Page() {
                         Basic details
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Name, SKU and key identification fields.
+                        Name, slug and SKU for this medicine.
                       </p>
                     </div>
                   </div>
@@ -471,22 +651,27 @@ export default function Page() {
                         onChange={handleChange}
                         required
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder="e.g. Paracetamol"
+                        placeholder="e.g. Mounjaro (tirzepatide)"
                       />
                     </div>
 
                     <div>
                       <label className="mb-1 block text-xs font-medium text-neutral-300">
-                        Strength
+                        Slug <span className="text-red-400">*</span>
                       </label>
                       <input
                         type="text"
-                        name="strength"
-                        value={form.strength}
+                        name="slug"
+                        value={form.slug}
                         onChange={handleChange}
+                        required
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder="e.g. 500mg"
+                        placeholder="mounjaro-tirzepatide"
                       />
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        Auto-generated from name, but you can override if
+                        needed.
+                      </p>
                     </div>
 
                     <div>
@@ -500,26 +685,12 @@ export default function Page() {
                         onChange={handleChange}
                         required
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder="Auto from name + strength (editable)"
+                        placeholder="mounjaro-tirzepatide"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Auto-generated like <span className="font-mono">PARA500</span> from
-                        name + strength. You can still override it.
+                        Defaults to the slug. You can use any internal code you
+                        prefer.
                       </p>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="mb-1 block text-xs font-medium text-neutral-300">
-                        Variations
-                      </label>
-                      <input
-                        type="text"
-                        name="variations"
-                        value={form.variations}
-                        onChange={handleChange}
-                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder='e.g. "10 tablets | 20 tablets"'
-                      />
                     </div>
 
                     <div>
@@ -532,14 +703,15 @@ export default function Page() {
                         onChange={handleChange}
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                       >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="archived">Archived</option>
                       </select>
                     </div>
                   </div>
                 </div>
 
-                {/* Section: Stock & pricing */}
+                {/* Section: Variations & pricing */}
                 <div>
                   <div className="mb-3 flex items-center gap-2">
                     <div className="h-6 w-6 rounded-full bg-amber-500/10 flex items-center justify-center text-[11px] text-amber-400 border border-amber-500/30">
@@ -547,50 +719,179 @@ export default function Page() {
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-neutral-200">
-                        Stock & pricing
+                        Variations &amp; pricing
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Manage stock units and price.
+                        Configure different strengths / pack sizes with their
+                        own price and stock.
                       </p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-neutral-300">
-                        Qty (stock) <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="number"
-                        name="qty"
-                        value={form.qty}
-                        onChange={handleChange}
-                        min={0}
-                        required
-                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder="0"
-                      />
-                    </div>
+                  <div className="space-y-3">
+                    {form.variations.map((variation, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 sm:p-4"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                              Variation #{index + 1}
+                            </span>
+                            {variation.title && (
+                              <span className="text-xs text-neutral-300">
+                                ({variation.title})
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeVariation(index)}
+                            disabled={form.variations.length <= 1}
+                            className="text-[11px] text-neutral-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Remove
+                          </button>
+                        </div>
 
-                    <div>
-                      <label className="mb-1 block text-xs font-medium text-neutral-300">
-                        Price <span className="text-red-400">*</span>
-                      </label>
-                      <div className="flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
-                        <span className="mr-2 text-xs text-neutral-500">₹</span>
-                        <input
-                          type="number"
-                          name="price"
-                          value={form.price}
-                          onChange={handleChange}
-                          min={0}
-                          step="0.01"
-                          required
-                          className="w-full bg-transparent text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none"
-                          placeholder="0.00"
-                        />
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                          <div className="sm:col-span-2">
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Title <span className="text-red-400">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={variation.title}
+                              onChange={(e) =>
+                                handleVariationChange(
+                                  index,
+                                  "title",
+                                  e.target.value
+                                )
+                              }
+                              required
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="e.g. 2.5mg"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Price <span className="text-red-400">*</span>
+                            </label>
+                            <div className="flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
+                              <span className="mr-2 text-xs text-neutral-500">
+                                ₹
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={variation.price}
+                                onChange={(e) =>
+                                  handleVariationChange(
+                                    index,
+                                    "price",
+                                    e.target.value
+                                  )
+                                }
+                                className="w-full bg-transparent text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none"
+                                placeholder="0.00"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Stock
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={variation.stock}
+                              onChange={(e) =>
+                                handleVariationChange(
+                                  index,
+                                  "stock",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Max qty per order
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={variation.max_qty}
+                              onChange={(e) =>
+                                handleVariationChange(
+                                  index,
+                                  "max_qty",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="e.g. 2"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Sort order
+                            </label>
+                            <input
+                              type="number"
+                              value={variation.sort_order}
+                              onChange={(e) =>
+                                handleVariationChange(
+                                  index,
+                                  "sort_order",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Status
+                            </label>
+                            <select
+                              value={variation.status}
+                              onChange={(e) =>
+                                handleVariationChange(
+                                  index,
+                                  "status",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            >
+                              <option value="published">Published</option>
+                              <option value="draft">Draft</option>
+                            </select>
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={addVariation}
+                      className="inline-flex items-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:border-blue-500 hover:bg-neutral-900 transition-colors"
+                    >
+                      + Add variation
+                    </button>
+                    <p className="text-[11px] text-neutral-500">
+                      Only title and price are required. Other fields help with
+                      stock management and ordering behaviour.
+                    </p>
                   </div>
                 </div>
 
@@ -602,7 +903,7 @@ export default function Page() {
                     </div>
                     <div>
                       <p className="text-xs font-semibold text-neutral-200">
-                        Image & description
+                        Image &amp; description
                       </p>
                       <p className="text-[11px] text-neutral-500">
                         Optional details to make this medicine easy to
@@ -695,7 +996,7 @@ export default function Page() {
                         onChange={handleChange}
                         rows={3}
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                        placeholder="Notes, usage instructions or other helpful info for staff."
+                        placeholder="Short description, e.g. available strengths or pack information."
                       />
                     </div>
                   </div>

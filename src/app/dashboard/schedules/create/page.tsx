@@ -1,21 +1,8 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  Loader2,
-  Save,
-  CalendarRange,
-  Clock,
-  Users,
-  Globe2,
-  Plus,
-  X,
-  ArrowLeft,
-} from "lucide-react";
-import {
-  getBackendBase,
-  createScheduleApi,
-} from "../../../../api"; // adjust path if needed
+import React, { useEffect, useState } from "react";
+import { Save, Clock, Users, Plus, X, ArrowLeft } from "lucide-react";
+import { getBackendBase, createScheduleApi } from "../../../../api";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast, ToastContainer } from "react-toastify";
@@ -47,11 +34,13 @@ type WeekRow = {
 
 type OverrideRow = {
   key: string;
+  serviceId: string;   // maps to services._id, used to set service_slug in payload
   date: string;
   open: boolean;
   start: string;
   end: string;
   note: string;
+  removeTimes: string; // comma-separated, e.g. "10:00, 10:15"
 };
 
 type ServiceSummary = {
@@ -60,7 +49,7 @@ type ServiceSummary = {
   slug: string;
 };
 
-/* ---------- Small helpers ---------- */
+/* ---------- Small helper ---------- */
 
 function SectionCard({
   title,
@@ -95,19 +84,14 @@ function SectionCard({
 export default function CreateSchedulePage() {
   const router = useRouter();
 
-  /* ------------ Basic form state ------------ */
+  /* ------------ Basic form state (GLOBAL schedule) ------------ */
 
   const [name, setName] = useState("");
-  const [serviceMode, setServiceMode] = useState<"global" | "service">(
-    "global"
-  );
-  const [selectedServiceId, setSelectedServiceId] = useState<string>("");
-
   const [timezone, setTimezone] = useState("Europe/London");
   const [slotMinutes, setSlotMinutes] = useState("15");
   const [capacity, setCapacity] = useState("1");
 
-  /* ------------ Services list (for dropdown) ------------ */
+  /* ------------ Services list (for overrides dropdown) ------------ */
 
   const [services, setServices] = useState<ServiceSummary[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
@@ -140,14 +124,6 @@ export default function CreateSchedulePage() {
     loadServices();
   }, []);
 
-  const selectedService = useMemo(
-    () => services.find((s) => s._id === selectedServiceId),
-    [services, selectedServiceId]
-  );
-
-  const serviceSlugDisplay =
-    serviceMode === "global" ? "global" : selectedService?.slug ?? "";
-
   /* ------------ Week rows (Mon–Sun) ------------ */
 
   const [weekRows, setWeekRows] = useState<WeekRow[]>(() => {
@@ -176,7 +152,7 @@ export default function CreateSchedulePage() {
     );
   };
 
-  /* ------------ Overrides ------------ */
+  /* ------------ Overrides (now mapped to services) ------------ */
 
   const [overrideRows, setOverrideRows] = useState<OverrideRow[]>([]);
 
@@ -185,19 +161,18 @@ export default function CreateSchedulePage() {
       ...prev,
       {
         key: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        serviceId: "",
         date: "",
         open: true,
         start: "",
         end: "",
         note: "",
+        removeTimes: "",
       },
     ]);
   };
 
-  const updateOverrideRow = (
-    key: string,
-    patch: Partial<OverrideRow>
-  ) => {
+  const updateOverrideRow = (key: string, patch: Partial<OverrideRow>) => {
     setOverrideRows((prev) =>
       prev.map((row) => (row.key === key ? { ...row, ...patch } : row))
     );
@@ -218,13 +193,9 @@ export default function CreateSchedulePage() {
         return;
       }
 
-      if (serviceMode === "service" && !selectedService) {
-        toast.error("Please select a service or switch to Global");
-        return;
-      }
-
       setSubmitting(true);
 
+      // week → backend format
       const week = weekRows.map((row) => {
         const base: any = {
           day: row.day,
@@ -244,6 +215,7 @@ export default function CreateSchedulePage() {
         return base;
       });
 
+      // overrides → backend format (with optional service_slug + remove_times)
       const overrides = overrideRows
         .filter((o) => o.date)
         .map((o) => {
@@ -251,21 +223,42 @@ export default function CreateSchedulePage() {
             date: o.date,
             open: o.open,
           };
+
           if (o.note) base.note = o.note;
+
           if (o.open && o.start && o.end) {
             base.start = o.start;
             base.end = o.end;
           }
+
+          // map serviceId -> service_slug if selected
+          if (o.serviceId) {
+            const svc = services.find((s) => s._id === o.serviceId);
+            if (svc?.slug) {
+              base.service_slug = svc.slug;
+            }
+          }
+
+          // remove_times: parse comma-separated string
+          if (o.removeTimes.trim()) {
+            const times = o.removeTimes
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean);
+            if (times.length > 0) {
+              base.remove_times = times;
+            }
+          }
+
           return base;
         });
 
       const payload = {
         name: name.trim(),
-        service_slug:
-          serviceMode === "global"
-            ? "global"
-            : selectedService?.slug ?? "global",
-        service_id: serviceMode === "service" ? selectedService?._id ?? null : null,
+
+        // 🔒 Global schedule at root
+        service_slug: "global",
+
         timezone,
         slot_minutes: Number(slotMinutes || 15),
         capacity: Number(capacity || 1),
@@ -306,7 +299,7 @@ export default function CreateSchedulePage() {
               Create Schedule
             </h1>
             <p className="text-sm text-neutral-500 mt-1">
-              Define weekly availability and special days for bookings.
+              Define a single global schedule with service-specific overrides.
             </p>
           </div>
         </div>
@@ -337,7 +330,7 @@ export default function CreateSchedulePage() {
           {/* Basic info */}
           <SectionCard
             title="Basic details"
-            subtitle="Name your schedule and decide if it’s global or tied to a specific service."
+            subtitle="Global weekly pattern and booking settings."
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
@@ -347,86 +340,9 @@ export default function CreateSchedulePage() {
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Travel Clinic"
-                  className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"></input>
-                
-              </div>
-
-              {/* Global / per service toggle */}
-              <div>
-                <label className="text-[11px] font-medium text-neutral-300">
-                  Schedule type
-                </label>
-                <div className="mt-1 inline-flex rounded-full bg-neutral-900/90 border border-neutral-700 p-1 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setServiceMode("global")}
-                    className={`flex-1 px-3 py-1.5 rounded-full flex items-center justify-center gap-1 ${
-                      serviceMode === "global"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-neutral-400 hover:text-neutral-100"
-                    }`}
-                  >
-                    <Globe2 size={13} />
-                    Global
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setServiceMode("service")}
-                    className={`flex-1 px-3 py-1.5 rounded-full flex items-center justify-center gap-1 ${
-                      serviceMode === "service"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "text-neutral-400 hover:text-neutral-100"
-                    }`}
-                  >
-                    <CalendarRange size={13} />
-                    Specific service
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  Global schedules are used when no service-specific schedule is
-                  assigned.
-                </p>
-              </div>
-
-              {/* Service select */}
-              <div>
-                <label className="text-[11px] font-medium text-neutral-300">
-                  Service (optional for global)
-                </label>
-                <select
-                  value={serviceMode === "global" ? "" : selectedServiceId}
-                  onChange={(e) => setSelectedServiceId(e.target.value)}
-                  disabled={serviceMode === "global" || servicesLoading}
-                  className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
-                    serviceMode === "global"
-                      ? "bg-neutral-900/50 border-neutral-800 text-neutral-500 cursor-not-allowed"
-                      : "bg-neutral-900/80 border-neutral-700 text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                  }`}
-                >
-                  {serviceMode === "global" ? (
-                    <option value="">Global schedule (no service)</option>
-                  ) : (
-                    <>
-                      <option value="">
-                        {servicesLoading
-                          ? "Loading services..."
-                          : "Select service..."}
-                      </option>
-                      {services.map((s) => (
-                        <option key={s._id} value={s._id}>
-                          {s.name} {s.slug ? `• ${s.slug}` : ""}
-                        </option>
-                      ))}
-                    </>
-                  )}
-                </select>
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  Service key:{" "}
-                  <span className="font-mono text-xs text-neutral-300">
-                    {serviceSlugDisplay || "—"}
-                  </span>
-                </p>
+                  placeholder="e.g. Global Clinic Schedule"
+                  className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                />
               </div>
 
               {/* Timezone */}
@@ -482,7 +398,7 @@ export default function CreateSchedulePage() {
           {/* Weekly pattern */}
           <SectionCard
             title="Weekly hours (Mon–Sun)"
-            subtitle="Set regular working hours and optional mid-day breaks."
+            subtitle="Set regular working hours and optional mid-day breaks (global)."
           >
             <div className="space-y-3">
               {weekRows.map((row) => {
@@ -547,9 +463,7 @@ export default function CreateSchedulePage() {
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-neutral-300">
                           Start (HH:MM)
-                          {row.open && (
-                            <span className="text-red-400"> *</span>
-                          )}
+                          {row.open && <span className="text-red-400"> *</span>}
                         </label>
                         <input
                           type="time"
@@ -566,9 +480,7 @@ export default function CreateSchedulePage() {
                       <div>
                         <label className="mb-1 block text-[11px] font-medium text-neutral-300">
                           End (HH:MM)
-                          {row.open && (
-                            <span className="text-red-400"> *</span>
-                          )}
+                          {row.open && <span className="text-red-400"> *</span>}
                         </label>
                         <input
                           type="time"
@@ -628,8 +540,8 @@ export default function CreateSchedulePage() {
 
           {/* Overrides */}
           <SectionCard
-            title="Date overrides (holidays, short days, blackouts)"
-            subtitle="Add exceptions for specific days such as holidays or special opening hours."
+            title="Date overrides (mapped to services)"
+            subtitle="Add exceptions for specific days and link them to services."
           >
             <div className="space-y-4">
               {overrideRows.length === 0 && (
@@ -638,7 +550,7 @@ export default function CreateSchedulePage() {
                   <span className="font-semibold text-neutral-200">
                     “Add override”
                   </span>{" "}
-                  to add holidays or special days.
+                  to add holidays, special hours or service-specific rules.
                 </div>
               )}
 
@@ -661,7 +573,35 @@ export default function CreateSchedulePage() {
                     </button>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1.1fr)_auto_repeat(2,minmax(0,1fr))] sm:items-end">
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1.1fr)_auto_repeat(2,minmax(0,1fr))] sm:items-end">
+                    {/* Service select for override */}
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                        Service (optional)
+                      </label>
+                      <select
+                        value={row.serviceId}
+                        onChange={(e) =>
+                          updateOverrideRow(row.key, {
+                            serviceId: e.target.value,
+                          })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"
+                      >
+                        <option value="">
+                          {servicesLoading
+                            ? "Loading services..."
+                            : "Global (all services)"}
+                        </option>
+                        {services.map((s) => (
+                          <option key={s._id} value={s._id}>
+                            {s.name} {s.slug ? `• ${s.slug}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Date */}
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-neutral-300">
                         Date
@@ -676,6 +616,7 @@ export default function CreateSchedulePage() {
                       />
                     </div>
 
+                    {/* Open toggle */}
                     <div className="flex items-center gap-2 sm:justify-center sm:pb-1">
                       <span className="text-[11px] text-neutral-400">
                         Open?
@@ -697,6 +638,7 @@ export default function CreateSchedulePage() {
                       </button>
                     </div>
 
+                    {/* Start */}
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-neutral-300">
                         Start (HH:MM)
@@ -706,14 +648,13 @@ export default function CreateSchedulePage() {
                         value={row.start}
                         disabled={!row.open}
                         onChange={(e) =>
-                          updateOverrideRow(row.key, {
-                            start: e.target.value,
-                          })
+                          updateOverrideRow(row.key, { start: e.target.value })
                         }
                         className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 disabled:opacity-40"
                       />
                     </div>
 
+                    {/* End */}
                     <div>
                       <label className="mb-1 block text-[11px] font-medium text-neutral-300">
                         End (HH:MM)
@@ -730,18 +671,40 @@ export default function CreateSchedulePage() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="mb-1 block text-[11px] font-medium text-neutral-300">
-                      Reason / note (optional)
-                    </label>
-                    <input
-                      value={row.note}
-                      onChange={(e) =>
-                        updateOverrideRow(row.key, { note: e.target.value })
-                      }
-                      className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"
-                      placeholder="e.g. Christmas Day, staff training, etc."
-                    />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                        Reason / note (optional)
+                      </label>
+                      <input
+                        value={row.note}
+                        onChange={(e) =>
+                          updateOverrideRow(row.key, { note: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"
+                        placeholder="e.g. Christmas Day, staff training, etc."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                        Remove times (comma-separated)
+                      </label>
+                      <input
+                        value={row.removeTimes}
+                        onChange={(e) =>
+                          updateOverrideRow(row.key, {
+                            removeTimes: e.target.value,
+                          })
+                        }
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100"
+                        placeholder="e.g. 10:00, 10:15"
+                      />
+                      <p className="mt-1 text-[10px] text-neutral-500">
+                        Optional. These specific times will be removed for this
+                        date / service.
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -767,16 +730,12 @@ export default function CreateSchedulePage() {
             <div className="space-y-3 text-sm text-neutral-300">
               <div className="flex justify-between text-xs">
                 <span className="text-neutral-500">Type</span>
-                <span className="font-medium">
-                  {serviceMode === "global"
-                    ? "Global schedule"
-                    : "Service-specific"}
-                </span>
+                <span className="font-medium">Global schedule</span>
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-neutral-500">Service key</span>
                 <span className="font-mono text-[11px] text-blue-300">
-                  {serviceSlugDisplay || "global"}
+                  global
                 </span>
               </div>
               <div className="flex justify-between text-xs">
@@ -790,6 +749,10 @@ export default function CreateSchedulePage() {
               <div className="flex justify-between text-xs">
                 <span className="text-neutral-500">Timezone</span>
                 <span>{timezone}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-neutral-500">Overrides</span>
+                <span>{overrideRows.length}</span>
               </div>
             </div>
           </SectionCard>

@@ -19,6 +19,8 @@ import {
   Atom,
   Pill,
 } from "lucide-react";
+import { useOrdersStats } from "../../app/dashboard/orders-badge-context";
+ // 🔁 adjust path
 
 type MenuItem = {
   key: string;
@@ -40,13 +42,11 @@ const menu: SidebarEntry[] = [
     key: "/dashboard/pending-approval",
     label: "Pending Approval",
     icon: Clock,
-    badge: 97,
   },
   {
     key: "/dashboard/approved-orders",
     label: "Approved Orders",
     icon: Check,
-    badge: 53,
   },
   {
     group: "Notifications",
@@ -95,9 +95,7 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "Forms",
-    items: [
-      { key: "/dashboard/forms", label: "Forms", icon: File },
-    ],
+    items: [{ key: "/dashboard/forms", label: "Forms", icon: File }],
   },
 ];
 
@@ -106,13 +104,14 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
 
+  const { stats } = useOrdersStats(); // 🔥 live numbers here
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("user");
       if (!raw) return;
 
       const parsed = JSON.parse(raw);
-      // your saved object: { "userId": "...", "email": "...", "is_admin": false, ... }
       setIsAdmin(!!parsed.is_admin);
     } catch (err) {
       console.error("Failed to read user from localStorage", err);
@@ -137,49 +136,62 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
     <aside className="w-64 bg-[#0b0b0c] border-r border-neutral-800 min-h-screen flex flex-col">
       {/* Scrollable menu */}
       <div className="flex-1 px-2 overflow-y-auto custom-scrollbar">
-        {filteredMenu.map((m, idx) =>
-          "group" in m ? (
-            <div key={idx} className="mt-4">
-              <div className="px-3 text-xs text-neutral-400 uppercase tracking-wider">
-                {m.group}
-              </div>
+        {filteredMenu.map((m, idx) => {
+          if ("group" in m) {
+            return (
+              <div key={idx} className="mt-4">
+                <div className="px-3 text-xs text-neutral-400 uppercase tracking-wider">
+                  {m.group}
+                </div>
 
-              <div className="mt-2 space-y-1">
-                {m.items.map((it) => {
-                  const Icon = it.icon;
-                  const active = path === it.key;
-                  return (
-                    <Link
-                      onClick={onClose}
-                      key={it.key}
-                      href={it.key}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-md ${
-                        active
-                          ? "bg-neutral-800 text-white"
-                          : "text-neutral-300 hover:bg-neutral-800/40"
-                      }`}
-                    >
-                      <Icon size={16} />
-                      <span className="truncate">{it.label}</span>
-                    </Link>
-                  );
-                })}
+                <div className="mt-2 space-y-1">
+                  {m.items.map((it) => {
+                    const Icon = it.icon;
+                    const active = path === it.key;
+                    return (
+                      <Link
+                        onClick={onClose}
+                        key={it.key}
+                        href={it.key}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-md ${
+                          active
+                            ? "bg-neutral-800 text-white"
+                            : "text-neutral-300 hover:bg-neutral-800/40"
+                        }`}
+                      >
+                        <Icon size={16} />
+                        <span className="truncate">{it.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ) : (
+            );
+          }
+
+          // top-level items (Dashboard, Pending, Approved)
+          const isPending = m.key === "/dashboard/pending-approval";
+          const isApproved = m.key === "/dashboard/approved-orders";
+
+          const badge =
+            isPending ? stats.pending : isApproved ? stats.approved : m.badge;
+
+          const active = path === m.key;
+
+          return (
             <div key={idx} className="mt-2">
               <Link
                 onClick={onClose}
                 href={m.key}
                 className={`group flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-150 ${
-                  path === m.key
+                  active
                     ? "bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-sm"
                     : "text-neutral-300 hover:bg-neutral-800/40 hover:text-white"
                 }`}
               >
                 <div
                   className={`p-2 rounded-md transition-colors ${
-                    path === m.key
+                    active
                       ? "bg-blue-600/30"
                       : "bg-neutral-800 group-hover:bg-neutral-700"
                   }`}
@@ -187,7 +199,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
                   <m.icon
                     size={16}
                     className={
-                      path === m.key
+                      active
                         ? "text-blue-400"
                         : "text-neutral-400 group-hover:text-white"
                     }
@@ -198,21 +210,21 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
                   {m.label}
                 </span>
 
-                {m.badge && (
+                {badge !== undefined && badge !== null && (
                   <span
                     className={`ml-auto text-xs font-semibold rounded-md px-2 py-0.5 ${
-                      path === m.key
+                      active
                         ? "bg-blue-500 text-white"
                         : "bg-yellow-400 text-black"
                     }`}
                   >
-                    {m.badge}
+                    {badge}
                   </span>
                 )}
               </Link>
             </div>
-          )
-        )}
+          );
+        })}
       </div>
 
       {/* Logout */}
