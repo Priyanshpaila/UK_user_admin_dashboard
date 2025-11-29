@@ -113,16 +113,22 @@ export type ServicePayload = {
   view_type: string;
   cta_text: string;
   image: string | null;
+  service_type?: "private" | "nhs" | string;
 };
 
 export async function createServiceApi(payload: ServicePayload) {
   const base = getBackendBase();
+
+  const finalPayload = {
+    ...payload,
+    service_type: payload.service_type ?? "private", 
+  };
+
   return jsonFetch<any>(`${base}/services`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(finalPayload),
   });
 }
-
 export async function getServiceApi(id: string | string[]) {
   const base = getBackendBase(); // Get the backend base URL dynamically based on subdomain
   const url = `${base}/services/${id}`;
@@ -136,9 +142,15 @@ export async function updateServiceApi(
   payload: ServicePayload
 ) {
   const base = getBackendBase();
+
+  const finalPayload = {
+    ...payload,
+    service_type: payload.service_type ?? "private", 
+  };
+
   return jsonFetch<any>(`${base}/services/${id}`, {
     method: "PUT",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(finalPayload),
   });
 }
 

@@ -47,6 +47,7 @@ type ShowIf = {
   field: string | null;
   equals: string | null;
   in: string[];
+  inRaw?: string; // UI-only raw comma-separated string
   truthy: boolean;
   notEquals: string | null;
 };
@@ -111,6 +112,7 @@ function defaultShowIf(): ShowIf {
     field: null,
     equals: null,
     in: [],
+    inRaw: "",
     truthy: false,
     notEquals: null,
   };
@@ -224,11 +226,34 @@ export default function EditClinicFormPage() {
   function parseBackendFieldToFormField(f: any): FormField {
     const type: string = f.type;
     const data = f.data || {};
+
+    const rawShowIf = data.showIf || {};
+    const rawIn = rawShowIf.in;
+
+    const inArray: string[] = Array.isArray(data.showIf?.in)
+      ? data.showIf.in
+      : [];
+
+    let inArr: string[] = [];
+
+    if (Array.isArray(rawIn)) {
+      inArr = rawIn
+        .filter((v: any) => typeof v === "string")
+        .map((v: string) => v.trim())
+        .filter(Boolean);
+    } else if (typeof rawIn === "string") {
+      inArr = rawIn
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+    }
+
     const showIf: ShowIf = {
       enabled: !!data.showIf?.enabled,
       field: data.showIf?.field ?? null,
       equals: data.showIf?.equals ?? null,
-      in: data.showIf?.in ?? [],
+      in: inArray,
+      inRaw: inArray.join(", "),
       truthy: !!data.showIf?.truthy,
       notEquals: data.showIf?.notEquals ?? null,
     };
@@ -455,7 +480,9 @@ export default function EditClinicFormPage() {
   /* ---------- Builder handlers ---------- */
 
   const updateField = (fid: string, patch: Partial<FormField>) => {
-    setFields((prev) => prev.map((f) => (f.id === fid ? { ...f, ...patch } : f)));
+    setFields((prev) =>
+      prev.map((f) => (f.id === fid ? { ...f, ...patch } : f))
+    );
   };
 
   const updateShowIf = (fid: string, patch: Partial<ShowIf>) => {
@@ -891,13 +918,7 @@ export default function EditClinicFormPage() {
               Service (optional)
             </label>
             <select
-              value={
-                serviceId
-                  ? serviceId
-                  : serviceSlug === ""
-                  ? "global"
-                  : ""
-              }
+              value={serviceId ? serviceId : serviceSlug === "" ? "global" : ""}
               onChange={(e) => handleServiceChange(e.target.value)}
               className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
             >
@@ -1003,7 +1024,7 @@ export default function EditClinicFormPage() {
                 onChange={(e) => setIsActive(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
               />
-            <label
+              <label
                 htmlFor="active-toggle"
                 className="text-xs text-neutral-300"
               >
@@ -1030,7 +1051,7 @@ export default function EditClinicFormPage() {
 
       {/* Main 3-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1.6fr)_minmax(0,1.1fr)] gap-5">
-        {/* Palette (read-only in edit; but you can still add fields) */}
+        {/* Palette */}
         <aside className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-3">
           <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em] mb-3">
             Field types
@@ -1042,7 +1063,6 @@ export default function EditClinicFormPage() {
                 type="button"
                 onClick={() => {
                   const newField: FormField = (() => {
-                    // reuse mapping logic from create page; here we create minimal defaults:
                     const base: BaseField = {
                       id: createId(),
                       type: item.type,
@@ -1375,9 +1395,13 @@ export default function EditClinicFormPage() {
               </div>
 
               {/* Required */}
-              {!["section", "divider", "textBlock", "image", "pageBreak"].includes(
-                selectedField.type
-              ) && (
+              {![
+                "section",
+                "divider",
+                "textBlock",
+                "image",
+                "pageBreak",
+              ].includes(selectedField.type) && (
                 <div className="flex items-center gap-2">
                   <input
                     id="required-toggle"
@@ -1531,9 +1555,7 @@ export default function EditClinicFormPage() {
                         />
                         <button
                           type="button"
-                          onClick={() =>
-                            deleteOption(selectedField.id, opt.id)
-                          }
+                          onClick={() => deleteOption(selectedField.id, opt.id)}
                           className="p-1 rounded-md text-red-400 hover:bg-red-500/10"
                         >
                           <Trash2 className="h-3 w-3" />
@@ -1588,7 +1610,7 @@ export default function EditClinicFormPage() {
                 </div>
               )}
 
-              {/* ShowIf configuration (simple) */}
+              {/* ShowIf configuration with equals + in (multiple) */}
               <div className="border-t border-neutral-800 pt-3 space-y-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -1612,6 +1634,7 @@ export default function EditClinicFormPage() {
 
                 {selectedField.showIf?.enabled && (
                   <div className="space-y-2 pl-1">
+                    {/* Source field key */}
                     <div>
                       <label className="text-xs font-medium text-neutral-300">
                         Source field key
@@ -1628,9 +1651,10 @@ export default function EditClinicFormPage() {
                       />
                     </div>
 
+                    {/* equals (single) */}
                     <div>
                       <label className="text-xs font-medium text-neutral-300">
-                        Equals value
+                        Equals value (single)
                       </label>
                       <input
                         value={selectedField.showIf.equals || ""}
@@ -1639,12 +1663,37 @@ export default function EditClinicFormPage() {
                             equals: e.target.value || null,
                           })
                         }
-                        placeholder='e.g. "Yes"'
+                        placeholder='e.g. "yes"'
                         className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        You can extend this later with <code>in</code>,{" "}
-                        <code>truthy</code>, etc. to match your RAF logic.
+                        Basic equality check:{" "}
+                        <code>value === showIf.equals</code>.
+                      </p>
+                    </div>
+
+                    {/* in (multiple) */}
+                    <div>
+                      <label className="text-xs font-medium text-neutral-300">
+                        Equals any of these (comma-separated)
+                      </label>
+                      <input
+                        value={(selectedField.showIf.in || []).join(", ")}
+                        onChange={(e) => {
+                          const values = e.target.value
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean);
+                          updateShowIf(selectedField.id, {
+                            in: values,
+                          });
+                        }}
+                        placeholder='e.g. "yes,no,maybe"'
+                        className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                      />
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        This fills <code>showIf.in</code> as an array, e.g.{" "}
+                        <code>["yes","no","maybe"]</code>.
                       </p>
                     </div>
                   </div>

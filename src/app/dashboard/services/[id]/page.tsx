@@ -243,6 +243,9 @@ export default function EditServicePage() {
 
   const [viewType, setViewType] = useState("card");
 
+  // 🔹 NEW: service_type (private / nhs)
+  const [serviceType, setServiceType] = useState<"private" | "nhs">("private");
+
   // image preview + file + original path
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -281,6 +284,12 @@ export default function EditServicePage() {
         setDescription(data.description);
         setCtaText(data.cta_text || "");
         setViewType(data.view_type);
+
+        // 🔹 NEW: load service_type (fallback to "private")
+        const st = (data.service_type || data.serviceType || "private") as
+          | "private"
+          | "nhs";
+        setServiceType(st === "nhs" ? "nhs" : "private");
 
         // IMAGE HANDLING
         if (data.image) {
@@ -396,6 +405,9 @@ export default function EditServicePage() {
       formData.append("cta_text", ctaText || "Book Now");
       formData.append("view_type", viewType);
       formData.append("status", "published");
+
+      // 🔹 NEW: service_type appended to payload
+      formData.append("service_type", serviceType);
 
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
@@ -603,6 +615,25 @@ export default function EditServicePage() {
                     placeholder="hiv-vaccination"
                     className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   />
+                </div>
+
+                {/* 🔹 NEW: Service Type dropdown */}
+                <div>
+                  <label className="text-xs font-medium text-neutral-300">
+                    Service Type
+                  </label>
+                  <select
+                    value={serviceType}
+                    onChange={(e) =>
+                      setServiceType(
+                        e.target.value === "nhs" ? "nhs" : "private"
+                      )
+                    }
+                    className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                  >
+                    <option value="private">Private</option>
+                    <option value="nhs">NHS</option>
+                  </select>
                 </div>
               </div>
 

@@ -46,6 +46,7 @@ type ShowIf = {
   field: string | null;
   equals: string | null;
   in: string[];
+  inRaw?: string; // UI-only raw comma-separated string
   truthy: boolean;
   notEquals: string | null;
 };
@@ -153,6 +154,7 @@ function defaultShowIf(): ShowIf {
     field: null,
     equals: null,
     in: [],
+    inRaw: "",
     truthy: false,
     notEquals: null,
   };
@@ -666,7 +668,7 @@ export default function Page() {
       setSaving(true);
       await createClinicFormApi(formPayload);
       toast.success("Form created successfully");
-      // Optionally reset state here
+      // You can reset state here if needed
     } catch (err) {
       console.error(err);
       toast.error("Failed to create form");
@@ -1161,13 +1163,13 @@ export default function Page() {
               </div>
 
               {/* Required */}
-              {![
+              {[
                 "section",
                 "divider",
                 "textBlock",
                 "image",
                 "pageBreak",
-              ].includes(selectedField.type) && (
+              ].includes(selectedField.type) === false && (
                 <div className="flex items-center gap-2">
                   <input
                     id="required-toggle"
@@ -1376,7 +1378,7 @@ export default function Page() {
                 </div>
               )}
 
-              {/* ShowIf configuration (simple) */}
+              {/* ShowIf configuration (equals + in) */}
               <div className="border-t border-neutral-800 pt-3 space-y-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -1400,6 +1402,7 @@ export default function Page() {
 
                 {selectedField.showIf?.enabled && (
                   <div className="space-y-2 pl-1">
+                    {/* Source field */}
                     <div>
                       <label className="text-xs font-medium text-neutral-300">
                         Source field key
@@ -1416,9 +1419,10 @@ export default function Page() {
                       />
                     </div>
 
+                    {/* equals (single) */}
                     <div>
                       <label className="text-xs font-medium text-neutral-300">
-                        Equals value
+                        Equals value (single)
                       </label>
                       <input
                         value={selectedField.showIf.equals || ""}
@@ -1427,12 +1431,43 @@ export default function Page() {
                             equals: e.target.value || null,
                           })
                         }
-                        placeholder='e.g. "Yes"'
+                        placeholder='e.g. "yes"'
                         className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        You can extend this later with <code>in</code>,{" "}
-                        <code>truthy</code>, etc. to match your RAF logic.
+                        Basic equality check:{" "}
+                        <code>value === showIf.equals</code>.
+                      </p>
+                    </div>
+
+                    {/* in (multiple) */}
+                    <div>
+                      <label className="text-xs font-medium text-neutral-300">
+                        Equals any of these (comma-separated)
+                      </label>
+                      <input
+                        value={
+                          selectedField.showIf?.inRaw ??
+                          (selectedField.showIf?.in || []).join(", ")
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const values = raw
+                            .split(",")
+                            .map((v) => v.trim())
+                            .filter(Boolean);
+
+                          updateShowIf(selectedField.id, {
+                            inRaw: raw,
+                            in: values,
+                          });
+                        }}
+                        placeholder='e.g. "yes,no,maybe"'
+                        className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                      />
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        This fills <code>showIf.in</code> as an array, e.g.{" "}
+                        <code>["yes","no","maybe"]</code>.
                       </p>
                     </div>
                   </div>
