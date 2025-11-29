@@ -5,8 +5,10 @@ import {
   getOrdersApi,
   getOrderByIdApi,
   updateOrderStatusApi,
+  getUserByIdApi,
   type OrderDto,
   type OrdersListMeta,
+  type UserDto,
 } from "../../../api";
 import {
   Loader2,
@@ -23,8 +25,7 @@ import {
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
-import { useOrdersStats } from "../orders-badge-context";
- // 👈 adjust path if needed
+import { useOrdersStats } from "../orders-badge-context"; // 👈 keep path as is
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -75,6 +76,31 @@ function paymentBadgeClasses(status: string) {
   }
 }
 
+function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
+  if (!order) return "Unknown";
+
+  // if backend adds patient_name directly
+  if ((order as any).patient_name) return (order as any).patient_name;
+
+  const fromOrder = `${(order as any).first_name || ""} ${
+    (order as any).last_name || ""
+  }`.trim();
+  if (fromOrder) return fromOrder;
+
+  if (user) {
+    const fromUser =
+      user.name ||
+      user.fullName ||
+      `${(user as any).firstName || ""} ${
+        (user as any).lastName || ""
+      }`.trim() ||
+      user.email;
+    if (fromUser) return fromUser;
+  }
+
+  return "Unknown";
+}
+
 export default function Page() {
   // list state
   const [orders, setOrders] = useState<OrderDto[]>([]);
@@ -82,11 +108,19 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // cache of users for cards: user_id -> user
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
+    {}
+  );
+
   // detail modal state
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+
+  // user who ordered (for detail view)
+  const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
   // approve / reject action state
   const [statusAction, setStatusAction] = useState<
@@ -95,6 +129,23 @@ export default function Page() {
 
   // 🔥 global stats actions (for sidebar badges)
   const { applyStatusChange, refresh } = useOrdersStats();
+
+  // 👤 logged-in user id (for approved_by)
+  const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null);
+
+  // read logged-in user id from localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem("user");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const id = parsed._id || parsed.id || parsed.userId;
+      if (id) setLoggedInUserId(String(id));
+    } catch (err) {
+      console.error("Failed to read logged-in user from localStorage", err);
+    }
+  }, []);
 
   // 🔒 hard-coded filter
   const STATUS = "pending";
@@ -109,8 +160,41 @@ export default function Page() {
       try {
         const res = await getOrdersApi({ status: STATUS });
         if (cancelled) return;
-        setOrders(res.data || []);
+
+        const ordersList = res.data || [];
+        setOrders(ordersList);
         setMeta(res.meta || null);
+
+        // fetch users for all distinct user_ids in list
+        const uniqueUserIds = Array.from(
+          new Set(
+            ordersList
+              .map((o) => (o as any).user_id as string | undefined)
+              .filter(Boolean)
+          )
+        ) as string[];
+
+        if (uniqueUserIds.length) {
+          const results = await Promise.all(
+            uniqueUserIds.map(async (id) => {
+              try {
+                const user = await getUserByIdApi(id);
+                return [id, user] as const;
+              } catch (err) {
+                console.error("Failed to fetch user for order list", id, err);
+                return [id, null] as const;
+              }
+            })
+          );
+
+          if (!cancelled) {
+            const map: Record<string, UserDto | null> = {};
+            for (const [id, user] of results) {
+              map[id] = user;
+            }
+            setOrderUsers(map);
+          }
+        }
 
         // keep global stats in sync too
         await refresh();
@@ -135,10 +219,27 @@ export default function Page() {
     setDetailError(null);
     setSelectedOrder(null);
     setStatusAction(null);
+    setOrderedByUser(null);
 
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+
+      // fetch ordered-by user (detail)
+      const userId = (order as any).user_id as string | undefined;
+      if (userId) {
+        // if we already have from list cache, reuse
+        if (orderUsers[userId] !== undefined) {
+          setOrderedByUser(orderUsers[userId]);
+        } else {
+          try {
+            const user = await getUserByIdApi(userId);
+            setOrderedByUser(user);
+          } catch (err) {
+            console.error("Failed to fetch user for order (detail)", err);
+          }
+        }
+      }
     } catch (e: any) {
       setDetailError(e?.message || "Failed to load order details");
     } finally {
@@ -156,9 +257,20 @@ export default function Page() {
     setDetailError(null);
 
     try {
-      const updated = await updateOrderStatusApi(selectedOrder._id, {
-        status: newStatus,
-      });
+      const payload: any = { status: newStatus };
+
+      // ✅ when approving, send approved_by + approved_at
+      if (newStatus === "approved") {
+        if (loggedInUserId) {
+          payload.approved_by = loggedInUserId;
+        }
+        payload.approved_at = new Date().toISOString();
+      }
+
+      const updated = await updateOrderStatusApi(
+        selectedOrder._id,
+        payload as any
+      );
 
       // 🔥 update global counters instantly (sidebar badges)
       applyStatusChange(prevStatus, updated.status);
@@ -166,7 +278,7 @@ export default function Page() {
       // Remove from local list, as it's no longer pending
       setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
 
-      // For pending page it's usually nice to close after action:
+      // Close modal after action
       setShowDetail(false);
       setSelectedOrder(updated);
     } catch (e: any) {
@@ -224,15 +336,19 @@ export default function Page() {
           {orders.map((order) => {
             const totalMinor = order.meta?.totalMinor ?? null;
             const appointmentAt =
-              order.meta?.appointment_start_at || order.start_at;
+              order.meta?.appointment_start_at || (order as any).start_at;
             const productName =
               order.meta?.selectedProduct?.name ||
               order.meta?.lines?.[0]?.name ||
               order.service_name;
-            const patientName =
-              order.patient_name ||
-              `${order.first_name || ""} ${order.last_name || ""}`.trim() ||
-              "Unknown patient";
+
+            const userId = (order as any).user_id as string | undefined;
+            const cardUser =
+              userId && orderUsers[userId] !== undefined
+                ? orderUsers[userId]
+                : null;
+
+            const patientName = getDisplayPatientName(order, cardUser);
 
             return (
               <div
@@ -287,9 +403,9 @@ export default function Page() {
                   <div className="flex items-center gap-2">
                     <User className="h-4 w-4 text-neutral-400" />
                     <span className="font-medium">{patientName}</span>
-                    {order.email && (
+                    {(order as any).email && (
                       <span className="ml-2 truncate text-neutral-400">
-                        {order.email}
+                        {(order as any).email}
                       </span>
                     )}
                   </div>
@@ -297,18 +413,23 @@ export default function Page() {
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
                     <span>{formatDateTime(appointmentAt)}</span>
                     <span className="mx-2 text-neutral-500">•</span>
-                    <span className="text-neutral-400">
-                      Duration:{" "}
-                      {Math.max(
-                        1,
-                        Math.round(
-                          (new Date(order.end_at).getTime() -
-                            new Date(order.start_at).getTime()) /
-                            60000
-                        )
-                      )}{" "}
-                      min
-                    </span>
+                    {order.meta?.appointment_start_at &&
+                    (order as any).end_at ? (
+                      <span className="text-neutral-400">
+                        Duration:{" "}
+                        {Math.max(
+                          1,
+                          Math.round(
+                            (new Date((order as any).end_at).getTime() -
+                              new Date(
+                                order.meta.appointment_start_at
+                              ).getTime()) /
+                              60000
+                          )
+                        )}{" "}
+                        min
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -417,18 +538,20 @@ export default function Page() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div>
                       <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient
+                        Patient / Ordered by
                       </p>
                       <p className="text-sm font-medium text-white">
-                        {selectedOrder.patient_name ||
-                          `${selectedOrder.first_name || ""} ${
-                            selectedOrder.last_name || ""
-                          }`.trim() ||
-                          "Unknown"}
+                        {getDisplayPatientName(selectedOrder, orderedByUser)}
                       </p>
-                      {selectedOrder.email && (
-                        <p className="text-xs text-neutral-400">
-                          {selectedOrder.email}
+                      {orderedByUser && (
+                        <p className="text-[11px] text-neutral-500">
+                          Account:{" "}
+                          {orderedByUser.name ||
+                            orderedByUser.fullName ||
+                            `${(orderedByUser as any).firstName || ""} ${
+                              (orderedByUser as any).lastName || ""
+                            }`.trim() ||
+                            orderedByUser.email}
                         </p>
                       )}
                     </div>
@@ -439,12 +562,14 @@ export default function Page() {
                       <p className="text-sm text-white">
                         {formatDateTime(
                           selectedOrder.meta?.appointment_start_at ||
-                            selectedOrder.start_at
+                            (selectedOrder as any).start_at
                         )}
                       </p>
-                      <p className="text-xs text-neutral-400">
-                        End: {formatDateTime(selectedOrder.end_at)}
-                      </p>
+                      {(selectedOrder as any).end_at && (
+                        <p className="text-xs text-neutral-400">
+                          End: {formatDateTime((selectedOrder as any).end_at)}
+                        </p>
+                      )}
                     </div>
                   </div>
 

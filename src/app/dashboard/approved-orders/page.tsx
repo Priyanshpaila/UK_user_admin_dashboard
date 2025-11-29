@@ -5,8 +5,10 @@ import {
   getOrdersApi,
   getOrderByIdApi,
   updateOrderStatusApi,
+  getUserByIdApi,
   type OrderDto,
   type OrdersListMeta,
+  type UserDto,
 } from "../../../api";
 import {
   Loader2,
@@ -20,9 +22,8 @@ import {
   Filter,
   X,
   ClipboardList,
-  ThumbsUp,
-  ThumbsDown,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -73,12 +74,44 @@ function paymentBadgeClasses(status: string) {
   }
 }
 
+function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
+  if (!order) return "Unknown";
+
+  // if backend later adds this
+  if ((order as any).patient_name) return (order as any).patient_name;
+
+  const fromOrder = `${(order as any).first_name || ""} ${
+    (order as any).last_name || ""
+  }`.trim();
+  if (fromOrder) return fromOrder;
+
+  if (user) {
+    const fromUser =
+      user.name ||
+      user.fullName ||
+      `${(user as any).firstName || ""} ${
+        (user as any).lastName || ""
+      }`.trim() ||
+      user.email;
+    if (fromUser) return fromUser;
+  }
+
+  return "Unknown";
+}
+
 export default function Page() {
+  const router = useRouter();
+
   // list state
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [meta, setMeta] = useState<OrdersListMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // cache of user info for cards: user_id -> user
+  const [orderUsers, setOrderUsers] = useState<
+    Record<string, UserDto | null>
+  >({});
 
   // detail modal state
   const [showDetail, setShowDetail] = useState(false);
@@ -86,15 +119,18 @@ export default function Page() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // approve / reject action state
-  const [statusAction, setStatusAction] = useState<
-    "approved" | "rejected" | null
-  >(null);
+  // admin notes state
+  const [adminNotes, setAdminNotes] = useState<string[]>([]);
+  const [newNote, setNewNote] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+
+  // ordered-by user state (for detail modal)
+  const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
   // 🔒 hard-coded filter
   const STATUS = "approved";
 
-  // Load list (pending)
+  // Load list (approved)
   useEffect(() => {
     let cancelled = false;
 
@@ -104,8 +140,41 @@ export default function Page() {
       try {
         const res = await getOrdersApi({ status: STATUS });
         if (cancelled) return;
-        setOrders(res.data || []);
+
+        const ordersList = res.data || [];
+        setOrders(ordersList);
         setMeta(res.meta || null);
+
+        // fetch all distinct user_ids for cards
+        const uniqueUserIds = Array.from(
+          new Set(
+            ordersList
+              .map((o) => (o as any).user_id as string | undefined)
+              .filter(Boolean)
+          )
+        ) as string[];
+
+        if (uniqueUserIds.length) {
+          const results = await Promise.all(
+            uniqueUserIds.map(async (id) => {
+              try {
+                const user = await getUserByIdApi(id);
+                return [id, user] as const;
+              } catch (err) {
+                console.error("Failed to fetch user for order list", id, err);
+                return [id, null] as const;
+              }
+            })
+          );
+
+          if (!cancelled) {
+            const map: Record<string, UserDto | null> = {};
+            for (const [id, user] of results) {
+              map[id] = user;
+            }
+            setOrderUsers(map);
+          }
+        }
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || "Failed to load orders");
@@ -118,7 +187,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, []); // always "pending"
+  }, []); // always "approved"
 
   // View details handler
   async function handleViewDetails(id: string) {
@@ -126,11 +195,25 @@ export default function Page() {
     setDetailLoading(true);
     setDetailError(null);
     setSelectedOrder(null);
-    setStatusAction(null);
+    setAdminNotes([]);
+    setNewNote("");
+    setOrderedByUser(null);
 
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+      setAdminNotes((order as any).admin_notes || []);
+
+      // fetch the user who ordered (by user_id)
+      const userId = (order as any).user_id as string | undefined;
+      if (userId) {
+        try {
+          const user = await getUserByIdApi(userId);
+          setOrderedByUser(user);
+        } catch (err) {
+          console.error("Failed to fetch user for order (detail)", err);
+        }
+      }
     } catch (e: any) {
       setDetailError(e?.message || "Failed to load order details");
     } finally {
@@ -138,35 +221,50 @@ export default function Page() {
     }
   }
 
-  // Approve / Reject action
-  async function handleChangeStatus(newStatus: "approved" | "rejected") {
+  // Save admin notes (using updateOrderStatusApi)
+  async function handleSaveAdminNotes() {
     if (!selectedOrder) return;
 
-    setStatusAction(newStatus);
+    setSavingNotes(true);
     setDetailError(null);
 
     try {
       const updated = await updateOrderStatusApi(selectedOrder._id, {
-        status: newStatus,
-      });
+        status: selectedOrder.status,
+        admin_notes: adminNotes,
+      } as any);
 
-      // Remove from local list, as it's no longer pending
-      setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-
-      // Optionally, keep detail open with updated info:
-      // setSelectedOrder(updated);
-
-      // For pending page it's usually nice to close after action:
-      setShowDetail(false);
       setSelectedOrder(updated);
+      setAdminNotes((updated as any).admin_notes || []);
     } catch (e: any) {
-      setDetailError(e?.message || "Failed to update order status");
+      setDetailError(e?.message || "Failed to save admin notes");
     } finally {
-      setStatusAction(null);
+      setSavingNotes(false);
     }
   }
 
-  const totalPending = meta?.total ?? orders.length;
+  // 👉 Start consultancy: navigate with service_id & order_id
+  function handleStartConsultancy() {
+    if (!selectedOrder) return;
+
+    const serviceId = (selectedOrder as any).service_id as string | undefined;
+    const orderId = selectedOrder._id;
+
+    if (!serviceId || !orderId) {
+      console.warn("Missing service_id or order_id for consultancy navigation");
+      return;
+    }
+
+    // Adjust the target path if you name the page differently
+    const url = `/dashboard/consultations/start?service_id=${encodeURIComponent(
+      serviceId
+    )}&order_id=${encodeURIComponent(orderId)}`;
+
+    setShowDetail(false);
+    router.push(url);
+  }
+
+  const totalApproved = meta?.total ?? orders.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -177,8 +275,8 @@ export default function Page() {
             Approved Orders
           </h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Orders waiting for review or action. Open details to inspect the
-            full assessment and booking info.
+            Orders that have been approved and are ready for consultation and
+            follow-up.
           </p>
         </div>
 
@@ -188,7 +286,10 @@ export default function Page() {
             <span>Status:</span>
             <span className="font-medium text-emerald-400">Approved</span>
           </div>
-
+          <span className="text-xs text-neutral-500">
+            {totalApproved} approved{" "}
+            {meta ? `• page ${meta.page} of ${meta.totalPages}` : ""}
+          </span>
         </div>
       </div>
 
@@ -211,15 +312,19 @@ export default function Page() {
           {orders.map((order) => {
             const totalMinor = order.meta?.totalMinor ?? null;
             const appointmentAt =
-              order.meta?.appointment_start_at || order.start_at;
+              order.meta?.appointment_start_at || (order as any).start_at;
             const productName =
               order.meta?.selectedProduct?.name ||
               order.meta?.lines?.[0]?.name ||
               order.service_name;
-            const patientName =
-              order.patient_name ||
-              `${order.first_name || ""} ${order.last_name || ""}`.trim() ||
-              "Unknown patient";
+
+            const userId = (order as any).user_id as string | undefined;
+            const cardUser =
+              userId && orderUsers[userId] !== undefined
+                ? orderUsers[userId]
+                : null;
+
+            const patientName = getDisplayPatientName(order, cardUser);
 
             return (
               <div
@@ -274,9 +379,9 @@ export default function Page() {
                   <div className="flex items-center gap-2">
                     <User className="h-4 w-4 text-neutral-400" />
                     <span className="font-medium">{patientName}</span>
-                    {order.email && (
+                    {(order as any).email && (
                       <span className="ml-2 truncate text-neutral-400">
-                        {order.email}
+                        {(order as any).email}
                       </span>
                     )}
                   </div>
@@ -284,18 +389,23 @@ export default function Page() {
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
                     <span>{formatDateTime(appointmentAt)}</span>
                     <span className="mx-2 text-neutral-500">•</span>
-                    <span className="text-neutral-400">
-                      Duration:{" "}
-                      {Math.max(
-                        1,
-                        Math.round(
-                          (new Date(order.end_at).getTime() -
-                            new Date(order.start_at).getTime()) /
-                            60000
-                        )
-                      )}{" "}
-                      min
-                    </span>
+                    {order.meta?.appointment_start_at &&
+                    (order as any).end_at ? (
+                      <span className="text-neutral-400">
+                        Duration:{" "}
+                        {Math.max(
+                          1,
+                          Math.round(
+                            (new Date((order as any).end_at).getTime() -
+                              new Date(
+                                order.meta?.appointment_start_at
+                              ).getTime()) /
+                              60000
+                          )
+                        )}{" "}
+                        min
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -404,18 +514,20 @@ export default function Page() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div>
                       <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient
+                        Patient / Ordered by
                       </p>
                       <p className="text-sm font-medium text-white">
-                        {selectedOrder.patient_name ||
-                          `${selectedOrder.first_name || ""} ${
-                            selectedOrder.last_name || ""
-                          }`.trim() ||
-                          "Unknown"}
+                        {getDisplayPatientName(selectedOrder, orderedByUser)}
                       </p>
-                      {selectedOrder.email && (
-                        <p className="text-xs text-neutral-400">
-                          {selectedOrder.email}
+                      {orderedByUser && (
+                        <p className="text-[11px] text-neutral-500">
+                          Account:{" "}
+                          {orderedByUser.name ||
+                            orderedByUser.fullName ||
+                            `${(orderedByUser as any).firstName || ""} ${
+                              (orderedByUser as any).lastName || ""
+                            }`.trim() ||
+                            orderedByUser.email}
                         </p>
                       )}
                     </div>
@@ -426,12 +538,15 @@ export default function Page() {
                       <p className="text-sm text-white">
                         {formatDateTime(
                           selectedOrder.meta?.appointment_start_at ||
-                            selectedOrder.start_at
+                            (selectedOrder as any).start_at
                         )}
                       </p>
-                      <p className="text-xs text-neutral-400">
-                        End: {formatDateTime(selectedOrder.end_at)}
-                      </p>
+                      {(selectedOrder as any).end_at &&
+                        selectedOrder.meta?.appointment_start_at && (
+                          <p className="text-xs text-neutral-400">
+                            End: {formatDateTime((selectedOrder as any).end_at)}
+                          </p>
+                        )}
                     </div>
                   </div>
 
@@ -446,9 +561,9 @@ export default function Page() {
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
-                          <span className="font-semibold text-white">
-                            {formatMoney(selectedOrder.meta?.totalMinor)}
-                          </span>
+                        <span className="font-semibold text-white">
+                          {formatMoney(selectedOrder.meta?.totalMinor)}
+                        </span>
                       </p>
                     </div>
 
@@ -487,24 +602,26 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* RAF Preview */}
+                  {/* RAF Answers (full questions + answers) */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
-                        RAF Answers (preview)
+                        RAF Questions & Answers
                       </p>
-                      <div className="max-h-40 overflow-y-auto space-y-1">
+                      <div className="space-y-2">
                         {selectedOrder.meta.formsQA.raf.qa.map(
                           (qa: any, idx: number) => (
                             <div
                               key={idx}
-                              className="text-[11px] border-b border-neutral-800/60 pb-1 last:border-none"
+                              className="text-[11px] border-b border-neutral-800/60 pb-2 last:border-none"
                             >
-                              <p className="text-neutral-400">
+                              <p className="text-neutral-400 font-medium">
                                 {qa.question || qa.key}
                               </p>
-                              <p className="text-neutral-100">
-                                {qa.answer ?? "—"}
+                              <p className="text-neutral-100 whitespace-pre-wrap mt-0.5">
+                                {Array.isArray(qa.raw)
+                                  ? qa.raw.join(", ")
+                                  : qa.answer ?? qa.raw ?? "—"}
                               </p>
                             </div>
                           )
@@ -513,7 +630,97 @@ export default function Page() {
                     </div>
                   ) : null}
 
+                  {/* Admin Notes */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Admin notes
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleSaveAdminNotes}
+                        disabled={savingNotes}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {savingNotes && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        {savingNotes ? "Saving…" : "Save notes"}
+                      </button>
+                    </div>
 
+                    {adminNotes.length === 0 && (
+                      <p className="text-xs text-neutral-500 mb-2">
+                        No notes yet. Add your first note below.
+                      </p>
+                    )}
+
+                    {adminNotes.length > 0 && (
+                      <ul className="space-y-2 mb-3">
+                        {adminNotes.map((note, idx) => (
+                          <li
+                            key={idx}
+                            className="flex items-start gap-2 text-xs"
+                          >
+                            <span className="mt-1 text-[10px] text-neutral-500">
+                              #{idx + 1}
+                            </span>
+                            <div className="flex-1 bg-neutral-800/70 rounded-md px-2 py-1 text-neutral-100">
+                              {note}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAdminNotes((prev) =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
+                              }
+                              className="text-[11px] text-rose-400 hover:text-rose-300"
+                            >
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    <div className="flex gap-2">
+                      <textarea
+                        value={newNote}
+                        onChange={(e) => setNewNote(e.target.value)}
+                        placeholder="Add a note about this order…"
+                        className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 resize-none min-h-[60px]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!newNote.trim()) return;
+                          setAdminNotes((prev) => [...prev, newNote.trim()]);
+                          setNewNote("");
+                        }}
+                        className="self-end inline-flex items-center justify-center rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold px-3 py-1.5"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Start consultancy button */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+                    <p className="text-xs text-neutral-500">
+                      Ready to speak to the patient? Start a consultation
+                      session for this order.
+                    </p>
+                    <div className="flex flex-wrap gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={handleStartConsultancy}
+                        className="inline-flex items-center gap-1 rounded-full border border-sky-500/70 bg-sky-500/10 px-4 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-500/20"
+                      >
+                        Start consultancy
+                      </button>
+                    </div>
+                  </div>
                 </>
               )}
             </div>

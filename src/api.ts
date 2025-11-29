@@ -406,6 +406,38 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
 
 /* ------------------- Users APIs ------------------- */
 
+/* ------------------- Users APIs ------------------- */
+
+export type UserDto = {
+  _id: string;
+  name?: string;
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  [key: string]: any;
+};
+
+export async function getUserByIdApi(userId: string) {
+  const base = getBackendBase();
+  const url = `${base}/users/${userId}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<UserDto>(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 // PUT /users/:id -> Update a user by ID
 export async function updateUserApi(userId: string, payload: any) {
   const base = getBackendBase(); // Get the correct backend base URL dynamically
@@ -580,6 +612,24 @@ export async function updateClinicFormApi(
   return jsonFetch<any>(`${base}/clinic-forms/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getClinicFormByIdApi(id: string) {
+  const base = getBackendBase();
+  const url = `${base}/clinic-forms/${id}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
+
+  return jsonFetch<ClinicForm>(url, {
+    headers,
   });
 }
 
@@ -789,6 +839,7 @@ export type OrderDto = {
   service_name: string;
   createdAt: string;
   updatedAt: string;
+  admin_notes?: string[];
   __v: number;
 };
 
@@ -851,13 +902,113 @@ export async function getOrderByIdApi(id: string) {
   return jsonFetch<OrderDto>(`${base}/orders/${id}`);
 }
 
+export type UpdateOrderPayload = {
+  status?: string;          // "approved" | "rejected" | "completed" | etc.
+  admin_notes?: string[];   // our notes array
+  [key: string]: any;       // allow future fields if needed
+};
+
 export async function updateOrderStatusApi(
   id: string,
-  payload: { status: "approved" | "rejected" }
+  payload: UpdateOrderPayload
 ) {
   const base = getBackendBase();
   return jsonFetch<OrderDto>(`${base}/orders/${id}`, {
     method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+
+/* ------------------- Appointments APIs ------------------- */
+
+/* ------------------- Appointments APIs ------------------- */
+
+export type AppointmentDto = {
+  _id: string;
+  order_id: string;
+  user_id: string;
+  service_id: string;
+  schedule_id: string;
+  start_at: string;
+  end_at: string;
+  join_url?: string;
+  host_url?: string;
+
+  // Optional extras if your backend sends them
+  status?: string;
+  reference?: string;
+  patient_name?: string;
+  service_name?: string;
+  meta?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: any;
+};
+
+export type AppointmentsQuery = {
+  status?: string;
+  page?: number;
+  limit?: number;
+};
+
+export async function getAppointmentsApi(query: AppointmentsQuery = {}) {
+  const base = getBackendBase();
+  const params = new URLSearchParams();
+
+  if (query.status) params.set("status", query.status);
+  if (typeof query.page === "number") params.set("page", String(query.page));
+  if (typeof query.limit === "number") params.set("limit", String(query.limit));
+
+  const qs = params.toString();
+  const url = qs ? `${base}/appointments?${qs}` : `${base}/appointments`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token
+    ? {
+        Authorization: `Bearer ${token}`,
+      }
+    : {};
+
+  const res = await jsonFetch<any>(url, { headers });
+  if (Array.isArray(res)) {
+    return { data: res as AppointmentDto[], meta: undefined };
+  }
+  return res as { data: AppointmentDto[]; meta?: any };
+}
+
+export type UpdateAppointmentPayload = {
+  status?: string;
+  join_url?: string;
+  host_url?: string;
+  [key: string]: any;
+};
+
+export async function updateAppointmentApi(
+  id: string,
+  payload: UpdateAppointmentPayload
+) {
+  const base = getBackendBase();
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<AppointmentDto>(`${base}/appointments/${id}`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify(payload),
   });
 }
