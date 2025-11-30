@@ -275,7 +275,7 @@ export default function ConsultationPageClient() {
       );
 
       // ✅ After successful save, go directly to Approved Orders list
-      router.push("/dashboard/orders/approved");
+      router.push("/dashboard/approved-orders");
     } catch (e: any) {
       setEndError(e?.message || "Failed to end consultation");
     } finally {
