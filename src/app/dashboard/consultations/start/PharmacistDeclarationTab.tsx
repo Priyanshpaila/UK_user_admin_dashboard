@@ -11,7 +11,9 @@ import {
   type ClinicForm,
   uploadPageImageApi,
   getBackendBase,
-} from "../../../../api"; // adjust path if needed
+  getUserByIdApi,
+  type UserDto,
+} from "../../../../api";
 import { Loader2, Trash2, Save } from "lucide-react";
 
 interface Props {
@@ -25,10 +27,9 @@ type FieldsState = {
 
 type DeclarationStorage = {
   fields: FieldsState;
-  signatureUrl?: string | null;   // full URL to image
-  signaturePath?: string | null;  // raw path from backend (/uploads/...png)
-  // (legacy support) if you previously stored base64:
-  signatureDataUrl?: string | null;
+  signatureUrl?: string | null; // full URL to image
+  signaturePath?: string | null; // raw path from backend (/uploads/...png)
+  signatureDataUrl?: string | null; // legacy base64
 };
 
 // Helper to resolve stored path to full URL
@@ -49,13 +50,42 @@ const resolveImageUrl = (imagePath: string) => {
   return `${cleanBase}${normalizedPath}`;
 };
 
+// Helper: get logged-in userId from localStorage (adjust keys if needed)
+function getLoggedInUserIdFromLocal(): string | null {
+  if (typeof window === "undefined") return null;
+
+  // 1) Try if you stored full user JSON under "user"
+  const rawUser = window.localStorage.getItem("user");
+  if (rawUser) {
+    try {
+      const parsed = JSON.parse(rawUser);
+      if (parsed && typeof parsed === "object") {
+        if (parsed._id) return String(parsed._id);
+        if (parsed.id) return String(parsed.id);
+        if (parsed.userId) return String(parsed.userId);
+      }
+    } catch {
+      // ignore JSON parse error
+    }
+  }
+
+  // 2) Fallback: maybe you stored plain user id
+  const idKeys = ["user_id", "userId", "pharmacist_id"];
+  for (const key of idKeys) {
+    const v = window.localStorage.getItem(key);
+    if (v) return v;
+  }
+
+  return null;
+}
+
 export default function PharmacistDeclarationTab({
   orderId,
   serviceId,
 }: Props) {
   const [form, setForm] = useState<ClinicForm | null>(null);
   const [fields, setFields] = useState<FieldsState>({});
-  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);   // what we render
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null); // what we render
   const [signaturePath, setSignaturePath] = useState<string | null>(null); // what we save as path
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +99,7 @@ export default function PharmacistDeclarationTab({
   const drawingRef = useRef(false);
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Load form + LS
+  /* ---------------- Load form + localStorage ---------------- */
   useEffect(() => {
     let cancelled = false;
 
@@ -92,8 +122,8 @@ export default function PharmacistDeclarationTab({
         const declarationForm =
           forms.find(
             (f: any) =>
-              (f.form_type === "pharmacist_declaration" ||
-                f.form_type === "pharmacist-declaration")
+              f.form_type === "pharmacist_declaration" ||
+              f.form_type === "pharmacist-declaration"
           ) || null;
 
         if (!declarationForm) {
@@ -116,7 +146,6 @@ export default function PharmacistDeclarationTab({
               const parsed: DeclarationStorage = JSON.parse(raw);
               if (parsed && typeof parsed === "object") {
                 initialFields = parsed.fields || {};
-                // Prefer stored URL/path; fall back to old base64 if present
                 if (parsed.signatureUrl) {
                   initialSignatureUrl = parsed.signatureUrl;
                 } else if (parsed.signaturePath) {
@@ -127,7 +156,7 @@ export default function PharmacistDeclarationTab({
                 }
               }
             } catch {
-              // ignore
+              // ignore parse errors
             }
           }
         }
@@ -154,7 +183,81 @@ export default function PharmacistDeclarationTab({
     };
   }, [serviceId, storageKey]);
 
-  // Persist to LS
+  /* ------------- Auto-fill Pharmacist Name from getUserByIdApi ------------- */
+  useEffect(() => {
+    if (!form) return;
+    if (typeof window === "undefined") return;
+
+    let cancelled = false;
+
+    async function fillPharmacistName() {
+      try {
+        const schema: any[] = (form as any).schema || [];
+
+        // Find a text field that looks like "Pharmacist Name"
+        const pharmacistField = schema.find((f: any) => {
+          if (f.type !== "text") return false;
+          const label = (f.data?.label || "").toLowerCase();
+          const key = (f.data?.key || "").toLowerCase();
+          const combined = `${label} ${key}`;
+          return (
+            combined.includes("pharmacist") &&
+            combined.includes("name")
+          );
+        });
+
+        if (!pharmacistField) return;
+
+        const pharmacistKey =
+          pharmacistField.data?.key || pharmacistField.data?.label;
+        if (!pharmacistKey) return;
+
+        // If user already typed something or LS has a value, don't override
+        if (fields[pharmacistKey]) return;
+
+        const userId = getLoggedInUserIdFromLocal();
+        if (!userId) {
+          console.warn(
+            "[PharmacistDeclaration] No logged-in user id found in localStorage"
+          );
+          return;
+        }
+
+        const user: UserDto = await getUserByIdApi(userId);
+        if (cancelled) return;
+
+        const pharmacistName =
+          user.name ||
+          user.fullName ||
+          `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+          user.email ||
+          "";
+
+        if (!pharmacistName) return;
+
+        setFields((prev) => {
+          // Double-check again to not override if user typed while we were fetching
+          if (prev[pharmacistKey]) return prev;
+          return {
+            ...prev,
+            [pharmacistKey]: pharmacistName,
+          };
+        });
+      } catch (err) {
+        console.error("Failed to auto-fill pharmacist name:", err);
+      }
+    }
+
+    fillPharmacistName();
+
+    return () => {
+      cancelled = true;
+    };
+    // we intentionally only depend on `form` so it runs once after form load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
+
+  /* ---------------- Persist to localStorage ---------------- */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload: DeclarationStorage = {
@@ -169,6 +272,7 @@ export default function PharmacistDeclarationTab({
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
+  /* ---------------- Canvas drawing handlers ---------------- */
   function getCanvasPos(
     e: PointerEvent<HTMLCanvasElement>
   ): { x: number; y: number } | null {
@@ -217,7 +321,7 @@ export default function PharmacistDeclarationTab({
     lastPosRef.current = null;
   }
 
-  // Convert canvas to File and upload via uploadPageImageApi
+  /* ---------------- Signature upload ---------------- */
   async function handleSaveSignature() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -267,6 +371,7 @@ export default function PharmacistDeclarationTab({
     setUploadError(null);
   }
 
+  /* ---------------- Render ---------------- */
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8 text-neutral-300 text-sm">
@@ -285,11 +390,11 @@ export default function PharmacistDeclarationTab({
   }
 
   const simpleFields =
-    (form.schema || []).filter((f: any) =>
+    ((form as any).schema || []).filter((f: any) =>
       ["text", "textarea"].includes(f.type)
     ) || [];
 
-  const signatureField = (form.schema || []).find(
+  const signatureField = ((form as any).schema || []).find(
     (f: any) => f.type === "signature"
   );
 
@@ -426,7 +531,6 @@ export default function PharmacistDeclarationTab({
 
             {signatureUrl && (
               <div className="mt-3">
-                {/* small inline preview */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={signatureUrl}
