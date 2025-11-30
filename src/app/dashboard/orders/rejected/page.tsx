@@ -5,8 +5,10 @@ import {
   getOrdersApi,
   getOrderByIdApi,
   updateOrderStatusApi,
+  getUserByIdApi,
   type OrderDto,
   type OrdersListMeta,
+  type UserDto,
 } from "../../../../api";
 import {
   Loader2,
@@ -20,8 +22,6 @@ import {
   Filter,
   X,
   ClipboardList,
-  ThumbsUp,
-  ThumbsDown,
 } from "lucide-react";
 
 function formatDateTime(value?: string | null) {
@@ -73,6 +73,30 @@ function paymentBadgeClasses(status: string) {
   }
 }
 
+function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
+  if (!order) return "Unknown";
+
+  if ((order as any).patient_name) return (order as any).patient_name;
+
+  const fromOrder = `${(order as any).first_name || ""} ${
+    (order as any).last_name || ""
+  }`.trim();
+  if (fromOrder) return fromOrder;
+
+  if (user) {
+    const fromUser =
+      user.name ||
+      (user as any).fullName ||
+      `${(user as any).firstName || ""} ${
+        (user as any).lastName || ""
+      }`.trim() ||
+      user.email;
+    if (fromUser) return fromUser;
+  }
+
+  return "Unknown";
+}
+
 export default function Page() {
   // list state
   const [orders, setOrders] = useState<OrderDto[]>([]);
@@ -80,11 +104,17 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // cache of user info for cards: user_id -> user
+  const [orderUsers, setOrderUsers] = useState<
+    Record<string, UserDto | null>
+  >({});
+
   // detail modal state
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
   // approve / reject action state
   const [statusAction, setStatusAction] = useState<
@@ -94,7 +124,7 @@ export default function Page() {
   // 🔒 hard-coded filter
   const STATUS = "rejected";
 
-  // Load list (pending)
+  // Load list (rejected)
   useEffect(() => {
     let cancelled = false;
 
@@ -104,8 +134,39 @@ export default function Page() {
       try {
         const res = await getOrdersApi({ status: STATUS });
         if (cancelled) return;
-        setOrders(res.data || []);
+        const ordersList = res.data || [];
+        setOrders(ordersList);
         setMeta(res.meta || null);
+
+        const uniqueUserIds = Array.from(
+          new Set(
+            ordersList
+              .map((o) => (o as any).user_id as string | undefined)
+              .filter(Boolean)
+          )
+        ) as string[];
+
+        if (uniqueUserIds.length) {
+          const results = await Promise.all(
+            uniqueUserIds.map(async (id) => {
+              try {
+                const user = await getUserByIdApi(id);
+                return [id, user] as const;
+              } catch (err) {
+                console.error("Failed to fetch user for order list", id, err);
+                return [id, null] as const;
+              }
+            })
+          );
+
+          if (!cancelled) {
+            const map: Record<string, UserDto | null> = {};
+            for (const [id, user] of results) {
+              map[id] = user;
+            }
+            setOrderUsers(map);
+          }
+        }
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || "Failed to load orders");
@@ -118,7 +179,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, []); // always "pending"
+  }, []); // always "rejected"
 
   // View details handler
   async function handleViewDetails(id: string) {
@@ -127,10 +188,21 @@ export default function Page() {
     setDetailError(null);
     setSelectedOrder(null);
     setStatusAction(null);
+    setOrderedByUser(null);
 
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+
+      const userId = (order as any).user_id as string | undefined;
+      if (userId) {
+        try {
+          const user = await getUserByIdApi(userId);
+          setOrderedByUser(user);
+        } catch (err) {
+          console.error("Failed to fetch user for order (detail)", err);
+        }
+      }
     } catch (e: any) {
       setDetailError(e?.message || "Failed to load order details");
     } finally {
@@ -138,7 +210,7 @@ export default function Page() {
     }
   }
 
-  // Approve / Reject action
+  // Approve / Reject action (if you want to move it back)
   async function handleChangeStatus(newStatus: "approved" | "rejected") {
     if (!selectedOrder) return;
 
@@ -150,13 +222,7 @@ export default function Page() {
         status: newStatus,
       });
 
-      // Remove from local list, as it's no longer pending
       setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-
-      // Optionally, keep detail open with updated info:
-      // setSelectedOrder(updated);
-
-      // For pending page it's usually nice to close after action:
       setShowDetail(false);
       setSelectedOrder(updated);
     } catch (e: any) {
@@ -166,7 +232,7 @@ export default function Page() {
     }
   }
 
-  const totalPending = meta?.total ?? orders.length;
+  const totalRejected = meta?.total ?? orders.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -176,10 +242,6 @@ export default function Page() {
           <h1 className="text-2xl md:text-3xl font-semibold text-white">
             Rejected Orders
           </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            Orders waiting for review or action. Open details to inspect the
-            full assessment and booking info.
-          </p>
         </div>
 
         <div className="flex flex-col items-end gap-2">
@@ -188,7 +250,9 @@ export default function Page() {
             <span>Status:</span>
             <span className="font-medium text-red-400">Rejected</span>
           </div>
-
+          <span className="text-xs text-neutral-500">
+            {totalRejected} rejected order{totalRejected === 1 ? "" : "s"}
+          </span>
         </div>
       </div>
 
@@ -216,10 +280,13 @@ export default function Page() {
               order.meta?.selectedProduct?.name ||
               order.meta?.lines?.[0]?.name ||
               order.service_name;
-            const patientName =
-              order.patient_name ||
-              `${order.first_name || ""} ${order.last_name || ""}`.trim() ||
-              "Unknown patient";
+
+            const userId = (order as any).user_id as string | undefined;
+            const cardUser =
+              userId && orderUsers[userId] !== undefined
+                ? orderUsers[userId]
+                : null;
+            const patientName = getDisplayPatientName(order, cardUser);
 
             return (
               <div
@@ -284,18 +351,20 @@ export default function Page() {
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
                     <span>{formatDateTime(appointmentAt)}</span>
                     <span className="mx-2 text-neutral-500">•</span>
-                    <span className="text-neutral-400">
-                      Duration:{" "}
-                      {Math.max(
-                        1,
-                        Math.round(
-                          (new Date(order.end_at).getTime() -
-                            new Date(order.start_at).getTime()) /
-                            60000
-                        )
-                      )}{" "}
-                      min
-                    </span>
+                    {order.start_at && order.end_at && (
+                      <span className="text-neutral-400">
+                        Duration:{" "}
+                        {Math.max(
+                          1,
+                          Math.round(
+                            (new Date(order.end_at).getTime() -
+                              new Date(order.start_at).getTime()) /
+                              60000
+                          )
+                        )}{" "}
+                        min
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -404,15 +473,22 @@ export default function Page() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div>
                       <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient
+                        Patient / Ordered by
                       </p>
                       <p className="text-sm font-medium text-white">
-                        {selectedOrder.patient_name ||
-                          `${selectedOrder.first_name || ""} ${
-                            selectedOrder.last_name || ""
-                          }`.trim() ||
-                          "Unknown"}
+                        {getDisplayPatientName(selectedOrder, orderedByUser)}
                       </p>
+                      {orderedByUser && (
+                        <p className="text-[11px] text-neutral-500">
+                          Account:{" "}
+                          {orderedByUser.name ||
+                            (orderedByUser as any).fullName ||
+                            `${(orderedByUser as any).firstName || ""} ${
+                              (orderedByUser as any).lastName || ""
+                            }`.trim() ||
+                            orderedByUser.email}
+                        </p>
+                      )}
                       {selectedOrder.email && (
                         <p className="text-xs text-neutral-400">
                           {selectedOrder.email}
@@ -446,9 +522,9 @@ export default function Page() {
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
-                          <span className="font-semibold text-white">
-                            {formatMoney(selectedOrder.meta?.totalMinor)}
-                          </span>
+                        <span className="font-semibold text-white">
+                          {formatMoney(selectedOrder.meta?.totalMinor)}
+                        </span>
                       </p>
                     </div>
 
@@ -512,8 +588,6 @@ export default function Page() {
                       </div>
                     </div>
                   ) : null}
-
-
                 </>
               )}
             </div>
