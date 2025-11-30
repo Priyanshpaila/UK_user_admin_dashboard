@@ -406,40 +406,42 @@ export default function ConsultationPageClient() {
         )}
       </div>
 
-      {/* End consultation area */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-t border-neutral-800 pt-3">
-        <div className="text-xs text-neutral-500">
-          When you click{" "}
-          <span className="text-neutral-200 font-semibold">
-            End consultation
-          </span>
-          , all tab data will be saved into the order meta and local
-          consultation data will be cleared.
+      {/* End consultation area – ONLY on Record of Supply tab */}
+      {activeTab === "record" && (
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-t border-neutral-800 pt-3">
+          <div className="text-xs text-neutral-500">
+            When you click{" "}
+            <span className="text-neutral-200 font-semibold">
+              End consultation
+            </span>
+            , all tab data will be saved into the order meta and local
+            consultation data will be cleared.
+          </div>
+          <div className="flex flex-wrap gap-2 justify-end">
+            {endError && (
+              <div className="text-xs text-rose-300 flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {endError}
+              </div>
+            )}
+            {endSuccess && (
+              <div className="text-xs text-emerald-300 flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3" />
+                {endSuccess}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleEndConsultation}
+              disabled={endSaving}
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {endSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+              {endSaving ? "Saving & ending…" : "End consultation"}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2 justify-end">
-          {endError && (
-            <div className="text-xs text-rose-300 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
-              {endError}
-            </div>
-          )}
-          {endSuccess && (
-            <div className="text-xs text-emerald-300 flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3" />
-              {endSuccess}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={handleEndConsultation}
-            disabled={endSaving}
-            className="inline-flex items-center gap-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {endSaving && <Loader2 className="h-3 w-3 animate-spin" />}
-            {endSaving ? "Saving & ending…" : "End consultation"}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

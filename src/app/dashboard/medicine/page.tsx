@@ -556,7 +556,7 @@ export default function Page() {
                     </td>
                     <td className="px-4 py-3 align-middle text-right text-neutral-100">
                       {minPrice != null ? (
-                        <>₹{minPrice.toFixed(2)}</>
+                        <>£{minPrice.toFixed(2)}</>
                       ) : (
                         <span className="text-xs text-neutral-500">–</span>
                       )}
@@ -781,7 +781,7 @@ export default function Page() {
                             </label>
                             <div className="flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
                               <span className="mr-2 text-xs text-neutral-500">
-                                ₹
+                                £
                               </span>
                               <input
                                 type="number"
