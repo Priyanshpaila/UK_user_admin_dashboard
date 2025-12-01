@@ -6,6 +6,7 @@ import {
   getOrderByIdApi,
   updateOrderStatusApi,
   getUserByIdApi,
+  updateUserApi,
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
@@ -24,8 +25,12 @@ import {
   ClipboardList,
   ThumbsUp,
   ThumbsDown,
+  Phone,
+  Mail,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
-import { useOrdersStats } from "../orders-badge-context"; // 👈 keep path as is
+import { useOrdersStats } from "../orders-badge-context";
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -119,18 +124,41 @@ export default function Page() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // user who ordered (for detail view)
+  // ordered-by user (detail)
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
+
+  // notes state
+  const [adminNotes, setAdminNotes] = useState<string[]>([]);
+  const [newAdminNote, setNewAdminNote] = useState("");
+  const [consultationNotes, setConsultationNotes] = useState<string[]>([]);
+  const [newConsultationNote, setNewConsultationNote] = useState("");
+
+  // rejection notes (previous ones hidden in UI)
+  const [existingRejectionNotes, setExistingRejectionNotes] = useState<
+    string[]
+  >([]);
+  const [newRejectionNotes, setNewRejectionNotes] = useState<string[]>([]);
+  const [rejectionNoteInput, setRejectionNoteInput] = useState("");
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectError, setRejectError] = useState<string | null>(null);
 
   // approve / reject action state
   const [statusAction, setStatusAction] = useState<
     "approved" | "rejected" | null
   >(null);
 
-  // 🔥 global stats actions (for sidebar badges)
+  // verification buttons state
+  const [verifyingField, setVerifyingField] = useState<
+    "scr_verified" | "id_verified" | null
+  >(null);
+  const [verificationError, setVerificationError] = useState<string | null>(
+    null
+  );
+
+  // global stats actions (for sidebar badges)
   const { applyStatusChange, refresh } = useOrdersStats();
 
-  // 👤 logged-in user id (for approved_by)
+  // logged-in user id (for approved_by)
   const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null);
 
   // read logged-in user id from localStorage
@@ -147,10 +175,10 @@ export default function Page() {
     }
   }, []);
 
-  // 🔒 hard-coded filter
+  // hard-coded filter
   const STATUS = "pending";
 
-  // Load list (pending)
+  // load list
   useEffect(() => {
     let cancelled = false;
 
@@ -196,7 +224,6 @@ export default function Page() {
           }
         }
 
-        // keep global stats in sync too
         await refresh();
       } catch (e: any) {
         if (cancelled) return;
@@ -210,7 +237,25 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [refresh]); // always "pending"
+  }, [refresh]);
+
+  // helper to reset notes state when opening a different order
+  function hydrateNotes(order: OrderDto) {
+    setAdminNotes(order.admin_notes || []);
+    setNewAdminNote("");
+
+    const existingConsultation =
+      ((order as any).consultation_notes as string[] | undefined) || [];
+    setConsultationNotes(existingConsultation);
+    setNewConsultationNote("");
+
+    const existingRejection =
+      ((order as any).rejection_notes as string[] | undefined) || [];
+    setExistingRejectionNotes(existingRejection);
+    setNewRejectionNotes([]);
+    setRejectionNoteInput("");
+    setRejectError(null);
+  }
 
   // View details handler
   async function handleViewDetails(id: string) {
@@ -220,15 +265,16 @@ export default function Page() {
     setSelectedOrder(null);
     setStatusAction(null);
     setOrderedByUser(null);
+    setVerificationError(null);
+    setVerifyingField(null);
 
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+      hydrateNotes(order);
 
-      // fetch ordered-by user (detail)
       const userId = (order as any).user_id as string | undefined;
       if (userId) {
-        // if we already have from list cache, reuse
         if (orderUsers[userId] !== undefined) {
           setOrderedByUser(orderUsers[userId]);
         } else {
@@ -247,44 +293,153 @@ export default function Page() {
     }
   }
 
-  // Approve / Reject action
-  async function handleChangeStatus(newStatus: "approved" | "rejected") {
+  // helpers for notes
+  function handleAddAdminNote() {
+    const v = newAdminNote.trim();
+    if (!v) return;
+    setAdminNotes((prev) => [...prev, v]);
+    setNewAdminNote("");
+  }
+
+  function handleRemoveAdminNote(idx: number) {
+    setAdminNotes((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleAddConsultationNote() {
+    const v = newConsultationNote.trim();
+    if (!v) return;
+    setConsultationNotes((prev) => [...prev, v]);
+    setNewConsultationNote("");
+  }
+
+  function handleRemoveConsultationNote(idx: number) {
+    setConsultationNotes((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function handleAddRejectionNote() {
+    const v = rejectionNoteInput.trim();
+    if (!v) return;
+    setNewRejectionNotes((prev) => [...prev, v]);
+    setRejectionNoteInput("");
+  }
+
+  function handleRemoveNewRejectionNote(idx: number) {
+    setNewRejectionNotes((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // approve
+  async function handleApprove() {
     if (!selectedOrder) return;
 
     const prevStatus = selectedOrder.status;
-
-    setStatusAction(newStatus);
+    setStatusAction("approved");
     setDetailError(null);
 
     try {
-      const payload: any = { status: newStatus };
+      const payload: any = {
+        status: "approved",
+        admin_notes: adminNotes,
+        consultation_notes: consultationNotes,
+      };
 
-      // ✅ when approving, send approved_by + approved_at
-      if (newStatus === "approved") {
-        if (loggedInUserId) {
-          payload.approved_by = loggedInUserId;
-        }
-        payload.approved_at = new Date().toISOString();
+      if (loggedInUserId) {
+        payload.approved_by = loggedInUserId;
       }
+      payload.approved_at = new Date().toISOString();
 
-      const updated = await updateOrderStatusApi(
-        selectedOrder._id,
-        payload as any
-      );
+      const updated = await updateOrderStatusApi(selectedOrder._id, payload);
 
-      // 🔥 update global counters instantly (sidebar badges)
       applyStatusChange(prevStatus, updated.status);
-
-      // Remove from local list, as it's no longer pending
       setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-
-      // Close modal after action
       setShowDetail(false);
       setSelectedOrder(updated);
     } catch (e: any) {
       setDetailError(e?.message || "Failed to update order status");
     } finally {
       setStatusAction(null);
+    }
+  }
+
+  // open reject dialog
+  function openRejectDialog() {
+    setShowRejectDialog(true);
+    setRejectError(null);
+  }
+
+  // confirm reject (with rejection notes)
+  async function confirmReject() {
+    if (!selectedOrder) return;
+
+    const finalNotes = [
+      ...existingRejectionNotes,
+      ...newRejectionNotes,
+      ...(rejectionNoteInput.trim() ? [rejectionNoteInput.trim()] : []),
+    ];
+
+    if (!finalNotes.length) {
+      setRejectError("Please add at least one rejection note.");
+      return;
+    }
+
+    const prevStatus = selectedOrder.status;
+    setStatusAction("rejected");
+    setRejectError(null);
+
+    try {
+      const payload: any = {
+        status: "rejected",
+        admin_notes: adminNotes,
+        consultation_notes: consultationNotes,
+        rejection_notes: finalNotes,
+      };
+
+      const updated = await updateOrderStatusApi(selectedOrder._id, payload);
+
+      applyStatusChange(prevStatus, updated.status);
+      setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
+      setShowDetail(false);
+      setShowRejectDialog(false);
+      setSelectedOrder(updated);
+    } catch (e: any) {
+      setRejectError(e?.message || "Failed to reject order");
+    } finally {
+      setStatusAction(null);
+    }
+  }
+
+  // user verification buttons (only for weight-management)
+  const isWeightManagement =
+    selectedOrder &&
+    ((selectedOrder.service_slug &&
+      selectedOrder.service_slug.toLowerCase() === "weight-management") ||
+      (selectedOrder.service_name &&
+        selectedOrder.service_name.toLowerCase() === "weight management"));
+
+  async function handleVerify(field: "scr_verified" | "id_verified") {
+    if (!orderedByUser) return;
+
+    if ((orderedByUser as any)[field]) {
+      return; // already true
+    }
+
+    setVerifyingField(field);
+    setVerificationError(null);
+    try {
+      const updatedUser = await updateUserApi(orderedByUser._id, {
+        [field]: true,
+      });
+
+      setOrderedByUser(updatedUser);
+
+      // also update cache so other cards have fresh data
+      setOrderUsers((prev) => ({
+        ...prev,
+        [updatedUser._id]: updatedUser,
+      }));
+    } catch (e: any) {
+      setVerificationError(e?.message || "Failed to update user verification");
+    } finally {
+      setVerifyingField(null);
     }
   }
 
@@ -412,24 +567,6 @@ export default function Page() {
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
                     <span>{formatDateTime(appointmentAt)}</span>
-                    <span className="mx-2 text-neutral-500">•</span>
-                    {order.meta?.appointment_start_at &&
-                    (order as any).end_at ? (
-                      <span className="text-neutral-400">
-                        Duration:{" "}
-                        {Math.max(
-                          1,
-                          Math.round(
-                            (new Date((order as any).end_at).getTime() -
-                              new Date(
-                                order.meta.appointment_start_at
-                              ).getTime()) /
-                              60000
-                          )
-                        )}{" "}
-                        min
-                      </span>
-                    ) : null}
                   </div>
                 </div>
 
@@ -457,29 +594,61 @@ export default function Page() {
         </div>
       )}
 
-      {/* 🔹 Detail modal */}
+      {/* Detail modal */}
       {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-t-2xl md:rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <ClipboardList className="h-4 w-4 text-emerald-400" />
-                <h2 className="text-sm font-semibold text-white">
+            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium text-emerald-400 flex items-center gap-1">
+                  <ClipboardList className="h-4 w-4" />
                   Order details
-                </h2>
+                </span>
+                {selectedOrder && (
+                  <span className="text-[11px] text-neutral-500">
+                    Ref:{" "}
+                    <span className="font-mono text-neutral-300">
+                      {selectedOrder.reference}
+                    </span>
+                  </span>
+                )}
               </div>
+
+              {selectedOrder && (
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                      statusBadgeClasses(selectedOrder.status)
+                    }
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                    {selectedOrder.status.toUpperCase()}
+                  </span>
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                      paymentBadgeClasses(selectedOrder.payment_status)
+                    }
+                  >
+                    <CreditCard className="h-3 w-3" />
+                    {selectedOrder.payment_status.toUpperCase()}
+                  </span>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={() => setShowDetail(false)}
-                className="rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                className="ml-4 rounded-full p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-4 text-sm text-neutral-200">
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
               {detailLoading && (
                 <div className="flex items-center justify-center py-10 text-neutral-300">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -495,68 +664,133 @@ export default function Page() {
 
               {!detailLoading && !detailError && selectedOrder && (
                 <>
-                  {/* Top summary */}
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Reference
-                      </p>
-                      <p className="font-mono text-sm text-white">
-                        {selectedOrder.reference}
-                      </p>
-                      <p className="mt-1 text-xs text-neutral-400">
-                        Service:{" "}
-                        <span className="font-medium">
+                  {/* Service row */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
+                    <p className="text-[11px] text-neutral-400 mb-1">
+                      Service
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">
                           {selectedOrder.service_name}
-                        </span>{" "}
-                        ({selectedOrder.service_slug})
+                        </p>
+                        <p className="text-[11px] text-neutral-500">
+                          {selectedOrder.service_slug}
+                        </p>
+                      </div>
+                      <p className="text-xs text-neutral-400">
+                        Created:{" "}
+                        <span className="font-mono text-neutral-200">
+                          {formatDateTime(selectedOrder.createdAt)}
+                        </span>
                       </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          statusBadgeClasses(selectedOrder.status)
-                        }
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                        {selectedOrder.status.toUpperCase()}
-                      </span>
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          paymentBadgeClasses(selectedOrder.payment_status)
-                        }
-                      >
-                        <CreditCard className="h-3 w-3" />
-                        {selectedOrder.payment_status.toUpperCase()}
-                      </span>
                     </div>
                   </div>
 
-                  {/* Patient & appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
+                  {/* Patient / appointment & verification */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4">
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-neutral-400">
                         Patient / Ordered by
                       </p>
-                      <p className="text-sm font-medium text-white">
+                      <p className="text-sm font-semibold text-white">
                         {getDisplayPatientName(selectedOrder, orderedByUser)}
                       </p>
+
                       {orderedByUser && (
-                        <p className="text-[11px] text-neutral-500">
-                          Account:{" "}
-                          {orderedByUser.name ||
-                            orderedByUser.fullName ||
-                            `${(orderedByUser as any).firstName || ""} ${
-                              (orderedByUser as any).lastName || ""
-                            }`.trim() ||
-                            orderedByUser.email}
-                        </p>
+                        <>
+                          {orderedByUser.email && (
+                            <p className="flex items-center gap-1 text-[11px] text-neutral-300">
+                              <Mail className="h-3 w-3 text-neutral-400" />
+                              {orderedByUser.email}
+                            </p>
+                          )}
+                          {((orderedByUser as any).phone ||
+                            (orderedByUser as any).phoneNumber) && (
+                            <p className="flex items-center gap-1 text-[11px] text-neutral-300">
+                              <Phone className="h-3 w-3 text-neutral-400" />
+                              {(orderedByUser as any).phone ||
+                                (orderedByUser as any).phoneNumber}
+                            </p>
+                          )}
+                          {(orderedByUser as any).createdAt && (
+                            <p className="text-[11px] text-neutral-500">
+                              Account created:{" "}
+                              {formatDateTime(
+                                (orderedByUser as any).createdAt
+                              )}
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {isWeightManagement && orderedByUser && (
+                        <div className="pt-2 space-y-1">
+                          <p className="text-[11px] text-neutral-400">
+                            Verification (Weight Management only)
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {/* SCR verified */}
+                            <button
+                              type="button"
+                              disabled={
+                                !!(orderedByUser as any).scr_verified ||
+                                verifyingField === "scr_verified"
+                              }
+                              onClick={() => handleVerify("scr_verified")}
+                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
+                                (orderedByUser as any).scr_verified
+                                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
+                                  : "border-neutral-600 bg-neutral-900 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
+                              } disabled:opacity-60 disabled:cursor-not-allowed`}
+                            >
+                              {verifyingField === "scr_verified" && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
+                              {(orderedByUser as any).scr_verified ? (
+                                <ShieldCheck className="h-3 w-3" />
+                              ) : (
+                                <ShieldAlert className="h-3 w-3" />
+                              )}
+                              SCR verified
+                            </button>
+
+                            {/* ID verified */}
+                            <button
+                              type="button"
+                              disabled={
+                                !!(orderedByUser as any).id_verified ||
+                                verifyingField === "id_verified"
+                              }
+                              onClick={() => handleVerify("id_verified")}
+                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
+                                (orderedByUser as any).id_verified
+                                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
+                                  : "border-neutral-600 bg-neutral-900 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
+                              } disabled:opacity-60 disabled:cursor-not-allowed`}
+                            >
+                              {verifyingField === "id_verified" && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
+                              {(orderedByUser as any).id_verified ? (
+                                <ShieldCheck className="h-3 w-3" />
+                              ) : (
+                                <ShieldAlert className="h-3 w-3" />
+                              )}
+                              ID verified
+                            </button>
+                          </div>
+                          {verificationError && (
+                            <p className="text-[11px] text-rose-300">
+                              {verificationError}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-neutral-400">
                         Appointment
                       </p>
                       <p className="text-sm text-white">
@@ -573,8 +807,8 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Items / lines */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                  {/* Items */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
@@ -625,13 +859,13 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* RAF Preview */}
+                  {/* RAF preview */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
                         RAF Answers (preview)
                       </p>
-                      <div className="max-h-40 overflow-y-auto space-y-1">
+                      <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
                         {selectedOrder.meta.formsQA.raf.qa.map(
                           (qa: any, idx: number) => (
                             <div
@@ -651,11 +885,114 @@ export default function Page() {
                     </div>
                   ) : null}
 
-                  {/* 🔹 Approve / Reject buttons */}
+                  {/* Notes section */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Notes
+                      </p>
+                      <p className="text-[11px] text-neutral-500">
+                        Internal notes only visible to staff.
+                      </p>
+                    </div>
+
+                    {/* Admin notes */}
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-neutral-300">
+                        Admin notes
+                      </p>
+                      {adminNotes.length > 0 && (
+                        <div className="space-y-1">
+                          {adminNotes.map((note, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
+                            >
+                              <span className="flex-1 truncate">
+                                {note}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAdminNote(idx)}
+                                className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={newAdminNote}
+                          onChange={(e) => setNewAdminNote(e.target.value)}
+                          className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
+                          placeholder="Add new admin note"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddAdminNote}
+                          className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-emerald-500 hover:text-emerald-200"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Consultation notes */}
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-medium text-neutral-300">
+                        Consultation notes
+                      </p>
+                      {consultationNotes.length > 0 && (
+                        <div className="space-y-1">
+                          {consultationNotes.map((note, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
+                            >
+                              <span className="flex-1 truncate">
+                                {note}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleRemoveConsultationNote(idx)
+                                }
+                                className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={newConsultationNote}
+                          onChange={(e) =>
+                            setNewConsultationNote(e.target.value)
+                          }
+                          className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
+                          placeholder="Add new consultation note"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddConsultationNote}
+                          className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-emerald-500 hover:text-emerald-200"
+                        >
+                          + Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action bar */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
-                    <p className="text-xs text-neutral-500">
+                    <p className="text-xs text-neutral-500 max-w-md">
                       Change status for this order. Once approved or rejected,
-                      it will disappear from the pending list.
+                      it will disappear from the pending list. Notes will be
+                      saved with the order.
                     </p>
                     <div className="flex flex-wrap gap-2 justify-end">
                       <button
@@ -664,15 +1001,13 @@ export default function Page() {
                           statusAction === "rejected" ||
                           statusAction === "approved"
                         }
-                        onClick={() => handleChangeStatus("rejected")}
+                        onClick={openRejectDialog}
                         className="inline-flex items-center gap-1 rounded-full border border-rose-500/60 px-4 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {statusAction === "rejected" && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {statusAction === "rejected"
-                          ? "Rejecting…"
-                          : "Reject order"}
+                        Reject order
                         <ThumbsDown className="h-3 w-3" />
                       </button>
 
@@ -682,15 +1017,13 @@ export default function Page() {
                           statusAction === "approved" ||
                           statusAction === "rejected"
                         }
-                        onClick={() => handleChangeStatus("approved")}
+                        onClick={handleApprove}
                         className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {statusAction === "approved" && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {statusAction === "approved"
-                          ? "Approving…"
-                          : "Approve order"}
+                        Approve order
                         <ThumbsUp className="h-3 w-3" />
                       </button>
                     </div>
@@ -699,6 +1032,95 @@ export default function Page() {
               )}
             </div>
           </div>
+
+          {/* Reject dialog (nested) */}
+          {showRejectDialog && selectedOrder && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+              <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl px-4 py-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      Reject order
+                    </p>
+                    <p className="text-[11px] text-neutral-500">
+                      Add one or more rejection notes. These will be stored with
+                      this order.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowRejectDialog(false)}
+                    className="rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {newRejectionNotes.length > 0 && (
+                    <div className="space-y-1">
+                      {newRejectionNotes.map((note, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
+                        >
+                          <span className="flex-1 truncate">{note}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveNewRejectionNote(idx)}
+                            className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={rejectionNoteInput}
+                      onChange={(e) => setRejectionNoteInput(e.target.value)}
+                      className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-rose-500"
+                      placeholder="Add rejection note (reason, safety concern, etc.)"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddRejectionNote}
+                      className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-rose-500 hover:text-rose-200"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </div>
+
+                {rejectError && (
+                  <p className="text-[11px] text-rose-300">{rejectError}</p>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowRejectDialog(false)}
+                    className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-[11px] font-semibold text-neutral-200 hover:border-neutral-500"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmReject}
+                    disabled={statusAction === "rejected"}
+                    className="inline-flex items-center gap-2 rounded-full border border-rose-500/70 bg-rose-500/10 px-4 py-1.5 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {statusAction === "rejected" && (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    )}
+                    Confirm rejection
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

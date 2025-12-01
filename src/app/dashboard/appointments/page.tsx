@@ -5,7 +5,9 @@ import {
   getAppointmentsApi,
   updateAppointmentApi,
   type AppointmentDto,
-} from "../../../api"; // ⬅️ adjust path to your src/api.ts if needed
+  getUserByIdApi,
+  type UserDto,
+} from "../../../api"; // ⬅️ same api file
 import {
   Loader2,
   CalendarClock,
@@ -42,6 +44,41 @@ function truncateUrl(url?: string, max = 40) {
   return url.slice(0, max - 3) + "...";
 }
 
+// Derive display name using appointment + user info
+function getDisplayPatientName(
+  appt: AppointmentDto,
+  user?: UserDto | null
+): string {
+  if (appt.patient_name) return appt.patient_name;
+
+  if (user) {
+    const name =
+      user.name ||
+      user.fullName ||
+      `${user.firstName || ""} ${user.lastName || ""}`.trim();
+    if (name) return name;
+    if (user.email) return user.email;
+  }
+
+  return "Patient";
+}
+
+// Combine some extra details (email, phone, etc.)
+function getPatientDetails(user?: UserDto | null): string {
+  if (!user) return "";
+  const email = user.email;
+  const phone =
+    (user as any).phone ||
+    (user as any).mobile ||
+    (user as any).phoneNumber;
+
+  const parts: string[] = [];
+  if (email) parts.push(email);
+  if (phone) parts.push(phone);
+
+  return parts.join(" • ");
+}
+
 export default function Page() {
   const [appointments, setAppointments] = useState<AppointmentDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +91,11 @@ export default function Page() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // user cache: user_id -> user
+  const [appointmentUsers, setAppointmentUsers] = useState<
+    Record<string, UserDto | null>
+  >({});
+
   async function loadAppointments() {
     setLoading(true);
     setError(null);
@@ -65,6 +107,37 @@ export default function Page() {
         ? (res as any)
         : [];
       setAppointments(list);
+
+      // 🔹 Fetch user details for all unique user_ids
+      const uniqueUserIds = Array.from(
+        new Set(
+          list
+            .map((a) => a.user_id as string | undefined)
+            .filter(Boolean)
+        )
+      ) as string[];
+
+      if (uniqueUserIds.length) {
+        const results = await Promise.all(
+          uniqueUserIds.map(async (id) => {
+            try {
+              const user = await getUserByIdApi(id);
+              return [id, user] as const;
+            } catch (err) {
+              console.error("Failed to fetch user for appointment", id, err);
+              return [id, null] as const;
+            }
+          })
+        );
+
+        const map: Record<string, UserDto | null> = {};
+        for (const [id, user] of results) {
+          map[id] = user;
+        }
+        setAppointmentUsers(map);
+      } else {
+        setAppointmentUsers({});
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to load appointments");
     } finally {
@@ -110,6 +183,12 @@ export default function Page() {
       setSaving(false);
     }
   }
+
+  const editingUser =
+    editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
+  const editingPatientName =
+    editing && getDisplayPatientName(editing, editingUser);
+  const editingPatientDetails = getPatientDetails(editingUser);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
@@ -162,6 +241,14 @@ export default function Page() {
             const start = appt.start_at;
             const end = appt.end_at;
 
+            const user =
+              appt.user_id && appointmentUsers[appt.user_id]
+                ? appointmentUsers[appt.user_id]
+                : null;
+
+            const patientName = getDisplayPatientName(appt, user);
+            const patientDetails = getPatientDetails(user);
+
             return (
               <div
                 key={appt._id}
@@ -178,9 +265,14 @@ export default function Page() {
                       </p>
                       <p className="mt-1 flex items-center gap-1 text-sm font-semibold text-neutral-100">
                         <User className="h-3.5 w-3.5 text-emerald-400" />
-                        {appt.patient_name || "Patient"}
+                        {patientName}
                       </p>
-                      <p className="flex items-center gap-1 text-xs text-neutral-400">
+                      {patientDetails && (
+                        <p className="ml-5 text-[11px] text-neutral-400">
+                          {patientDetails}
+                        </p>
+                      )}
+                      <p className="mt-1 flex items-center gap-1 text-xs text-neutral-400">
                         <Stethoscope className="h-3 w-3 text-neutral-500" />
                         {appt.service_name || "Service"}
                       </p>
@@ -283,6 +375,17 @@ export default function Page() {
                 <p className="text-sm font-semibold text-white">
                   {editing.order_id}
                 </p>
+                {editingPatientName && (
+                  <p className="mt-0.5 text-xs text-neutral-300 flex items-center gap-1">
+                    <User className="h-3 w-3 text-emerald-400" />
+                    {editingPatientName}
+                  </p>
+                )}
+                {editingPatientDetails && (
+                  <p className="ml-4 text-[11px] text-neutral-500">
+                    {editingPatientDetails}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
