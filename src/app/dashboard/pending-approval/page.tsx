@@ -158,7 +158,7 @@ export default function Page() {
   // global stats actions (for sidebar badges)
   const { applyStatusChange, refresh } = useOrdersStats();
 
-  // logged-in user id (for approved_by)
+  // logged-in user id (for approved_by / rejected_by)
   const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null);
 
   // read logged-in user id from localStorage
@@ -392,6 +392,10 @@ export default function Page() {
         consultation_notes: consultationNotes,
         rejection_notes: finalNotes,
       };
+      if (loggedInUserId) {
+        payload.rejected_by = loggedInUserId;
+      }
+      payload.rejected_at = new Date().toISOString();
 
       const updated = await updateOrderStatusApi(selectedOrder._id, payload);
 
@@ -415,18 +419,18 @@ export default function Page() {
       (selectedOrder.service_name &&
         selectedOrder.service_name.toLowerCase() === "weight management"));
 
+  // 🔁 TOGGLE SCR / ID VERIFIED (no more "only set true once")
   async function handleVerify(field: "scr_verified" | "id_verified") {
     if (!orderedByUser) return;
 
-    if ((orderedByUser as any)[field]) {
-      return; // already true
-    }
+    // current value (ensure boolean)
+    const current = !!(orderedByUser as any)[field];
 
     setVerifyingField(field);
     setVerificationError(null);
     try {
       const updatedUser = await updateUserApi(orderedByUser._id, {
-        [field]: true,
+        [field]: !current,
       });
 
       setOrderedByUser(updatedUser);
@@ -733,10 +737,7 @@ export default function Page() {
                             {/* SCR verified */}
                             <button
                               type="button"
-                              disabled={
-                                !!(orderedByUser as any).scr_verified ||
-                                verifyingField === "scr_verified"
-                              }
+                              disabled={verifyingField === "scr_verified"}
                               onClick={() => handleVerify("scr_verified")}
                               className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
                                 (orderedByUser as any).scr_verified
@@ -758,10 +759,7 @@ export default function Page() {
                             {/* ID verified */}
                             <button
                               type="button"
-                              disabled={
-                                !!(orderedByUser as any).id_verified ||
-                                verifyingField === "id_verified"
-                              }
+                              disabled={verifyingField === "id_verified"}
                               onClick={() => handleVerify("id_verified")}
                               className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
                                 (orderedByUser as any).id_verified
@@ -908,9 +906,7 @@ export default function Page() {
                               key={idx}
                               className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
                             >
-                              <span className="flex-1 truncate">
-                                {note}
-                              </span>
+                              <span className="flex-1 truncate">{note}</span>
                               <button
                                 type="button"
                                 onClick={() => handleRemoveAdminNote(idx)}
@@ -951,9 +947,7 @@ export default function Page() {
                               key={idx}
                               className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
                             >
-                              <span className="flex-1 truncate">
-                                {note}
-                              </span>
+                              <span className="flex-1 truncate">{note}</span>
                               <button
                                 type="button"
                                 onClick={() =>

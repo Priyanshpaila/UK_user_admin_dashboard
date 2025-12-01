@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
@@ -76,16 +76,13 @@ function paymentBadgeClasses(status: string) {
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (!order) return "Unknown";
 
-  // explicit patient_name if backend provides it
   if ((order as any).patient_name) return (order as any).patient_name;
 
-  // first / last name stored on the order
   const fromOrder = `${(order as any).first_name || ""} ${
     (order as any).last_name || ""
   }`.trim();
   if (fromOrder) return fromOrder;
 
-  // fallback to user document (if loaded)
   if (user) {
     const fromUser =
       user.name ||
@@ -127,6 +124,35 @@ export default function Page() {
   // 🔒 hard-coded filter
   const STATUS = "completed";
 
+  // 👉 derived notes for the currently selected order (detail modal)
+  const adminNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const raw =
+      (selectedOrder as any).admin_notes ??
+      (selectedOrder.meta as any)?.admin_notes ??
+      [];
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
+  }, [selectedOrder]);
+
+  const consultantNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const meta: any = selectedOrder.meta || {};
+    const raw =
+      meta.consultant_notes ??
+      meta.consultantNotes ??
+      meta.consultation_notes ??
+      meta.consultationNotes ??
+      [];
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
+  }, [selectedOrder]);
+
+  const hasAnyNotes =
+    adminNotesForDetail.length > 0 || consultantNotesForDetail.length > 0;
+
   // Load list (completed)
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +167,6 @@ export default function Page() {
         setOrders(ordersList);
         setMeta(res.meta || null);
 
-        // fetch all distinct user_ids for cards
         const uniqueUserIds = Array.from(
           new Set(
             ordersList
@@ -566,6 +591,60 @@ export default function Page() {
                       </p>
                     )}
                   </div>
+
+                  {/* 🔹 Admin + Consultation notes */}
+                  {hasAnyNotes && (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+                      <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-neutral-300" />
+                        Notes
+                      </p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Admin notes
+                          </p>
+                          {adminNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {adminNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No admin notes.
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Consultation notes
+                          </p>
+                          {consultantNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {consultantNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No consultation notes.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* RAF Preview */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (

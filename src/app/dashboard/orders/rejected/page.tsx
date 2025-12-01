@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
@@ -123,6 +123,64 @@ export default function Page() {
 
   // 🔒 hard-coded filter
   const STATUS = "rejected";
+
+  // 👉 admin notes (root + meta)
+  const adminNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const meta: any = selectedOrder.meta || {};
+    const raw =
+      (selectedOrder as any).admin_notes ??
+      meta.admin_notes ??
+      meta.adminNotes ??
+      [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }, [selectedOrder]);
+
+  // 👉 consultation notes (root consultation_notes + variants)
+  const consultantNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const meta: any = selectedOrder.meta || {};
+    const raw =
+      (selectedOrder as any).consultation_notes ??
+      (selectedOrder as any).consultant_notes ??
+      meta.consultant_notes ??
+      meta.consultantNotes ??
+      meta.consultation_notes ??
+      meta.consultationNotes ??
+      [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }, [selectedOrder]);
+
+  // 👉 rejection notes (root rejection_notes + variants)
+  const rejectedNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const meta: any = selectedOrder.meta || {};
+    const raw =
+      (selectedOrder as any).rejection_notes ??
+      (selectedOrder as any).rejected_notes ??
+      (selectedOrder as any).reject_notes ??
+      meta.rejected_notes ??
+      meta.reject_notes ??
+      meta.rejection_notes ??
+      meta.rejected_reason ??
+      meta.rejection_reason ??
+      [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }, [selectedOrder]);
+
+  const hasAnyNotes =
+    adminNotesForDetail.length > 0 ||
+    consultantNotesForDetail.length > 0 ||
+    rejectedNotesForDetail.length > 0;
 
   // Load list (rejected)
   useEffect(() => {
@@ -562,6 +620,83 @@ export default function Page() {
                       </p>
                     )}
                   </div>
+
+                  {/* 🔹 Admin / Consultation / Rejection notes */}
+                  {hasAnyNotes && (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+                      <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-neutral-300" />
+                        Notes
+                      </p>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Admin notes
+                          </p>
+                          {adminNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {adminNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No admin notes.
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Consultation notes
+                          </p>
+                          {consultantNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {consultantNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No consultation notes.
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Rejection notes
+                          </p>
+                          {rejectedNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {rejectedNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No rejection notes.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* RAF Preview */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (

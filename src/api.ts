@@ -1012,3 +1012,51 @@ export async function updateAppointmentApi(
     body: JSON.stringify(payload),
   });
 }
+
+
+/* ------------------- Tenant APIs ------------------- */
+
+export type PlatformTenantPharmacist = {
+  email: string;
+  name: string;
+  role: string;
+  tenant_user_id?: string;
+  created_at?: string;
+  [key: string]: any;
+};
+
+export type PlatformTenantDto = {
+  _id: string;
+  slug: string;
+  db_name: string;
+  domain: string;
+  full_domain: string;
+  notes?: string;
+  pharmacists: PlatformTenantPharmacist[];
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: any;
+};
+
+export async function getPlatformTenantsApi(): Promise<PlatformTenantDto[]> {
+  const base = getMasterBase(); // master backend (no tenant subdomain)
+  const res = await jsonFetch<any>(`${base}/platform-tenants`);
+
+  // backend returns an array directly
+  if (Array.isArray(res)) return res as PlatformTenantDto[];
+
+  // or { data: [...] }
+  return (res?.data ?? []) as PlatformTenantDto[];
+}
+
+export async function getPlatformTenantBySlugApi(
+  slug: string
+): Promise<PlatformTenantDto | PlatformTenantDto[]> {
+  const base = getMasterBase();
+  // your current backend returns an array even for /platform-tenants/kfc,
+  // so keep it loose here
+  return jsonFetch<any>(`${base}/platform-tenants/${slug}`);
+}
+
+

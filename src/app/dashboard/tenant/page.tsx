@@ -1,13 +1,26 @@
 "use client";
 
-import React, { useState } from "react";
-import { Plus, Loader2 } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Plus,
+  Loader2,
+  Building2,
+  Globe2,
+  Users,
+  Database,
+  CalendarDays,
+  Mail,
+  Phone,
+  X,
+} from "lucide-react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import {
   createSubdomainApi,
   createPharmacistApi,
   PharmacistPayload,
+  getPlatformTenantsApi,
+  type PlatformTenantDto,
 } from "../../../api";
 
 export default function CreateTenantPage() {
@@ -22,13 +35,72 @@ export default function CreateTenantPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 🔹 Tenants list
+  const [tenants, setTenants] = useState<PlatformTenantDto[]>([]);
+  const [loadingTenants, setLoadingTenants] = useState(false);
+  const [tenantsError, setTenantsError] = useState<string | null>(null);
+
+  // 🔹 Modal
+  const [selectedTenant, setSelectedTenant] =
+    useState<PlatformTenantDto | null>(null);
+
+  const closeModal = () => setSelectedTenant(null);
+
+  const formatDateTime = (iso?: string) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatDate = (iso?: string) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  const loadTenants = async () => {
+    try {
+      setLoadingTenants(true);
+      setTenantsError(null);
+      const res = await getPlatformTenantsApi();
+      setTenants(res || []);
+    } catch (err: any) {
+      console.error(err);
+      setTenantsError("Failed to load tenants");
+    } finally {
+      setLoadingTenants(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTenants();
+  }, []);
+
   const handleCreateSubdomain = async () => {
+    if (!subdomain.trim()) {
+      toast.error("Please enter a subdomain");
+      return;
+    }
     setIsSubmitting(true);
     setError(null);
     try {
-      await createSubdomainApi(subdomain);
+      await createSubdomainApi(subdomain.trim());
       setTenantCreated(true);
       toast.success("Subdomain created successfully!");
+      // refresh list
+      loadTenants();
     } catch (err: any) {
       console.error(err);
       setError(err.message);
@@ -39,6 +111,11 @@ export default function CreateTenantPage() {
   };
 
   const handleCreatePharmacist = async () => {
+    if (!subdomain.trim()) {
+      toast.error("Subdomain is required to create pharmacist");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
     try {
@@ -51,8 +128,18 @@ export default function CreateTenantPage() {
         password,
       };
 
-      await createPharmacistApi(subdomain, payload);
+      await createPharmacistApi(subdomain.trim(), payload);
       toast.success("Pharmacist created successfully!");
+
+      // Optionally clear form
+      setFirstName("");
+      setLastName("");
+      setEmail("");
+      setPhone("");
+      setPassword("");
+
+      // refresh tenants to show new pharmacist
+      loadTenants();
     } catch (err: any) {
       console.error(err);
       setError(err.message);
@@ -62,130 +149,433 @@ export default function CreateTenantPage() {
     }
   };
 
+  const totalTenants = tenants.length;
+  const totalPharmacists = useMemo(
+    () =>
+      tenants.reduce(
+        (sum, t) => sum + (Array.isArray(t.pharmacists) ? t.pharmacists.length : 0),
+        0
+      ),
+    [tenants]
+  );
+
   return (
-    <div className="max-w-7xl mx-auto px-6 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Create Tenant and Pharmacist</h1>
+    <div className="mx-auto max-w-7xl px-6 py-8">
+      {/* Page header */}
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-white">
+            Tenants & Pharmacists
+          </h1>
+          <p className="mt-1 text-sm text-neutral-400">
+            Create new tenant subdomains and manage pharmacists for each
+            tenant from a single place.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-3 text-xs text-neutral-300">
+          <div className="flex items-center gap-2 rounded-full bg-neutral-900/70 px-3 py-1 border border-neutral-700">
+            <Building2 className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="font-medium">
+              {totalTenants} tenant{totalTenants !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 rounded-full bg-neutral-900/70 px-3 py-1 border border-neutral-700">
+            <Users className="h-3.5 w-3.5 text-sky-400" />
+            <span className="font-medium">
+              {totalPharmacists} pharmacist{totalPharmacists !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
       </div>
 
-      {!tenantCreated && (
-        <div className="bg-neutral-900 rounded-lg p-6 mb-6 shadow-lg">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Create Tenant
-          </h2>
-          <input
-            type="text"
-            placeholder="Enter Subdomain"
-            value={subdomain}
-            onChange={(e) => setSubdomain(e.target.value)}
-            className="w-full p-3 mb-4 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-          />
-          <button
-            onClick={handleCreateSubdomain}
-            disabled={isSubmitting}
-            className={`w-full py-3 bg-blue-600 text-white rounded-lg shadow-md ${
-              isSubmitting ? "opacity-50" : ""
-            }`}
-          >
-            {isSubmitting ? (
-              <Loader2
-                className="animate-spin inline-block mr-2"
-                size={20}
-              />
-            ) : (
-              <Plus className="inline-block mr-2" size={20} />
-            )}
-            {isSubmitting ? "Creating..." : "Create Tenant"}
-          </button>
-          {error && <p className="text-red-500 text-center mt-4">{error}</p>}
-        </div>
-      )}
+      {/* Main grid */}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)]">
+        {/* Left: create tenant / pharmacist */}
+        <div className="space-y-6">
+          {/* Create Tenant */}
+          {!tenantCreated && (
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-6 shadow-xl shadow-black/40">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    Create tenant subdomain
+                  </h2>
+                  <p className="mt-1 text-xs text-neutral-400">
+                    This will create the tenant DB and DNS entry.
+                  </p>
+                </div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
+                  <Globe2 className="h-4 w-4" />
+                </div>
+              </div>
 
-      {tenantCreated && (
-        <div className="bg-neutral-900 rounded-lg p-6 shadow-lg">
-          <h2 className="text-lg font-semibold text-white mb-4">
-            Create Pharmacist
-          </h2>
-          <form onSubmit={(e) => e.preventDefault()}>
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="First Name"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                required
-              />
+              <div className="space-y-3">
+                <label className="text-xs font-medium text-neutral-300">
+                  Subdomain
+                </label>
+                <div className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/40">
+                  <span className="text-neutral-500">https://</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. safescript"
+                    value={subdomain}
+                    onChange={(e) => setSubdomain(e.target.value)}
+                    className="flex-1 border-none bg-transparent text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                  <span className="text-neutral-500 text-xs">
+                    .your-domain.com
+                  </span>
+                </div>
+
+                <button
+                  onClick={handleCreateSubdomain}
+                  disabled={isSubmitting}
+                  className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-900/60 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {isSubmitting ? "Creating tenant..." : "Create tenant"}
+                </button>
+
+                {error && (
+                  <p className="mt-2 text-xs text-red-400 text-center">
+                    {error}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Last Name"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
+          )}
+
+          {/* Create Pharmacist (shown after tenant flag – same logic as before) */}
+          {tenantCreated && (
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-6 shadow-xl shadow-black/40">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    Create pharmacist user
+                  </h2>
+                  <p className="mt-1 text-xs text-neutral-400">
+                    Link a pharmacist to the tenant <span className="font-semibold text-emerald-400">{subdomain}</span>.
+                  </p>
+                </div>
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-500/10 text-sky-400">
+                  <Users className="h-4 w-4" />
+                </div>
+              </div>
+
+              <form
+                onSubmit={(e) => e.preventDefault()}
+                className="space-y-4"
               >
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div className="mb-4">
-              <input
-                type="email"
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Phone"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                required
-              />
-            </div>
-            <div className="mb-4">
-              <input
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 bg-neutral-800 text-white rounded-lg border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                required
-              />
-            </div>
-            <button
-              onClick={handleCreatePharmacist}
-              disabled={isSubmitting}
-              className={`w-full py-3 bg-blue-600 text-white rounded-lg shadow-md ${
-                isSubmitting ? "opacity-50" : ""
-              }`}
-            >
-              {isSubmitting ? (
-                <Loader2
-                  className="animate-spin inline-block mr-2"
-                  size={20}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    placeholder="First name"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                    required
+                  />
+                  <input
+                    type="text"
+                    placeholder="Last name"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                    required
+                  />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <select
+                    value={gender}
+                    onChange={(e) => setGender(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                  >
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+
+                  <input
+                    type="text"
+                    placeholder="Phone"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                    required
+                  />
+                </div>
+
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                  required
                 />
-              ) : (
-                <Plus className="inline-block mr-2" size={20} />
-              )}
-              {isSubmitting ? "Creating Pharmacist..." : "Create Pharmacist"}
-            </button>
-          </form>
+
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+                  required
+                />
+
+                <button
+                  type="button"
+                  onClick={handleCreatePharmacist}
+                  disabled={isSubmitting}
+                  className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-full bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-sky-900/60 transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {isSubmitting
+                    ? "Creating pharmacist..."
+                    : "Create pharmacist"}
+                </button>
+
+                {error && (
+                  <p className="mt-2 text-xs text-red-400 text-center">
+                    {error}
+                  </p>
+                )}
+              </form>
+            </div>
+          )}
+        </div>
+
+        {/* Right: tenants list */}
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-5 shadow-xl shadow-black/40">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-white">
+                Existing tenants
+              </h2>
+              <p className="mt-1 text-xs text-neutral-500">
+                Tap a tenant to view full details and pharmacists.
+              </p>
+            </div>
+            {loadingTenants && (
+              <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />
+            )}
+          </div>
+
+          {tenantsError && (
+            <p className="mb-3 rounded-lg bg-red-900/40 px-3 py-2 text-xs text-red-200">
+              {tenantsError}
+            </p>
+          )}
+
+          {tenants.length === 0 && !loadingTenants ? (
+            <div className="rounded-xl border border-dashed border-neutral-700 bg-neutral-900/60 px-4 py-6 text-center text-xs text-neutral-400">
+              No tenants found yet. Create your first tenant to see it here.
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {tenants.map((t) => {
+                const pharmacistsCount = t.pharmacists?.length ?? 0;
+                return (
+                  <button
+                    key={t._id}
+                    type="button"
+                    onClick={() => setSelectedTenant(t)}
+                    className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/70 px-4 py-3 text-left text-xs text-neutral-300 transition hover:border-emerald-500/70 hover:bg-neutral-900 hover:shadow-lg hover:shadow-emerald-900/30"
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
+                          <Building2 className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold text-white">
+                            {t.slug}
+                          </p>
+                          <p className="text-[11px] text-neutral-500">
+                            {t.full_domain}
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          t.status === "active"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : "bg-neutral-700 text-neutral-200"
+                        }`}
+                      >
+                        {t.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-neutral-400">
+                      <span className="flex items-center gap-1.5">
+                        <Users className="h-3 w-3 text-sky-400" />
+                        {pharmacistsCount} pharmacist
+                        {pharmacistsCount !== 1 ? "s" : ""}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <CalendarDays className="h-3 w-3 text-neutral-500" />
+                        {formatDate(t.createdAt)}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Modal for tenant details */}
+      {selectedTenant && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-3xl border border-neutral-800 bg-neutral-950 shadow-2xl shadow-black/70">
+            {/* Modal header */}
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-5 py-4">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full bg-neutral-900 px-3 py-1 text-[11px] text-neutral-300">
+                  <Building2 className="h-3 w-3 text-emerald-400" />
+                  <span className="font-semibold">{selectedTenant.slug}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold text-white">
+                  {selectedTenant.full_domain}
+                </p>
+                <p className="mt-1 text-xs text-neutral-400">
+                  Tenant ID:{" "}
+                  <span className="font-mono text-[11px] text-neutral-300">
+                    {selectedTenant._id}
+                  </span>
+                </p>
+              </div>
+              <div className="flex flex-col items-end gap-2">
+                <span
+                  className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
+                    selectedTenant.status === "active"
+                      ? "bg-emerald-500/10 text-emerald-300"
+                      : "bg-neutral-700 text-neutral-200"
+                  }`}
+                >
+                  {selectedTenant.status}
+                </span>
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal body */}
+            <div className="space-y-5 overflow-y-auto px-5 py-4">
+              {/* Meta info */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 text-xs text-neutral-300">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                    Connection
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    <p className="flex items-center gap-2">
+                      <Database className="h-3.5 w-3.5 text-amber-300" />
+                      <span className="font-mono text-[11px]">
+                        {selectedTenant.db_name}
+                      </span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <Globe2 className="h-3.5 w-3.5 text-sky-300" />
+                      <span>{selectedTenant.domain}</span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <CalendarDays className="h-3.5 w-3.5 text-neutral-400" />
+                      <span>
+                        Created: {formatDateTime(selectedTenant.createdAt)}
+                      </span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <CalendarDays className="h-3.5 w-3.5 text-neutral-400" />
+                      <span>
+                        Updated: {formatDateTime(selectedTenant.updatedAt)}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4 text-xs text-neutral-300">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                    Notes
+                  </p>
+                  <p className="mt-2 text-xs text-neutral-300">
+                    {selectedTenant.notes || "No extra notes for this tenant."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Pharmacists list */}
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                    Pharmacists
+                  </p>
+                  <span className="text-[11px] text-neutral-400">
+                    {selectedTenant.pharmacists?.length ?? 0} user
+                    {((selectedTenant.pharmacists?.length ?? 0) || 0) !== 1
+                      ? "s"
+                      : ""}
+                  </span>
+                </div>
+
+                {selectedTenant.pharmacists?.length ? (
+                  <div className="space-y-2 text-xs text-neutral-200">
+                    {selectedTenant.pharmacists.map((p, idx) => (
+                      <div
+                        key={`${p.tenant_user_id ?? p.email}-${idx}`}
+                        className="flex items-start justify-between rounded-xl border border-neutral-800 bg-neutral-950/80 px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-white">
+                            {p.name || "Unnamed pharmacist"}
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-400">
+                            <Mail className="h-3 w-3" />
+                            {p.email}
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-neutral-500">
+                            <Users className="h-3 w-3" />
+                            Role: {p.role}
+                          </p>
+                          {p.created_at && (
+                            <p className="mt-0.5 text-[11px] text-neutral-500">
+                              Added {formatDateTime(p.created_at)}
+                            </p>
+                          )}
+                        </div>
+                        {p.tenant_user_id && (
+                          <span className="ml-3 rounded-full bg-neutral-900 px-2 py-0.5 text-[10px] font-mono text-neutral-400">
+                            {p.tenant_user_id.slice(0, 6)}…
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-neutral-700 bg-neutral-950/60 px-3 py-3 text-xs text-neutral-400">
+                    No pharmacists have been added to this tenant yet.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
