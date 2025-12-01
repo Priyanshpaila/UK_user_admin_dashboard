@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
@@ -77,7 +77,6 @@ function paymentBadgeClasses(status: string) {
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (!order) return "Unknown";
 
-  // if backend later adds this
   if ((order as any).patient_name) return (order as any).patient_name;
 
   const fromOrder = `${(order as any).first_name || ""} ${
@@ -87,12 +86,12 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
 
   if (user) {
     const fromUser =
-      user.name ||
-      user.fullName ||
+      (user as any).name ||
+      (user as any).fullName ||
       `${(user as any).firstName || ""} ${
         (user as any).lastName || ""
       }`.trim() ||
-      user.email;
+      (user as any).email;
     if (fromUser) return fromUser;
   }
 
@@ -119,7 +118,7 @@ export default function Page() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // admin notes state
+  // admin notes state (editable)
   const [adminNotes, setAdminNotes] = useState<string[]>([]);
   const [newNote, setNewNote] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
@@ -129,6 +128,53 @@ export default function Page() {
 
   // 🔒 hard-coded filter
   const STATUS = "approved";
+
+  // 🔹 derived consultation / rejection notes from selectedOrder
+  const consultationNotes = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const o: any = selectedOrder;
+    const meta: any = o.meta || {};
+
+    const rawRoot =
+      o.consultation_notes ?? o.consultant_notes ?? o.consultationNotes;
+    const rawMeta =
+      meta.consultation_notes ??
+      meta.consultationNotes ??
+      meta.consultant_notes ??
+      meta.consultantNotes;
+
+    const raw = rawRoot ?? rawMeta ?? [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }, [selectedOrder]);
+
+  const rejectionNotes = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const o: any = selectedOrder;
+    const meta: any = o.meta || {};
+
+    const rawRoot =
+      o.rejection_notes ??
+      o.rejected_notes ??
+      o.rejection_reason ??
+      o.rejected_reason;
+    const rawMeta =
+      meta.rejection_notes ??
+      meta.rejected_notes ??
+      meta.rejection_reason ??
+      meta.rejected_reason;
+
+    const raw = rawRoot ?? rawMeta ?? [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }, [selectedOrder]);
+
+  const hasAnyOtherNotes =
+    consultationNotes.length > 0 || rejectionNotes.length > 0;
 
   // Load list (approved)
   useEffect(() => {
@@ -255,7 +301,6 @@ export default function Page() {
       return;
     }
 
-    // Adjust the target path if you name the page differently
     const url = `/dashboard/consultations/start?service_id=${encodeURIComponent(
       serviceId
     )}&order_id=${encodeURIComponent(orderId)}`;
@@ -522,12 +567,12 @@ export default function Page() {
                       {orderedByUser && (
                         <p className="text-[11px] text-neutral-500">
                           Account:{" "}
-                          {orderedByUser.name ||
-                            orderedByUser.fullName ||
+                          {(orderedByUser as any).name ||
+                            (orderedByUser as any).fullName ||
                             `${(orderedByUser as any).firstName || ""} ${
                               (orderedByUser as any).lastName || ""
                             }`.trim() ||
-                            orderedByUser.email}
+                            (orderedByUser as any).email}
                         </p>
                       )}
                     </div>
@@ -606,7 +651,7 @@ export default function Page() {
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
-                        RAF Questions & Answers
+                        RAF Questions &amp; Answers
                       </p>
                       <div className="space-y-2">
                         {selectedOrder.meta.formsQA.raf.qa.map(
@@ -630,11 +675,11 @@ export default function Page() {
                     </div>
                   ) : null}
 
-                  {/* Admin Notes */}
+                  {/* Notes card: consultation + rejection + editable admin notes */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-semibold text-neutral-200">
-                        Admin notes
+                        Notes
                       </p>
                       <button
                         type="button"
@@ -645,13 +690,63 @@ export default function Page() {
                         {savingNotes && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {savingNotes ? "Saving…" : "Save notes"}
+                        {savingNotes ? "Saving…" : "Save admin notes"}
                       </button>
                     </div>
 
+                    {/* Read-only consultation + rejection notes */}
+                    {hasAnyOtherNotes && (
+                      <div className="grid gap-3 md:grid-cols-2 mb-3">
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Consultation notes
+                          </p>
+                          {consultationNotes.length ? (
+                            <ul className="space-y-1">
+                              {consultationNotes.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No consultation notes.
+                            </p>
+                          )}
+                        </div>
+
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Rejection notes
+                          </p>
+                          {rejectionNotes.length ? (
+                            <ul className="space-y-1">
+                              {rejectionNotes.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No rejection notes.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Editable admin notes list */}
                     {adminNotes.length === 0 && (
                       <p className="text-xs text-neutral-500 mb-2">
-                        No notes yet. Add your first note below.
+                        No admin notes yet. Add your first note below.
                       </p>
                     )}
 
@@ -684,6 +779,7 @@ export default function Page() {
                       </ul>
                     )}
 
+                    {/* Add new admin note */}
                     <div className="flex gap-2">
                       <textarea
                         value={newNote}

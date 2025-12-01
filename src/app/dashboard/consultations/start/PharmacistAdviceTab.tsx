@@ -3,8 +3,10 @@
 import React, { useEffect, useState } from "react";
 import {
   getClinicFormsApi,
+  getOrderByIdApi,
   type ClinicForm,
-} from "../../../../api"; // adjust path if needed
+  type OrderDto,
+} from "../../../../api";
 import { Loader2 } from "lucide-react";
 
 type AdviceState = {
@@ -16,6 +18,11 @@ interface Props {
   serviceId: string;
 }
 
+type OrderNotes = {
+  admin: string[];
+  consultation: string[];
+};
+
 export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   const [form, setForm] = useState<ClinicForm | null>(null);
   const [adviceState, setAdviceState] = useState<AdviceState>({});
@@ -23,9 +30,15 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [orderNotes, setOrderNotes] = useState<OrderNotes>({
+    admin: [],
+    consultation: [],
+  });
+  const [orderNotesLoading, setOrderNotesLoading] = useState(true);
+
   const storageKey = `consultation_${orderId}_advice`;
 
-  // Load form + LS
+  /* ------------ Load Pharmacist Advice form + LS ------------ */
   useEffect(() => {
     let cancelled = false;
 
@@ -85,7 +98,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
                 initialSelectAll = !!parsed.selectAll;
               }
             } catch {
-              // ignore
+              // ignore parse error
             }
           }
         }
@@ -123,7 +136,70 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     };
   }, [serviceId, storageKey]);
 
-  // Persist to localStorage
+  /* ------------ Load order notes (admin / consultant) ------------ */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOrderNotes() {
+      if (!orderId) {
+        setOrderNotesLoading(false);
+        return;
+      }
+
+      setOrderNotesLoading(true);
+      try {
+        const order: OrderDto = await getOrderByIdApi(orderId);
+        const meta: any = order.meta || {};
+
+        const normalize = (raw: any): string[] => {
+          const arr = Array.isArray(raw)
+            ? raw
+            : raw == null
+            ? []
+            : [raw];
+          return arr
+            .map((n) => String(n).trim())
+            .filter((n) => n.length > 0);
+        };
+
+        const adminRaw =
+          (order as any).admin_notes ??
+          meta.admin_notes ??
+          meta.adminNotes ??
+          [];
+        const consultationRaw =
+          (order as any).consultation_notes ??
+          (order as any).consultant_notes ??
+          meta.consultation_notes ??
+          meta.consultationNotes ??
+          meta.consultant_notes ??
+          meta.consultantNotes ??
+          [];
+
+        if (!cancelled) {
+          setOrderNotes({
+            admin: normalize(adminRaw),
+            consultation: normalize(consultationRaw),
+          });
+        }
+      } catch (e) {
+        if (!cancelled) {
+          // Fail silently – just no notes
+          setOrderNotes({ admin: [], consultation: [] });
+        }
+      } finally {
+        if (!cancelled) setOrderNotesLoading(false);
+      }
+    }
+
+    loadOrderNotes();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
+
+  // Persist advice selections to localStorage
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload = { selectAll, adviceState };
@@ -188,13 +264,21 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     (f: any) => f.type === "text_block" || f.type === "textBlock"
   );
 
-  const checkboxFields = allFields.filter(
-    (f: any) => f.type === "checkbox"
-  );
+  const checkboxFields = allFields.filter((f: any) => f.type === "checkbox");
 
   if (!checkboxFields.length) {
     return (
       <div className="space-y-3 text-xs text-neutral-400">
+        {/* Notes at top even if no checkbox fields */}
+        {(orderNotes.admin.length > 0 ||
+          orderNotes.consultation.length > 0 ||
+          orderNotesLoading) && (
+          <OrderNotesBanner
+            notes={orderNotes}
+            loading={orderNotesLoading}
+          />
+        )}
+
         {textBlocks.length > 0 && (
           <div className="space-y-2">
             {textBlocks.map((field: any, idx: number) => (
@@ -226,16 +310,22 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     );
   }
 
+  const hasAnyNotes =
+    orderNotes.admin.length > 0 || orderNotes.consultation.length > 0;
+
   return (
     <div className="space-y-4">
+      {/* 🔹 Admin / Consultant notes banner at the top (if present) */}
+      {(hasAnyNotes || orderNotesLoading) && (
+        <OrderNotesBanner notes={orderNotes} loading={orderNotesLoading} />
+      )}
+
       {/* Header + Select all */}
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs text-neutral-500">
             Form:{" "}
-            <span className="font-medium text-neutral-200">
-              {form.name}
-            </span>
+            <span className="font-medium text-neutral-200">{form.name}</span>
           </p>
           {form.description && (
             <p className="text-[11px] text-neutral-500">
@@ -334,6 +424,79 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* ----------------- Small sub-component for notes banner ----------------- */
+
+function OrderNotesBanner({
+  notes,
+  loading,
+}: {
+  notes: OrderNotes;
+  loading: boolean;
+}) {
+  const hasAdmin = notes.admin.length > 0;
+  const hasConsult = notes.consultation.length > 0;
+
+  if (!loading && !hasAdmin && !hasConsult) return null;
+
+  return (
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-neutral-200">
+          Order notes
+        </p>
+        {loading && (
+          <span className="flex items-center gap-1 text-[10px] text-neutral-500">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Loading…
+          </span>
+        )}
+      </div>
+
+      {!loading && (
+        <div className="grid gap-3 md:grid-cols-2 text-[11px]">
+          <div>
+            <p className="font-semibold text-neutral-400 mb-1">Admin notes</p>
+            {hasAdmin ? (
+              <ul className="space-y-1">
+                {notes.admin.map((n, i) => (
+                  <li
+                    key={i}
+                    className="text-neutral-200 leading-snug"
+                  >
+                    • {n}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-neutral-500">No admin notes.</p>
+            )}
+          </div>
+
+          <div>
+            <p className="font-semibold text-neutral-400 mb-1">
+              Consultation notes
+            </p>
+            {hasConsult ? (
+              <ul className="space-y-1">
+                {notes.consultation.map((n, i) => (
+                  <li
+                    key={i}
+                    className="text-neutral-200 leading-snug"
+                  >
+                    • {n}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-neutral-500">No consultation notes.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
