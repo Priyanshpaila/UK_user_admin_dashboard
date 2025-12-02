@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
@@ -21,7 +21,11 @@ import {
   Filter,
   X,
   ClipboardList,
+  Mail,
+  Phone,
 } from "lucide-react";
+
+/* ----------------- Helpers ----------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -83,18 +87,178 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (fromOrder) return fromOrder;
 
   if (user) {
+    const u: any = user;
     const fromUser =
-      user.name ||
-      (user as any).fullName ||
-      `${(user as any).firstName || ""} ${
-        (user as any).lastName || ""
-      }`.trim() ||
-      user.email;
+      u.name ||
+      u.fullName ||
+      `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+      u.email;
     if (fromUser) return fromUser;
   }
 
   return "Unknown";
 }
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDobWithAge(value?: string | null) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+
+  const dateStr = d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `${dateStr} (${age} yrs)`;
+}
+
+function getUserInitials(user: UserDto | null): string {
+  if (!user) return "PT";
+  const u: any = user;
+  const name =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    u.email ||
+    "";
+  if (!name) return "PT";
+  const parts = String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+  return initials.join("") || "PT";
+}
+
+function PatientProfileCard({ user }: { user: UserDto | null }) {
+  if (!user) {
+    return (
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+        <p className="text-xs text-neutral-400 mb-1">Patient profile</p>
+        <p className="text-sm text-neutral-300">No patient details found.</p>
+      </div>
+    );
+  }
+
+  const u: any = user;
+  const fullName =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    "Unknown patient";
+
+  const gender =
+    u.gender && typeof u.gender === "string"
+      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
+      : null;
+
+  const dobLabel = formatDobWithAge(u.dob);
+  const createdAt = u.createdAt || u.created_at || null;
+  const updatedAt = u.updatedAt || u.updated_at || null;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center">
+          <span className="text-xs font-semibold text-neutral-100">
+            {getUserInitials(user)}
+          </span>
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-white">{fullName}</p>
+          <p className="text-[11px] text-neutral-400">
+            {gender ? gender : "Gender: —"}
+            {dobLabel && (
+              <>
+                {" "}
+                • <span>{dobLabel}</span>
+              </>
+            )}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+            {u.email && (
+              <span className="inline-flex items-center gap-1">
+                <Mail className="h-3 w-3 text-neutral-500" />
+                <span className="break-all">{u.email}</span>
+              </span>
+            )}
+            {(u.phone || u.phoneNumber) && (
+              <span className="inline-flex items-center gap-1">
+                <Phone className="h-3 w-3 text-neutral-500" />
+                <span>{u.phone || u.phoneNumber}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
+        <div>
+          <dt className="text-neutral-500">Address line 1</dt>
+          <dd className="text-neutral-100">
+            {u.address_line1 || u.addressLine1 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Address line 2</dt>
+          <dd className="text-neutral-100">
+            {u.address_line2 || u.addressLine2 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">City</dt>
+          <dd className="text-neutral-100">{u.city || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">County</dt>
+          <dd className="text-neutral-100">{u.county || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Postcode</dt>
+          <dd className="text-neutral-100">{u.postalcode || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Country</dt>
+          <dd className="text-neutral-100">{u.country || "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="flex flex-wrap gap-4 text-[11px] text-neutral-500 pt-2 border-t border-neutral-800">
+        <span>
+          Created:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(createdAt) || "—"}
+          </span>
+        </span>
+        <span>
+          Updated:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(updatedAt) || "—"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Page ----------------- */
 
 export default function Page() {
   // list state
@@ -115,8 +279,37 @@ export default function Page() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
-  // 🔒 hard-coded filter: only by payment_status (no status filter)
+  // 🔒 hard-coded filter
   const PAYMENT_STATUS = "pending";
+
+  // 👉 derived notes for the currently selected order (detail modal)
+  const adminNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const raw =
+      (selectedOrder as any).admin_notes ??
+      (selectedOrder.meta as any)?.admin_notes ??
+      [];
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
+  }, [selectedOrder]);
+
+  const consultantNotesForDetail = useMemo(() => {
+    if (!selectedOrder) return [] as string[];
+    const meta: any = selectedOrder.meta || {};
+    const raw =
+      meta.consultant_notes ??
+      meta.consultantNotes ??
+      meta.consultation_notes ??
+      meta.consultationNotes ??
+      [];
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
+  }, [selectedOrder]);
+
+  const hasAnyNotes =
+    adminNotesForDetail.length > 0 || consultantNotesForDetail.length > 0;
 
   // Load list (unpaid)
   useEffect(() => {
@@ -132,7 +325,6 @@ export default function Page() {
         setOrders(ordersList);
         setMeta(res.meta || null);
 
-        // fetch all distinct user_ids for cards
         const uniqueUserIds = Array.from(
           new Set(
             ordersList
@@ -215,8 +407,11 @@ export default function Page() {
             Unpaid Orders
           </h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Orders with <span className="font-semibold">pending payment</span>.
-            Review and chase payment, or update once payment is received.
+            Orders with{" "}
+            <span className="font-semibold text-amber-300">
+              pending payment
+            </span>
+            . Review and chase payment, or update once payment is received.
           </p>
         </div>
 
@@ -372,10 +567,10 @@ export default function Page() {
 
       {/* 🔹 Detail modal */}
       {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-t-2xl md:rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
               <div className="flex items-center gap-2">
                 <ClipboardList className="h-4 w-4 text-emerald-400" />
                 <h2 className="text-sm font-semibold text-white">
@@ -392,7 +587,7 @@ export default function Page() {
             </div>
 
             {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-4 text-sm text-neutral-200">
+            <div className="max-h-[80vh] overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
               {detailLoading && (
                 <div className="flex items-center justify-center py-10 text-neutral-300">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -447,33 +642,10 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Patient & appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient / Ordered by
-                      </p>
-                      <p className="text-sm font-medium text-white">
-                        {getDisplayPatientName(selectedOrder, orderedByUser)}
-                      </p>
-                      {orderedByUser && (
-                        <p className="text-[11px] text-neutral-500">
-                          Account:{" "}
-                          {orderedByUser.name ||
-                            (orderedByUser as any).fullName ||
-                            `${(orderedByUser as any).firstName || ""} ${
-                              (orderedByUser as any).lastName || ""
-                            }`.trim() ||
-                            orderedByUser.email}
-                        </p>
-                      )}
-                      {selectedOrder.email && (
-                        <p className="text-xs text-neutral-400">
-                          {selectedOrder.email}
-                        </p>
-                      )}
-                    </div>
-                    <div>
+                  {/* Patient profile + appointment */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <PatientProfileCard user={orderedByUser} />
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs text-neutral-400 mb-0.5">
                         Appointment
                       </p>
@@ -541,8 +713,62 @@ export default function Page() {
                     )}
                   </div>
 
+                  {/* 🔹 Admin + Consultation notes */}
+                  {hasAnyNotes && (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+                      <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-neutral-300" />
+                        Notes
+                      </p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Admin notes
+                          </p>
+                          {adminNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {adminNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No admin notes.
+                            </p>
+                          )}
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                            Consultation notes
+                          </p>
+                          {consultantNotesForDetail.length ? (
+                            <ul className="space-y-1">
+                              {consultantNotesForDetail.map((note, idx) => (
+                                <li
+                                  key={idx}
+                                  className="text-xs text-neutral-200 leading-snug"
+                                >
+                                  • {note}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[11px] text-neutral-500">
+                              No consultation notes.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* RAF Preview */}
-                  {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
+                  {/* {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
                         RAF Answers (preview)
@@ -565,7 +791,7 @@ export default function Page() {
                         )}
                       </div>
                     </div>
-                  ) : null}
+                  ) : null} */}
                 </>
               )}
             </div>

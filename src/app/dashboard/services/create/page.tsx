@@ -29,12 +29,29 @@ const DEFAULT_FLOW_OPTIONS = [
   "Payment",
 ];
 
+type Variation = {
+  _id?: string;
+  title: string;
+  status: string; // "published" | "draft" | ...
+  price: number;
+  stock: number;
+  max_qty: number;
+  sort_order: number;
+};
+
 type Medicine = {
   _id: string;
   sku: string;
   name: string;
+  slug: string;
+  description?: string;
+  status: string; // "published" | "draft" | ...
+  max_bookable_quantity?: number;
+  allow_reorder?: boolean;
+  is_virtual?: boolean;
+  variations: Variation[];
+  image?: string;
   strength?: string | null;
-  variations?: string;
 };
 
 type ServiceMedicineRow = {
@@ -45,7 +62,7 @@ type ServiceMedicineRow = {
   active: boolean;
 };
 
-/* ------- Local types for inline Medicine modal (same logic/design) ------- */
+/* ------- Local types for inline Medicine modal ------- */
 
 type MedVariationForm = {
   title: string;
@@ -281,7 +298,7 @@ export default function CreateServicePage() {
   const [description, setDescription] = useState("");
   const [ctaText, setCtaText] = useState("");
   const [viewType, setViewType] = useState("card");
-  const [serviceType, setServiceType] = useState<"private" | "nhs">("private"); // NEW
+  const [serviceType, setServiceType] = useState<"private" | "nhs">("private");
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -301,7 +318,13 @@ export default function CreateServicePage() {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [medicinesLoading, setMedicinesLoading] = useState(false);
   const [linkRows, setLinkRows] = useState<ServiceMedicineRow[]>([
-    { medicine_id: "", min_qty: "1", max_qty: "1", sort_order: "1", active: true },
+    {
+      medicine_id: "",
+      min_qty: "1",
+      max_qty: "1",
+      sort_order: "1",
+      active: true,
+    },
   ]);
 
   const reloadMedicines = useCallback(async () => {
@@ -348,8 +371,9 @@ export default function CreateServicePage() {
     setLinkRows((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // ---------- Inline Medicine Modal state (create only) ----------
+  // ---------- Inline Medicine Modal state (create + edit) ----------
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
+  const [editingMed, setEditingMed] = useState<Medicine | null>(null);
   const [medForm, setMedForm] = useState<MedFormState>(MED_EMPTY_FORM);
   const [medImageFile, setMedImageFile] = useState<File | null>(null);
   const [medImagePreview, setMedImagePreview] = useState<string | null>(null);
@@ -360,8 +384,10 @@ export default function CreateServicePage() {
   const [medSlugManuallyEdited, setMedSlugManuallyEdited] = useState(false);
   const [medSubmitting, setMedSubmitting] = useState(false);
   const [medError, setMedError] = useState<string | null>(null);
+  const [medAllowReorder, setMedAllowReorder] = useState<boolean>(true);
 
   const openMedCreate = () => {
+    setEditingMed(null);
     setMedForm({
       ...MED_EMPTY_FORM,
       variations: [MED_EMPTY_VARIATION],
@@ -372,12 +398,62 @@ export default function CreateServicePage() {
     setMedSkuManuallyEdited(false);
     setMedSlugManuallyEdited(false);
     setMedError(null);
+    setMedAllowReorder(true);
+    setIsMedModalOpen(true);
+  };
+
+  const openMedEdit = (med: Medicine) => {
+    setEditingMed(med);
+
+    const mappedVariations: MedVariationForm[] =
+      med.variations && med.variations.length > 0
+        ? med.variations.map((v, idx) => ({
+            title: v.title || "",
+            price: v.price != null ? String(v.price) : "",
+            stock: v.stock != null ? String(v.stock) : "",
+            max_qty: v.max_qty != null ? String(v.max_qty) : "",
+            sort_order:
+              v.sort_order != null ? String(v.sort_order) : String(idx),
+            status: v.status || "published",
+          }))
+        : [MED_EMPTY_VARIATION];
+
+    setMedForm({
+      sku: med.sku || "",
+      name: med.name || "",
+      slug: med.slug || slugifyMed(med.name || ""),
+      description: med.description || "",
+      status: med.status || "draft",
+      variations: mappedVariations,
+    });
+
+    setMedAllowReorder(
+      typeof med.allow_reorder === "boolean" ? med.allow_reorder : true
+    );
+
+    setMedImageFile(null);
+    setMedExistingImagePath(med.image || null);
+
+    if (med.image) {
+      const baseForImage = getBackendBase().replace(/\/api\/?$/, "");
+      const fullUrl = med.image.startsWith("http")
+        ? med.image
+        : `${baseForImage}/${med.image.replace(/^\/+/, "")}`;
+      setMedImagePreview(fullUrl);
+    } else {
+      setMedImagePreview(null);
+    }
+
+    setMedSkuManuallyEdited(true);
+    setMedSlugManuallyEdited(true);
+    setMedError(null);
     setIsMedModalOpen(true);
   };
 
   const closeMedModal = () => {
     if (medSubmitting) return;
     setIsMedModalOpen(false);
+    setEditingMed(null);
   };
 
   const handleMedChange = (
@@ -493,14 +569,16 @@ export default function CreateServicePage() {
         description: medForm.description.trim(),
         status: medForm.status || "draft",
         max_bookable_quantity: 2,
-        allow_reorder: true,
+        allow_reorder: medAllowReorder,
         is_virtual: false,
         variations: variationsPayload,
       };
 
       const base = getBackendBase();
-      const url = `${base}/medicines`;
-      const method = "POST";
+      const url = editingMed?._id
+        ? `${base}/medicines/${editingMed._id}`
+        : `${base}/medicines`;
+      const method = editingMed?._id ? "PUT" : "POST";
 
       const token =
         typeof window !== "undefined"
@@ -545,7 +623,7 @@ export default function CreateServicePage() {
       }
 
       await reloadMedicines();
-      toast.success("Medicine created");
+      toast.success(editingMed ? "Medicine updated" : "Medicine created");
       closeMedModal();
     } catch (err: any) {
       console.error(err);
@@ -578,7 +656,7 @@ export default function CreateServicePage() {
       formData.append("view_type", viewType);
       formData.append("cta_text", ctaText || "Book Now");
       formData.append("status", "published");
-      formData.append("service_type", serviceType); // NEW
+      formData.append("service_type", serviceType);
 
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
@@ -589,9 +667,17 @@ export default function CreateServicePage() {
       }
 
       const base = getBackendBase();
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("session_token")
+          : null;
+
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
       const res = await fetch(`${base}/services`, {
         method: "POST",
         body: formData,
+        headers,
       });
 
       if (!res.ok) {
@@ -734,7 +820,7 @@ export default function CreateServicePage() {
                 </div>
               </div>
 
-              {/* NEW: Service Type */}
+              {/* Service Type */}
               <div>
                 <label className="text-xs font-medium text-neutral-300">
                   Service Type
@@ -815,7 +901,8 @@ export default function CreateServicePage() {
               <div
                 className="relative h-44 w-full max-w-[11rem] cursor-pointer overflow-hidden rounded-xl border border-dashed border-neutral-700 bg-neutral-900/80 shadow-inner hover:border-blue-500/70 hover:bg-neutral-800/80 transition-colors"
                 onClick={() =>
-                  !imagePreview && document.getElementById("upload-img")?.click()
+                  !imagePreview &&
+                  document.getElementById("upload-img")?.click()
                 }
               >
                 {imagePreview ? (
@@ -860,9 +947,7 @@ export default function CreateServicePage() {
                 </p>
                 <button
                   type="button"
-                  onClick={() =>
-                    document.getElementById("upload-img")?.click()
-                  }
+                  onClick={() => document.getElementById("upload-img")?.click()}
                   className="inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
                 >
                   Choose file
@@ -907,7 +992,7 @@ export default function CreateServicePage() {
         </div>
       </div>
 
-      {/* ---------------- LINK MEDICINES SECTION (below form) ---------------- */}
+      {/* ---------------- LINK MEDICINES SECTION ---------------- */}
       <SectionCard
         title="Link Medicines"
         subtitle="Attach default medicines to this service along with quantities and order."
@@ -928,9 +1013,7 @@ export default function CreateServicePage() {
           </div>
 
           {medicinesLoading && (
-            <p className="text-xs text-neutral-500">
-              Loading medicines list…
-            </p>
+            <p className="text-xs text-neutral-500">Loading medicines list…</p>
           )}
 
           {!medicinesLoading && medicines.length === 0 && (
@@ -948,16 +1031,36 @@ export default function CreateServicePage() {
                 <p className="text-xs font-semibold text-neutral-300">
                   Medicine #{index + 1}
                 </p>
-                {linkRows.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeLinkRow(index)}
-                    className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20"
-                  >
-                    <Trash2 size={12} />
-                    Remove
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {row.medicine_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const med = medicines.find(
+                          (m) => m._id === row.medicine_id
+                        );
+                        if (!med) {
+                          toast.error("Selected medicine not found in list");
+                          return;
+                        }
+                        openMedEdit(med);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-full border border-neutral-600 bg-neutral-800/60 px-2.5 py-1 text-[11px] font-medium text-neutral-100 hover:bg-neutral-700"
+                    >
+                      Edit medicine
+                    </button>
+                  )}
+                  {linkRows.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeLinkRow(index)}
+                      className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20"
+                    >
+                      <Trash2 size={12} />
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="grid gap-3 md:grid-cols-4">
@@ -1039,9 +1142,7 @@ export default function CreateServicePage() {
                   </label>
                   <button
                     type="button"
-                    onClick={() =>
-                      updateLinkRow(index, "active", !row.active)
-                    }
+                    onClick={() => updateLinkRow(index, "active", !row.active)}
                     className={`inline-flex items-center rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
                       row.active
                         ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40"
@@ -1076,7 +1177,7 @@ export default function CreateServicePage() {
         </div>
       </SectionCard>
 
-      {/* --------- Inline Medicine Modal (same design as medicines page) --------- */}
+      {/* --------- Inline Medicine Modal --------- */}
       {isMedModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 border border-neutral-800/80 shadow-[0_18px_60px_rgba(0,0,0,0.85)] transform transition-all duration-200 scale-100">
@@ -1084,10 +1185,10 @@ export default function CreateServicePage() {
             <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
-                  Add new medicine
+                  {editingMed ? "Update existing medicine" : "Add new medicine"}
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-neutral-50 flex items-center gap-2">
-                  Create Medicine
+                  {editingMed ? "Edit Medicine" : "Create Medicine"}
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-[2px] text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
                     Inventory
                   </span>
@@ -1198,6 +1299,36 @@ export default function CreateServicePage() {
                         <option value="published">Published</option>
                         <option value="archived">Archived</option>
                       </select>
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Allow re-order
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setMedAllowReorder((prev) => !prev)}
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+                          medAllowReorder
+                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                            : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-[10px] w-[10px] rounded-full ${
+                            medAllowReorder
+                              ? "bg-emerald-400"
+                              : "bg-neutral-500"
+                          }`}
+                        />
+                        {medAllowReorder
+                          ? "Re-order allowed"
+                          : "Re-order not allowed"}
+                      </button>
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        Toggle to control whether this medicine can be ordered
+                        again by patients.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1509,7 +1640,13 @@ export default function CreateServicePage() {
                   disabled={medSubmitting}
                   className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-500 disabled:opacity-70 transition-colors"
                 >
-                  {medSubmitting ? "Creating..." : "Create medicine"}
+                  {medSubmitting
+                    ? editingMed
+                      ? "Saving..."
+                      : "Creating..."
+                    : editingMed
+                    ? "Save changes"
+                    : "Create medicine"}
                 </button>
               </div>
             </form>

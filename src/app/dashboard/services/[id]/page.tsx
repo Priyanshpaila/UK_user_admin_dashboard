@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   Loader2,
@@ -30,6 +30,79 @@ const DEFAULT_FLOW_OPTIONS = [
   "Calendar",
   "Payment",
 ];
+
+/* ---------- Shared medicine types (same as create page) ---------- */
+
+type Variation = {
+  _id?: string;
+  title: string;
+  status: string; // "published" | "draft" | ...
+  price: number;
+  stock: number;
+  max_qty: number;
+  sort_order: number;
+};
+
+type Medicine = {
+  _id: string;
+  sku: string;
+  name: string;
+  slug: string;
+  description?: string;
+  status: string;
+  max_bookable_quantity?: number;
+  allow_reorder?: boolean;
+  is_virtual?: boolean;
+  variations: Variation[];
+  image?: string;
+  strength?: string | null;
+};
+
+type MedVariationForm = {
+  title: string;
+  price: string;
+  stock: string;
+  max_qty: string;
+  sort_order: string;
+  status: string;
+};
+
+type MedFormState = {
+  sku: string;
+  name: string;
+  slug: string;
+  description: string;
+  status: string;
+  variations: MedVariationForm[];
+};
+
+const MED_EMPTY_VARIATION: MedVariationForm = {
+  title: "",
+  price: "",
+  stock: "",
+  max_qty: "",
+  sort_order: "0",
+  status: "published",
+};
+
+const MED_EMPTY_FORM: MedFormState = {
+  sku: "",
+  name: "",
+  slug: "",
+  description: "",
+  status: "draft",
+  variations: [MED_EMPTY_VARIATION],
+};
+
+function slugifyMed(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+}
+
+/* --------------------- Shared UI components ---------------------- */
 
 function SectionCard({
   title,
@@ -208,14 +281,13 @@ function FlowEditor({
   );
 }
 
-// ---- Types for medicine mapping UI ----
+/* ---- Types for service-medicine mapping UI ---- */
+
 type MedicineOption = {
   _id: string;
   sku: string;
   name: string;
   strength?: string | null;
-  variations?: string;
-  price?: number;
 };
 
 type ServiceMedicineRow = {
@@ -243,7 +315,7 @@ export default function EditServicePage() {
 
   const [viewType, setViewType] = useState("card");
 
-  // 🔹 NEW: service_type (private / nhs)
+  // service_type (private / nhs)
   const [serviceType, setServiceType] = useState<"private" | "nhs">("private");
 
   // image preview + file + original path
@@ -263,7 +335,7 @@ export default function EditServicePage() {
   const [customReorderStep, setCustomReorderStep] = useState("");
 
   // ---- Medicines for this service ----
-  const [allMedicines, setAllMedicines] = useState<MedicineOption[]>([]);
+  const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
   const [linkedMedicines, setLinkedMedicines] = useState<MedicineOption[]>([]);
   const [loadingMeds, setLoadingMeds] = useState(true);
   const [savingMeds, setSavingMeds] = useState(false);
@@ -271,7 +343,22 @@ export default function EditServicePage() {
     ServiceMedicineRow[]
   >([]);
 
-  // load service core data
+  // ---------- Inline Medicine Modal state (create + edit) ----------
+  const [isMedModalOpen, setIsMedModalOpen] = useState(false);
+  const [editingMed, setEditingMed] = useState<Medicine | null>(null);
+  const [medForm, setMedForm] = useState<MedFormState>(MED_EMPTY_FORM);
+  const [medImageFile, setMedImageFile] = useState<File | null>(null);
+  const [medImagePreview, setMedImagePreview] = useState<string | null>(null);
+  const [medExistingImagePath, setMedExistingImagePath] = useState<
+    string | null
+  >(null);
+  const [medSkuManuallyEdited, setMedSkuManuallyEdited] = useState(false);
+  const [medSlugManuallyEdited, setMedSlugManuallyEdited] = useState(false);
+  const [medSubmitting, setMedSubmitting] = useState(false);
+  const [medError, setMedError] = useState<string | null>(null);
+  const [medAllowReorder, setMedAllowReorder] = useState<boolean>(true);
+
+  // ---------- Load service core data ----------
   useEffect(() => {
     if (!id) return;
 
@@ -285,7 +372,6 @@ export default function EditServicePage() {
         setCtaText(data.cta_text || "");
         setViewType(data.view_type);
 
-        // 🔹 NEW: load service_type (fallback to "private")
         const st = (data.service_type || data.serviceType || "private") as
           | "private"
           | "nhs";
@@ -294,7 +380,7 @@ export default function EditServicePage() {
         // IMAGE HANDLING
         if (data.image) {
           setExistingImagePath(data.image);
-          const baseForImage = getBackendBase().replace(/\/api\/?$/, ""); // strip /api
+          const baseForImage = getBackendBase().replace(/\/api\/?$/, "");
           const fullUrl =
             typeof data.image === "string" && data.image.startsWith("http")
               ? data.image
@@ -305,7 +391,7 @@ export default function EditServicePage() {
           setImagePreview(null);
         }
 
-        // BOOKING FLOW (stored as JSON string)
+        // BOOKING FLOW
         let bookingObj: any = {};
         try {
           bookingObj = data.booking_flow ? JSON.parse(data.booking_flow) : {};
@@ -325,7 +411,7 @@ export default function EditServicePage() {
           ].filter(Boolean)
         );
 
-        // REORDER FLOW (stored as JSON string)
+        // REORDER FLOW
         let reorderObj: any = {};
         try {
           reorderObj = data.reorder_flow ? JSON.parse(data.reorder_flow) : {};
@@ -355,33 +441,34 @@ export default function EditServicePage() {
     loadService();
   }, [id]);
 
-  // load all medicines + already linked medicines for this service
-  useEffect(() => {
+  // ---------- Load medicines + service medicines ----------
+  const loadMeds = useCallback(async () => {
     if (!id) return;
+    try {
+      setLoadingMeds(true);
 
-    const loadMeds = async () => {
-      try {
-        setLoadingMeds(true);
+      const [medsRes, linkedRes] = await Promise.all([
+        getMedicinesApi(),
+        getServiceMedicinesByServiceApi(id),
+      ]);
 
-        const [medsRes, linkedRes] = await Promise.all([
-          getMedicinesApi(),
-          getServiceMedicinesByServiceApi(id),
-        ]);
-
-        const all = (medsRes as any)?.data || medsRes;
-        setAllMedicines(all || []);
-        setLinkedMedicines((linkedRes as any) || []);
-      } catch (err) {
-        console.error(err);
-        toast.error("Failed to load medicines for this service");
-      } finally {
-        setLoadingMeds(false);
-      }
-    };
-
-    loadMeds();
+      const all = (medsRes as any)?.data || medsRes;
+      setAllMedicines((all || []) as Medicine[]);
+      setLinkedMedicines(((linkedRes as any) || []) as MedicineOption[]);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load medicines for this service");
+    } finally {
+      setLoadingMeds(false);
+    }
   }, [id]);
 
+  useEffect(() => {
+    if (!id) return;
+    void loadMeds();
+  }, [id, loadMeds]);
+
+  // ---------- Save service (core details) ----------
   const saveService = async () => {
     if (!id) return;
     setSaving(true);
@@ -405,10 +492,7 @@ export default function EditServicePage() {
       formData.append("cta_text", ctaText || "Book Now");
       formData.append("view_type", viewType);
       formData.append("status", "published");
-
-      // 🔹 NEW: service_type appended to payload
       formData.append("service_type", serviceType);
-
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
       formData.append("forms_assignment", JSON.stringify({}));
@@ -416,14 +500,23 @@ export default function EditServicePage() {
       if (imageFile) {
         formData.append("image", imageFile);
       } else if (existingImagePath) {
-        // let backend keep old image if supported
         formData.append("existingImage", existingImagePath);
       }
 
       const base = getBackendBase();
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("session_token")
+          : null;
+
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
+
       const res = await fetch(`${base}/services/${id}`, {
         method: "PUT",
         body: formData,
+        headers,
       });
 
       if (!res.ok) {
@@ -499,17 +592,262 @@ export default function EditServicePage() {
 
       toast.success("Medicines linked to service successfully");
 
-      // clear rows and refresh linked list
       setServiceMedicineRows([]);
-      if (id) {
-        const updatedLinked = await getServiceMedicinesByServiceApi(id);
-        setLinkedMedicines((updatedLinked as any) || []);
-      }
+      await loadMeds();
     } catch (err) {
       console.error(err);
       toast.error("Failed to link medicines to this service");
     } finally {
       setSavingMeds(false);
+    }
+  };
+
+  // ---------- Inline Medicine Modal handlers ----------
+
+  const openMedCreate = () => {
+    setEditingMed(null);
+    setMedForm({
+      ...MED_EMPTY_FORM,
+      variations: [MED_EMPTY_VARIATION],
+    });
+    setMedImageFile(null);
+    setMedImagePreview(null);
+    setMedExistingImagePath(null);
+    setMedSkuManuallyEdited(false);
+    setMedSlugManuallyEdited(false);
+    setMedError(null);
+    setMedAllowReorder(true);
+    setIsMedModalOpen(true);
+  };
+
+  const openMedEdit = (med: Medicine) => {
+    setEditingMed(med);
+
+    const mappedVariations: MedVariationForm[] =
+      med.variations && med.variations.length > 0
+        ? med.variations.map((v, idx) => ({
+            title: v.title || "",
+            price: v.price != null ? String(v.price) : "",
+            stock: v.stock != null ? String(v.stock) : "",
+            max_qty: v.max_qty != null ? String(v.max_qty) : "",
+            sort_order:
+              v.sort_order != null ? String(v.sort_order) : String(idx),
+            status: v.status || "published",
+          }))
+        : [MED_EMPTY_VARIATION];
+
+    setMedForm({
+      sku: med.sku || "",
+      name: med.name || "",
+      slug: med.slug || slugifyMed(med.name || ""),
+      description: med.description || "",
+      status: med.status || "draft",
+      variations: mappedVariations,
+    });
+
+    setMedAllowReorder(
+      typeof med.allow_reorder === "boolean" ? med.allow_reorder : true
+    );
+
+    setMedImageFile(null);
+    setMedExistingImagePath(med.image || null);
+
+    if (med.image) {
+      const baseForImage = getBackendBase().replace(/\/api\/?$/, "");
+      const fullUrl = med.image.startsWith("http")
+        ? med.image
+        : `${baseForImage}/${med.image.replace(/^\/+/, "")}`;
+      setMedImagePreview(fullUrl);
+    } else {
+      setMedImagePreview(null);
+    }
+
+    setMedSkuManuallyEdited(true);
+    setMedSlugManuallyEdited(true);
+    setMedError(null);
+    setIsMedModalOpen(true);
+  };
+
+  const closeMedModal = () => {
+    if (medSubmitting) return;
+    setIsMedModalOpen(false);
+    setEditingMed(null);
+  };
+
+  const handleMedChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) => {
+    const { name, value } = e.target;
+
+    if (name === "name") {
+      setMedForm((prev) => {
+        const updated: MedFormState = { ...prev, name: value };
+        const autoSlug = slugifyMed(value);
+
+        if (!medSlugManuallyEdited) {
+          updated.slug = autoSlug;
+        }
+        if (!medSkuManuallyEdited) {
+          updated.sku = autoSlug;
+        }
+
+        return updated;
+      });
+      return;
+    }
+
+    if (name === "slug") {
+      setMedSlugManuallyEdited(true);
+    }
+
+    if (name === "sku") {
+      setMedSkuManuallyEdited(true);
+    }
+
+    setMedForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleMedVariationChange = (
+    index: number,
+    field: keyof MedVariationForm,
+    value: string
+  ) => {
+    setMedForm((prev) => {
+      const updated = [...prev.variations];
+      updated[index] = { ...updated[index], [field]: value };
+      return { ...prev, variations: updated };
+    });
+  };
+
+  const addMedVariation = () => {
+    setMedForm((prev) => ({
+      ...prev,
+      variations: [
+        ...prev.variations,
+        {
+          ...MED_EMPTY_VARIATION,
+          sort_order: String(prev.variations.length),
+        },
+      ],
+    }));
+  };
+
+  const removeMedVariation = (index: number) => {
+    setMedForm((prev) => {
+      if (prev.variations.length <= 1) return prev;
+      const updated = prev.variations.filter((_, i) => i !== index);
+      return { ...prev, variations: updated };
+    });
+  };
+
+  const handleMedRemoveImage = () => {
+    setMedImageFile(null);
+    setMedImagePreview(null);
+    setMedExistingImagePath(null);
+  };
+
+  const handleMedSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMedSubmitting(true);
+    setMedError(null);
+
+    try {
+      if (!medForm.name.trim()) {
+        throw new Error("Name is required.");
+      }
+      if (!medForm.sku.trim()) {
+        throw new Error("SKU is required.");
+      }
+
+      const variationsPayload = medForm.variations
+        .filter((v) => v.title.trim())
+        .map((v, index) => ({
+          title: v.title.trim(),
+          status: v.status || "published",
+          price: Number(v.price || 0),
+          stock: Number(v.stock || 0),
+          max_qty: Number(v.max_qty || 0),
+          sort_order: v.sort_order
+            ? Number(v.sort_order)
+            : Number.isFinite(index)
+            ? index
+            : 0,
+        }));
+
+      if (variationsPayload.length === 0) {
+        throw new Error("At least one variation is required.");
+      }
+
+      const payload = {
+        sku: medForm.sku.trim(),
+        name: medForm.name.trim(),
+        slug: (medForm.slug || slugifyMed(medForm.name)).trim(),
+        description: medForm.description.trim(),
+        status: medForm.status || "draft",
+        max_bookable_quantity: 2,
+        allow_reorder: medAllowReorder,
+        is_virtual: false,
+        variations: variationsPayload,
+      };
+
+      const base = getBackendBase();
+      const url = editingMed?._id
+        ? `${base}/medicines/${editingMed._id}`
+        : `${base}/medicines`;
+      const method = editingMed?._id ? "PUT" : "POST";
+
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("session_token")
+          : null;
+
+      if (!token) {
+        throw new Error("No authentication token found.");
+      }
+
+      const fd = new FormData();
+      fd.append("sku", payload.sku);
+      fd.append("name", payload.name);
+      fd.append("slug", payload.slug);
+      fd.append("description", payload.description);
+      fd.append("status", payload.status);
+      fd.append(
+        "max_bookable_quantity",
+        String(payload.max_bookable_quantity)
+      );
+      fd.append("allow_reorder", String(payload.allow_reorder));
+      fd.append("is_virtual", String(payload.is_virtual));
+      fd.append("variations", JSON.stringify(payload.variations));
+
+      if (medImageFile) {
+        fd.append("image", medImageFile);
+      } else if (medExistingImagePath) {
+        fd.append("image", medExistingImagePath);
+      }
+
+      const res = await fetch(url, {
+        method,
+        body: fd,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Failed to save medicine");
+      }
+
+      await loadMeds();
+      toast.success(editingMed ? "Medicine updated" : "Medicine created");
+      closeMedModal();
+    } catch (err: any) {
+      console.error(err);
+      setMedError(err?.message || "Failed to save medicine");
+    } finally {
+      setMedSubmitting(false);
     }
   };
 
@@ -522,7 +860,6 @@ export default function EditServicePage() {
   if (loading) {
     return (
       <div className="flex justify-center py-20">
-        {/* Toast container here so errors during load still show */}
         <ToastContainer position="top-right" autoClose={3000} />
         <Loader2 className="animate-spin text-neutral-400" size={40} />
       </div>
@@ -573,7 +910,7 @@ export default function EditServicePage() {
         </div>
       </div>
 
-      {/* Layout grid (same feel as create page) */}
+      {/* Layout grid */}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Left column */}
         <div className="space-y-6">
@@ -617,7 +954,7 @@ export default function EditServicePage() {
                   />
                 </div>
 
-                {/* 🔹 NEW: Service Type dropdown */}
+                {/* Service Type */}
                 <div>
                   <label className="text-xs font-medium text-neutral-300">
                     Service Type
@@ -742,19 +1079,33 @@ export default function EditServicePage() {
                       Add / link medicines
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={addMedicineRow}
-                    className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-500"
-                  >
-                    <Plus size={14} />
-                    Add medicine row
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openMedCreate}
+                      className="inline-flex items-center gap-1 rounded-lg border border-neutral-600 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800"
+                    >
+                      <Plus size={14} />
+                      Create medicine
+                    </button>
+                    <button
+                      type="button"
+                      onClick={addMedicineRow}
+                      className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-500"
+                    >
+                      <Plus size={14} />
+                      Add medicine row
+                    </button>
+                  </div>
                 </div>
 
                 {serviceMedicineRows.length === 0 && (
                   <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/70 px-4 py-3 text-xs text-neutral-500">
                     No pending medicine mappings. Click{" "}
+                    <span className="font-semibold text-neutral-300">
+                      “Create medicine”
+                    </span>{" "}
+                    or{" "}
                     <span className="font-semibold text-neutral-300">
                       “Add medicine row”
                     </span>{" "}
@@ -777,14 +1128,36 @@ export default function EditServicePage() {
                             New medicine link
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeMedicineRow(row.key)}
-                          className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20"
-                        >
-                          <X size={12} />
-                          Remove
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {row.medicineId && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const med = allMedicines.find(
+                                  (m) => m._id === row.medicineId
+                                );
+                                if (!med) {
+                                  toast.error(
+                                    "Selected medicine not found. Try refreshing."
+                                  );
+                                  return;
+                                }
+                                openMedEdit(med);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md bg-neutral-800/70 px-2.5 py-1 text-[11px] font-medium text-neutral-100 hover:bg-neutral-700"
+                            >
+                              Edit medicine
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeMedicineRow(row.key)}
+                            className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20"
+                          >
+                            <X size={12} />
+                            Remove
+                          </button>
+                        </div>
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))_auto] items-end">
@@ -806,7 +1179,7 @@ export default function EditServicePage() {
                             {allMedicines.map((m) => {
                               const disabled =
                                 linkedIds.has(m._id) &&
-                                m._id !== row.medicineId; // allow keep if already selected in this row
+                                m._id !== row.medicineId;
 
                               const selectedElsewhere =
                                 selectedIds.has(m._id) &&
@@ -1031,6 +1404,483 @@ export default function EditServicePage() {
           </SectionCard>
         </div>
       </div>
+
+      {/* --------- Inline Medicine Modal (create + edit) --------- */}
+      {isMedModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 border border-neutral-800/80 shadow-[0_18px_60px_rgba(0,0,0,0.85)] transform transition-all duration-200 scale-100">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                  {editingMed ? "Update existing medicine" : "Add new medicine"}
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-neutral-50 flex items-center gap-2">
+                  {editingMed ? "Edit Medicine" : "Create Medicine"}
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-[2px] text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
+                    Inventory
+                  </span>
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeMedModal}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/90 hover:border-neutral-600 transition-colors"
+              >
+                <span className="sr-only">Close</span>✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={handleMedSubmit}
+              className="flex flex-col max-h-[78vh]"
+            >
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 pr-3">
+                {medError && (
+                  <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    {medError}
+                  </div>
+                )}
+
+                {/* Section: Basic details */}
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-6 rounded-full bg-blue-500/10 flex items-center justify-center text-[11px] text-blue-400 border border-blue-500/30">
+                      1
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Basic details
+                      </p>
+                      <p className="text-[11px] text-neutral-500">
+                        Name, slug and SKU for this medicine.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Name <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="name"
+                        value={medForm.name}
+                        onChange={handleMedChange}
+                        required
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        placeholder="e.g. Mounjaro (tirzepatide)"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Slug <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="slug"
+                        value={medForm.slug}
+                        onChange={handleMedChange}
+                        required
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        placeholder="mounjaro-tirzepatide"
+                      />
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        Auto-generated from name, but you can override if
+                        needed.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        SKU <span className="text-red-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="sku"
+                        value={medForm.sku}
+                        onChange={handleMedChange}
+                        required
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        placeholder="mounjaro-tirzepatide"
+                      />
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        Defaults to the slug. You can use any internal code you
+                        prefer.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Status
+                      </label>
+                      <select
+                        name="status"
+                        value={medForm.status}
+                        onChange={handleMedChange}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                      >
+                        <option value="draft">Draft</option>
+                        <option value="published">Published</option>
+                        <option value="archived">Archived</option>
+                      </select>
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Allow re-order
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setMedAllowReorder((prev) => !prev)}
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+                          medAllowReorder
+                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                            : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-[10px] w-[10px] rounded-full ${
+                            medAllowReorder
+                              ? "bg-emerald-400"
+                              : "bg-neutral-500"
+                          }`}
+                        />
+                        {medAllowReorder
+                          ? "Re-order allowed"
+                          : "Re-order not allowed"}
+                      </button>
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        Toggle to control whether this medicine can be ordered
+                        again by patients.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: Variations & pricing */}
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-6 rounded-full bg-amber-500/10 flex items-center justify-center text-[11px] text-amber-400 border border-amber-500/30">
+                      2
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Variations &amp; pricing
+                      </p>
+                      <p className="text-[11px] text-neutral-500">
+                        Configure different strengths / pack sizes with their
+                        own price and stock.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {medForm.variations.map((variation, index) => (
+                      <div
+                        key={index}
+                        className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-3 sm:p-4"
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                              Variation #{index + 1}
+                            </span>
+                            {variation.title && (
+                              <span className="text-xs text-neutral-300">
+                                ({variation.title})
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeMedVariation(index)}
+                            disabled={medForm.variations.length <= 1}
+                            className="text-[11px] text-neutral-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                          <div className="sm:col-span-2">
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Title <span className="text-red-400">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              value={variation.title}
+                              onChange={(e) =>
+                                handleMedVariationChange(
+                                  index,
+                                  "title",
+                                  e.target.value
+                                )
+                              }
+                              required
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="e.g. 2.5mg"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Price <span className="text-red-400">*</span>
+                            </label>
+                            <div className="flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/30">
+                              <span className="mr-2 text-xs text-neutral-500">
+                                £
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={variation.price}
+                                onChange={(e) =>
+                                  handleMedVariationChange(
+                                    index,
+                                    "price",
+                                    e.target.value
+                                  )
+                                }
+                                className="w-full bg-transparent text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none"
+                                placeholder="0.00"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Stock
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={variation.stock}
+                              onChange={(e) =>
+                                handleMedVariationChange(
+                                  index,
+                                  "stock",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="0"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Max qty per order
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={variation.max_qty}
+                              onChange={(e) =>
+                                handleMedVariationChange(
+                                  index,
+                                  "max_qty",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                              placeholder="e.g. 2"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Sort order
+                            </label>
+                            <input
+                              type="number"
+                              value={variation.sort_order}
+                              onChange={(e) =>
+                                handleMedVariationChange(
+                                  index,
+                                  "sort_order",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                              Status
+                            </label>
+                            <select
+                              value={variation.status}
+                              onChange={(e) =>
+                                handleMedVariationChange(
+                                  index,
+                                  "status",
+                                  e.target.value
+                                )
+                              }
+                              className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            >
+                              <option value="published">Published</option>
+                              <option value="draft">Draft</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={addMedVariation}
+                      className="inline-flex items-center rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:border-blue-500 hover:bg-neutral-900 transition-colors"
+                    >
+                      + Add variation
+                    </button>
+                    <p className="text-[11px] text-neutral-500">
+                      Only title and price are required. Other fields help with
+                      stock management and ordering behaviour.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Section: Image & description */}
+                <div>
+                  <div className="mb-3 flex items-center gap-2">
+                    <div className="h-6 w-6 rounded-full bg-purple-500/10 flex items-center justify-center text-[11px] text-purple-300 border border-purple-500/30">
+                      3
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Image &amp; description
+                      </p>
+                      <p className="text-[11px] text-neutral-500">
+                        Optional details to make this medicine easy to
+                        recognise.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {/* Image uploader */}
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Image
+                      </label>
+                      <div className="flex items-center gap-4">
+                        <button
+                          type="button"
+                          className="relative h-16 w-16 rounded-lg border border-dashed border-neutral-700 bg-neutral-900/80 flex items-center justify-center overflow-hidden hover:border-blue-500/60 hover:bg-neutral-800/80 transition-colors"
+                          onClick={() =>
+                            document
+                              .getElementById("med-image-input")
+                              ?.click()
+                          }
+                        >
+                          {medImagePreview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={medImagePreview}
+                              alt="preview"
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-[11px] text-neutral-400 text-center px-1">
+                              Click to upload
+                            </span>
+                          )}
+                        </button>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                document
+                                  .getElementById("med-image-input")
+                                  ?.click()
+                              }
+                              className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
+                            >
+                              Choose file
+                            </button>
+
+                            {(medImagePreview || medExistingImagePath) && (
+                              <button
+                                type="button"
+                                onClick={handleMedRemoveImage}
+                                className="inline-flex items-center justify-center rounded-md border border-red-500/60 bg-red-600/10 px-3 py-1.5 text-xs font-medium text-red-300 hover:bg-red-600/20 transition-colors"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-neutral-500">
+                            JPG or PNG, a few MB max.
+                          </span>
+                        </div>
+                      </div>
+                      <input
+                        id="med-image-input"
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setMedImageFile(file);
+                          setMedImagePreview(URL.createObjectURL(file));
+                          setMedExistingImagePath(null);
+                        }}
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-neutral-300">
+                        Description
+                      </label>
+                      <textarea
+                        name="description"
+                        value={medForm.description}
+                        onChange={handleMedChange}
+                        rows={3}
+                        className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        placeholder="Short description, e.g. available strengths or pack information."
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sticky footer actions */}
+              <div className="border-t border-neutral-800 bg-neutral-900/90 px-6 py-3 flex items-center justify-end gap-3 rounded-b-2xl">
+                <button
+                  type="button"
+                  onClick={closeMedModal}
+                  disabled={medSubmitting}
+                  className="rounded-lg border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-200 hover:bg-neutral-800 transition-colors disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={medSubmitting}
+                  className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-500 disabled:opacity-70 transition-colors"
+                >
+                  {medSubmitting
+                    ? editingMed
+                      ? "Saving..."
+                      : "Creating..."
+                    : editingMed
+                    ? "Save changes"
+                    : "Create medicine"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

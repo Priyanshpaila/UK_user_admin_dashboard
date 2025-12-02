@@ -10,7 +10,7 @@ import {
 import { Loader2 } from "lucide-react";
 
 type AdviceState = {
-  [fieldKey: string]: string[]; // selected options per field
+  [fieldKey: string]: string[]; // selected answers (help text) per field
 };
 
 interface Props {
@@ -22,6 +22,29 @@ type OrderNotes = {
   admin: string[];
   consultation: string[];
 };
+
+/** 👉 Helper to derive the "answer" string for an option.
+ * Priority: option.help → field.help → option.label → option.value
+ */
+function getOptionAnswer(
+  field: any,
+  opt: any,
+  index: number
+): string {
+  const optHelp = opt?.help;
+  const fieldHelp = field?.data?.help;
+  const label = opt?.label;
+  const value = opt?.value;
+
+  const base =
+    (optHelp && String(optHelp).trim()) ||
+    (fieldHelp && String(fieldHelp).trim()) ||
+    (label && String(label).trim()) ||
+    (value && String(value).trim()) ||
+    `Option ${index + 1}`;
+
+  return base;
+}
 
 export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   const [form, setForm] = useState<ClinicForm | null>(null);
@@ -199,24 +222,26 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     };
   }, [orderId]);
 
-  // Persist advice selections to localStorage
+  // Persist advice selections (answers) to localStorage
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload = { selectAll, adviceState };
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
   }, [adviceState, selectAll, storageKey]);
 
-  function toggleOption(fieldKey: string, optionValue: string) {
+  /** 🔁 Toggle a single option: store its help text as the answer */
+  function toggleOption(fieldKey: string, answer: string) {
     setAdviceState((prev) => {
       const current = prev[fieldKey] || [];
-      const exists = current.includes(optionValue);
+      const exists = current.includes(answer);
       const next = exists
-        ? current.filter((v) => v !== optionValue)
-        : [...current, optionValue];
+        ? current.filter((v) => v !== answer)
+        : [...current, answer];
       return { ...prev, [fieldKey]: next };
     });
   }
 
+  /** 🔁 Select / clear all options: store their help texts as answers */
   function handleSelectAllChange(checked: boolean) {
     setSelectAll(checked);
     if (!form) return;
@@ -232,7 +257,9 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
         if (!key) return;
         const options = field.data?.options || [];
         if (checked) {
-          next[key] = options.map((o: any) => o.value ?? o.label);
+          next[key] = options.map((o: any, idx: number) =>
+            getOptionAnswer(field, o, idx)
+          );
         } else {
           next[key] = [];
         }
@@ -334,8 +361,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
           )}
           <p className="text-[11px] text-neutral-500">
             Tick the options that apply. Use “Select all” for a quick blanket
-            selection. Help text below each option comes directly from your form
-            builder.
+            selection. Help text is stored as the answer for each ticked option.
           </p>
         </div>
         <label className="inline-flex items-center gap-2 text-xs text-neutral-100">
@@ -383,7 +409,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
           const key = field.data?.key || field.data?.label || `field_${idx}`;
           const label = field.data?.label || `Question ${idx + 1}`;
           const options: any[] = field.data?.options || [];
-          const selected = adviceState[key] || [];
+          const selectedAnswers = adviceState[key] || [];
 
           return (
             <div
@@ -402,8 +428,8 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
 
               <div className="flex flex-wrap gap-2">
                 {options.map((opt, i) => {
-                  const val = opt.value ?? opt.label ?? `opt_${i}`;
-                  const checked = selected.includes(val);
+                  const answer = getOptionAnswer(field, opt, i);
+                  const checked = selectedAnswers.includes(answer);
                   return (
                     <label
                       key={`${key}_${i}`}
@@ -413,9 +439,9 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
                         type="checkbox"
                         className="h-3 w-3 rounded border-neutral-500 bg-neutral-900"
                         checked={checked}
-                        onChange={() => toggleOption(key, val)}
+                        onChange={() => toggleOption(key, answer)}
                       />
-                      {opt.label ?? String(val)}
+                      {opt.label ?? String(opt.value ?? `Option ${i + 1}`)}
                     </label>
                   );
                 })}

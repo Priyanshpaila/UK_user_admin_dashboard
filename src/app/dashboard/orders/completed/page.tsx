@@ -22,7 +22,11 @@ import {
   Filter,
   X,
   ClipboardList,
+  Mail,
+  Phone,
 } from "lucide-react";
+
+/* ----------------- Helpers ----------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -84,18 +88,182 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (fromOrder) return fromOrder;
 
   if (user) {
+    const u: any = user;
     const fromUser =
-      user.name ||
-      (user as any).fullName ||
-      `${(user as any).firstName || ""} ${
-        (user as any).lastName || ""
-      }`.trim() ||
-      user.email;
+      u.name ||
+      u.fullName ||
+      `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+      u.email;
     if (fromUser) return fromUser;
   }
 
   return "Unknown";
 }
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDobWithAge(value?: string | null) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+
+  const dateStr = d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `${dateStr} (${age} yrs)`;
+}
+
+function getUserInitials(user: UserDto | null): string {
+  if (!user) return "PT";
+  const u: any = user;
+  const name =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    u.email ||
+    "";
+  if (!name) return "PT";
+  const parts = String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+  return initials.join("") || "PT";
+}
+
+function PatientProfileCard({ user }: { user: UserDto | null }) {
+  if (!user) {
+    return (
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+        <p className="text-xs text-neutral-400 mb-1">Patient profile</p>
+        <p className="text-sm text-neutral-300">No patient details found.</p>
+      </div>
+    );
+  }
+
+  const u: any = user;
+  const fullName =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    "Unknown patient";
+
+  const gender =
+    u.gender && typeof u.gender === "string"
+      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
+      : null;
+
+  const dobLabel = formatDobWithAge(u.dob);
+  const createdAt = u.createdAt || u.created_at || null;
+  const updatedAt = u.updatedAt || u.updated_at || null;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center">
+          <span className="text-xs font-semibold text-neutral-100">
+            {getUserInitials(user)}
+          </span>
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-white">{fullName}</p>
+          <p className="text-[11px] text-neutral-400">
+            {gender ? gender : "Gender: —"}
+            {dobLabel && (
+              <>
+                {" "}
+                • <span>{dobLabel}</span>
+              </>
+            )}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+            {u.email && (
+              <span className="inline-flex items-center gap-1">
+                <Mail className="h-3 w-3 text-neutral-500" />
+                <span className="break-all">{u.email}</span>
+              </span>
+            )}
+            {(u.phone || u.phoneNumber) && (
+              <span className="inline-flex items-center gap-1">
+                <Phone className="h-3 w-3 text-neutral-500" />
+                <span>{u.phone || u.phoneNumber}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
+        <div>
+          <dt className="text-neutral-500">Address line 1</dt>
+          <dd className="text-neutral-100">
+            {u.address_line1 || u.addressLine1 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Address line 2</dt>
+          <dd className="text-neutral-100">
+            {u.address_line2 || u.addressLine2 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">City</dt>
+          <dd className="text-neutral-100">{u.city || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">County</dt>
+          <dd className="text-neutral-100">{u.county || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Postcode</dt>
+          <dd className="text-neutral-100">{u.postalcode || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Country</dt>
+          <dd className="text-neutral-100">{u.country || "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="flex flex-wrap gap-4 text-[11px] text-neutral-500 pt-2 border-t border-neutral-800">
+        <span>
+          Created:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(createdAt) || "—"}
+          </span>
+        </span>
+        <span>
+          Updated:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(updatedAt) || "—"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Types for clinical section tabs ----------------- */
+
+type DetailSection = "raf" | "advice" | "declaration" | "record";
+
+/* ----------------- Page ----------------- */
 
 export default function Page() {
   // list state
@@ -116,10 +284,13 @@ export default function Page() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
-  // approve / reject action state
+  // approve / reject action state (not used right now but kept)
   const [statusAction, setStatusAction] = useState<
     "approved" | "rejected" | null
   >(null);
+
+  // clinical section active tab in detail modal
+  const [activeSection, setActiveSection] = useState<DetailSection>("raf");
 
   // 🔒 hard-coded filter
   const STATUS = "completed";
@@ -222,6 +393,20 @@ export default function Page() {
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+
+      // decide default clinical tab based on available data
+      const meta: any = (order as any).meta || {};
+      let def: DetailSection = "raf";
+      if (meta.formsQA?.raf?.qa?.length) {
+        def = "raf";
+      } else if (meta.pharmacistAdvice) {
+        def = "advice";
+      } else if (meta.pharmacistDeclaration) {
+        def = "declaration";
+      } else if (meta.recordOfSupply) {
+        def = "record";
+      }
+      setActiveSection(def);
 
       const userId = (order as any).user_id as string | undefined;
       if (userId) {
@@ -423,10 +608,10 @@ export default function Page() {
 
       {/* 🔹 Detail modal */}
       {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-t-2xl md:rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
               <div className="flex items-center gap-2">
                 <ClipboardList className="h-4 w-4 text-emerald-400" />
                 <h2 className="text-sm font-semibold text-white">
@@ -443,7 +628,7 @@ export default function Page() {
             </div>
 
             {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-4 text-sm text-neutral-200">
+            <div className="max-h-[80vh] overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
               {detailLoading && (
                 <div className="flex items-center justify-center py-10 text-neutral-300">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -498,33 +683,10 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Patient & appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient / Ordered by
-                      </p>
-                      <p className="text-sm font-medium text-white">
-                        {getDisplayPatientName(selectedOrder, orderedByUser)}
-                      </p>
-                      {orderedByUser && (
-                        <p className="text-[11px] text-neutral-500">
-                          Account:{" "}
-                          {orderedByUser.name ||
-                            (orderedByUser as any).fullName ||
-                            `${(orderedByUser as any).firstName || ""} ${
-                              (orderedByUser as any).lastName || ""
-                            }`.trim() ||
-                            orderedByUser.email}
-                        </p>
-                      )}
-                      {selectedOrder.email && (
-                        <p className="text-xs text-neutral-400">
-                          {selectedOrder.email}
-                        </p>
-                      )}
-                    </div>
-                    <div>
+                  {/* Patient profile + appointment */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <PatientProfileCard user={orderedByUser} />
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs text-neutral-400 mb-0.5">
                         Appointment
                       </p>
@@ -646,31 +808,258 @@ export default function Page() {
                     </div>
                   )}
 
-                  {/* RAF Preview */}
-                  {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                      <p className="text-xs font-semibold text-neutral-200 mb-2">
-                        RAF Answers (preview)
-                      </p>
-                      <div className="max-h-40 overflow-y-auto space-y-1">
-                        {selectedOrder.meta.formsQA.raf.qa.map(
-                          (qa: any, idx: number) => (
+                  {/* 🔹 Clinical Documentation Tabs: RAF / Advice / Declaration / Record of Supply */}
+                  {(() => {
+                    const meta: any = selectedOrder.meta || {};
+                    const raf = meta.formsQA?.raf;
+                    const hasRaf = !!raf?.qa?.length;
+
+                    const advice = meta.pharmacistAdvice;
+                    const adviceState: Record<string, string[]> =
+                      advice?.adviceState || {};
+                    const adviceTexts = Object.values(adviceState)
+                      .flatMap((arr) => arr || [])
+                      .filter((s) => !!s && String(s).trim().length > 0);
+                    const hasAdvice = adviceTexts.length > 0;
+
+                    const declaration = meta.pharmacistDeclaration;
+                    const hasDeclaration = !!declaration;
+
+                    const record = meta.recordOfSupply;
+                    const hasRecord = !!record;
+
+                    const hasAnyClinical =
+                      hasRaf || hasAdvice || hasDeclaration || hasRecord;
+
+                    if (!hasAnyClinical) return null;
+
+                    const renderRaf = () => {
+                      if (!hasRaf) {
+                        return (
+                          <p className="text-xs text-neutral-500">
+                            No RAF data captured for this order.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                          {raf.qa.map((qa: any, idx: number) => (
                             <div
                               key={idx}
-                              className="text-[11px] border-b border-neutral-800/60 pb-1 last:border-none"
+                              className="text-[11px] border-b border-neutral-800/60 pb-2 last:border-none"
                             >
-                              <p className="text-neutral-400">
+                              <p className="text-neutral-400 font-medium">
                                 {qa.question || qa.key}
                               </p>
-                              <p className="text-neutral-100">
-                                {qa.answer ?? "—"}
+                              <p className="text-neutral-100 whitespace-pre-wrap mt-0.5">
+                                {Array.isArray(qa.raw)
+                                  ? qa.raw.join(", ")
+                                  : qa.answer ?? qa.raw ?? "—"}
                               </p>
                             </div>
-                          )
-                        )}
+                          ))}
+                        </div>
+                      );
+                    };
+
+                    const renderAdvice = () => {
+                      if (!hasAdvice) {
+                        return (
+                          <p className="text-xs text-neutral-500">
+                            No Pharmacist Advice has been recorded for this
+                            order.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                          <p className="text-[11px] text-neutral-400">
+                            The following advice text snippets were selected in
+                            the consultation:
+                          </p>
+                          <ul className="space-y-1">
+                            {adviceTexts.map((txt, i) => (
+                              <li
+                                key={i}
+                                className="text-[11px] text-neutral-100 bg-neutral-900/70 border border-neutral-800 rounded-md px-2 py-1 whitespace-pre-line"
+                              >
+                                • {txt}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    };
+
+                    const renderDeclaration = () => {
+                      if (!hasDeclaration) {
+                        return (
+                          <p className="text-xs text-neutral-500">
+                            No Pharmacist Declaration has been recorded.
+                          </p>
+                        );
+                      }
+
+                      const fields: Record<string, string> =
+                        declaration.fields || {};
+                      const entries = Object.entries(fields);
+
+                      return (
+                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                          {entries.length > 0 ? (
+                            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
+                              {entries.map(([key, value]) => (
+                                <div key={key}>
+                                  <dt className="text-neutral-500 break-all">
+                                    {key}
+                                  </dt>
+                                  <dd className="text-neutral-100 whitespace-pre-line">
+                                    {value || "—"}
+                                  </dd>
+                                </div>
+                              ))}
+                            </dl>
+                          ) : (
+                            <p className="text-xs text-neutral-500">
+                              No declaration fields were filled.
+                            </p>
+                          )}
+
+                          <div className="mt-2 border-t border-neutral-800 pt-2 text-[11px] space-y-1">
+                            {declaration.signatureUrl && (
+                              <div>
+                                <p className="text-neutral-500 mb-1">
+                                  Signature
+                                </p>
+                                <img
+                                  src={declaration.signatureUrl}
+                                  alt="Pharmacist signature"
+                                  className="max-h-24 rounded border border-neutral-800 bg-neutral-900"
+                                />
+                              </div>
+                            )}
+                            {declaration.saved_at && (
+                              <p className="text-neutral-500">
+                                Saved at:{" "}
+                                <span className="text-neutral-200">
+                                  {formatDateTime(declaration.saved_at)}
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    };
+
+                    const renderRecord = () => {
+                      if (!hasRecord) {
+                        return (
+                          <p className="text-xs text-neutral-500">
+                            No Record of Supply has been captured.
+                          </p>
+                        );
+                      }
+
+                      const fields: Record<string, string> =
+                        record.fields || {};
+                      const entries = Object.entries(fields);
+
+                      if (!entries.length) {
+                        return (
+                          <p className="text-xs text-neutral-500">
+                            Record of Supply fields are empty.
+                          </p>
+                        );
+                      }
+
+                      return (
+                        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px] max-h-56 overflow-y-auto pr-1">
+                          {entries.map(([key, value]) => (
+                            <div key={key}>
+                              <dt className="text-neutral-500 break-all">
+                                {key}
+                              </dt>
+                              <dd className="text-neutral-100 whitespace-pre-line">
+                                {value || "—"}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      );
+                    };
+
+                    const TabButton = ({
+                      label,
+                      section,
+                      disabled,
+                    }: {
+                      label: string;
+                      section: DetailSection;
+                      disabled?: boolean;
+                    }) => {
+                      const isActive = activeSection === section;
+                      return (
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => !disabled && setActiveSection(section)}
+                          className={[
+                            "px-3 py-1 rounded-full text-[11px] border transition-colors",
+                            disabled
+                              ? "border-neutral-800 text-neutral-600 cursor-not-allowed"
+                              : isActive
+                              ? "border-emerald-500/80 bg-emerald-500/10 text-emerald-200"
+                              : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200",
+                          ].join(" ")}
+                        >
+                          {label}
+                        </button>
+                      );
+                    };
+
+                    return (
+                      <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
+                            <ClipboardList className="h-4 w-4 text-neutral-300" />
+                            Clinical documentation
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <TabButton
+                              label="RAF"
+                              section="raf"
+                              disabled={!hasRaf}
+                            />
+                            <TabButton
+                              label="Pharmacist Advice"
+                              section="advice"
+                              disabled={!hasAdvice}
+                            />
+                            <TabButton
+                              label="Pharmacist Declaration"
+                              section="declaration"
+                              disabled={!hasDeclaration}
+                            />
+                            <TabButton
+                              label="Record of Supply"
+                              section="record"
+                              disabled={!hasRecord}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-2 border-t border-neutral-800 pt-3 text-xs text-neutral-200">
+                          {activeSection === "raf" && renderRaf()}
+                          {activeSection === "advice" && renderAdvice()}
+                          {activeSection === "declaration" &&
+                            renderDeclaration()}
+                          {activeSection === "record" && renderRecord()}
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
+                    );
+                  })()}
                 </>
               )}
             </div>

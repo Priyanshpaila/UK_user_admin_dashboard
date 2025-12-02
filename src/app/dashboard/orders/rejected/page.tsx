@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
-  updateOrderStatusApi,
   getUserByIdApi,
   type OrderDto,
   type OrdersListMeta,
@@ -22,7 +21,11 @@ import {
   Filter,
   X,
   ClipboardList,
+  Mail,
+  Phone,
 } from "lucide-react";
+
+/* ----------------- Helpers ----------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -84,18 +87,178 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (fromOrder) return fromOrder;
 
   if (user) {
+    const u: any = user;
     const fromUser =
-      user.name ||
-      (user as any).fullName ||
-      `${(user as any).firstName || ""} ${
-        (user as any).lastName || ""
-      }`.trim() ||
-      user.email;
+      u.name ||
+      u.fullName ||
+      `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+      u.email;
     if (fromUser) return fromUser;
   }
 
   return "Unknown";
 }
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDobWithAge(value?: string | null) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+
+  const dateStr = d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `${dateStr} (${age} yrs)`;
+}
+
+function getUserInitials(user: UserDto | null): string {
+  if (!user) return "PT";
+  const u: any = user;
+  const name =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    u.email ||
+    "";
+  if (!name) return "PT";
+  const parts = String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+  return initials.join("") || "PT";
+}
+
+function PatientProfileCard({ user }: { user: UserDto | null }) {
+  if (!user) {
+    return (
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+        <p className="text-xs text-neutral-400 mb-1">Patient profile</p>
+        <p className="text-sm text-neutral-300">No patient details found.</p>
+      </div>
+    );
+  }
+
+  const u: any = user;
+  const fullName =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    "Unknown patient";
+
+  const gender =
+    u.gender && typeof u.gender === "string"
+      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
+      : null;
+
+  const dobLabel = formatDobWithAge(u.dob);
+  const createdAt = u.createdAt || u.created_at || null;
+  const updatedAt = u.updatedAt || u.updated_at || null;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
+      <div className="flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center">
+          <span className="text-xs font-semibold text-neutral-100">
+            {getUserInitials(user)}
+          </span>
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold text-white">{fullName}</p>
+          <p className="text-[11px] text-neutral-400">
+            {gender ? gender : "Gender: —"}
+            {dobLabel && (
+              <>
+                {" "}
+                • <span>{dobLabel}</span>
+              </>
+            )}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+            {u.email && (
+              <span className="inline-flex items-center gap-1">
+                <Mail className="h-3 w-3 text-neutral-500" />
+                <span className="break-all">{u.email}</span>
+              </span>
+            )}
+            {(u.phone || u.phoneNumber) && (
+              <span className="inline-flex items-center gap-1">
+                <Phone className="h-3 w-3 text-neutral-500" />
+                <span>{u.phone || u.phoneNumber}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
+        <div>
+          <dt className="text-neutral-500">Address line 1</dt>
+          <dd className="text-neutral-100">
+            {u.address_line1 || u.addressLine1 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Address line 2</dt>
+          <dd className="text-neutral-100">
+            {u.address_line2 || u.addressLine2 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">City</dt>
+          <dd className="text-neutral-100">{u.city || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">County</dt>
+          <dd className="text-neutral-100">{u.county || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Postcode</dt>
+          <dd className="text-neutral-100">{u.postalcode || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Country</dt>
+          <dd className="text-neutral-100">{u.country || "—"}</dd>
+        </div>
+      </dl>
+
+      <div className="flex flex-wrap gap-4 text-[11px] text-neutral-500 pt-2 border-t border-neutral-800">
+        <span>
+          Created:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(createdAt) || "—"}
+          </span>
+        </span>
+        <span>
+          Updated:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(updatedAt) || "—"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Page ----------------- */
 
 export default function Page() {
   // list state
@@ -116,48 +279,35 @@ export default function Page() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
-  // approve / reject action state
-  const [statusAction, setStatusAction] = useState<
-    "approved" | "rejected" | null
-  >(null);
-
   // 🔒 hard-coded filter
   const STATUS = "rejected";
 
-  // 👉 admin notes (root + meta)
+  // 👉 derived notes for the currently selected order (detail modal)
   const adminNotesForDetail = useMemo(() => {
     if (!selectedOrder) return [] as string[];
-    const meta: any = selectedOrder.meta || {};
     const raw =
       (selectedOrder as any).admin_notes ??
-      meta.admin_notes ??
-      meta.adminNotes ??
+      (selectedOrder.meta as any)?.admin_notes ??
       [];
-    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
   }, [selectedOrder]);
 
-  // 👉 consultation notes (root consultation_notes + variants)
   const consultantNotesForDetail = useMemo(() => {
     if (!selectedOrder) return [] as string[];
     const meta: any = selectedOrder.meta || {};
     const raw =
-      (selectedOrder as any).consultation_notes ??
-      (selectedOrder as any).consultant_notes ??
       meta.consultant_notes ??
       meta.consultantNotes ??
       meta.consultation_notes ??
       meta.consultationNotes ??
       [];
-    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
   }, [selectedOrder]);
 
-  // 👉 rejection notes (root rejection_notes + variants)
   const rejectedNotesForDetail = useMemo(() => {
     if (!selectedOrder) return [] as string[];
     const meta: any = selectedOrder.meta || {};
@@ -171,10 +321,9 @@ export default function Page() {
       meta.rejected_reason ??
       meta.rejection_reason ??
       [];
-    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
+    if (Array.isArray(raw)) return raw.map((n) => String(n));
+    if (raw == null) return [];
+    return [String(raw)];
   }, [selectedOrder]);
 
   const hasAnyNotes =
@@ -245,7 +394,6 @@ export default function Page() {
     setDetailLoading(true);
     setDetailError(null);
     setSelectedOrder(null);
-    setStatusAction(null);
     setOrderedByUser(null);
 
     try {
@@ -268,28 +416,6 @@ export default function Page() {
     }
   }
 
-  // Approve / Reject action (if you want to move it back)
-  async function handleChangeStatus(newStatus: "approved" | "rejected") {
-    if (!selectedOrder) return;
-
-    setStatusAction(newStatus);
-    setDetailError(null);
-
-    try {
-      const updated = await updateOrderStatusApi(selectedOrder._id, {
-        status: newStatus,
-      });
-
-      setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-      setShowDetail(false);
-      setSelectedOrder(updated);
-    } catch (e: any) {
-      setDetailError(e?.message || "Failed to update order status");
-    } finally {
-      setStatusAction(null);
-    }
-  }
-
   const totalRejected = meta?.total ?? orders.length;
 
   return (
@@ -300,13 +426,18 @@ export default function Page() {
           <h1 className="text-2xl md:text-3xl font-semibold text-white">
             Rejected Orders
           </h1>
+          <p className="mt-1 text-sm text-neutral-400">
+            Orders that have been{" "}
+            <span className="font-semibold text-rose-300">rejected</span>. Review
+            reasons and notes for audit or follow-up.
+          </p>
         </div>
 
         <div className="flex flex-col items-end gap-2">
           <div className="inline-flex items-center gap-2 rounded-full bg-neutral-900/70 border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300">
             <Filter size={14} />
             <span>Status:</span>
-            <span className="font-medium text-red-400">Rejected</span>
+            <span className="font-medium text-rose-400">Rejected</span>
           </div>
           <span className="text-xs text-neutral-500">
             {totalRejected} rejected order{totalRejected === 1 ? "" : "s"}
@@ -408,20 +539,22 @@ export default function Page() {
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
                     <span>{formatDateTime(appointmentAt)}</span>
-                    <span className="mx-2 text-neutral-500">•</span>
                     {order.start_at && order.end_at && (
-                      <span className="text-neutral-400">
-                        Duration:{" "}
-                        {Math.max(
-                          1,
-                          Math.round(
-                            (new Date(order.end_at).getTime() -
-                              new Date(order.start_at).getTime()) /
-                              60000
-                          )
-                        )}{" "}
-                        min
-                      </span>
+                      <>
+                        <span className="mx-2 text-neutral-500">•</span>
+                        <span className="text-neutral-400">
+                          Duration:{" "}
+                          {Math.max(
+                            1,
+                            Math.round(
+                              (new Date(order.end_at).getTime() -
+                                new Date(order.start_at).getTime()) /
+                                60000
+                            )
+                          )}{" "}
+                          min
+                        </span>
+                      </>
                     )}
                   </div>
                 </div>
@@ -452,10 +585,10 @@ export default function Page() {
 
       {/* 🔹 Detail modal */}
       {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-t-2xl md:rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
               <div className="flex items-center gap-2">
                 <ClipboardList className="h-4 w-4 text-emerald-400" />
                 <h2 className="text-sm font-semibold text-white">
@@ -472,7 +605,7 @@ export default function Page() {
             </div>
 
             {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-4 text-sm text-neutral-200">
+            <div className="max-h-[80vh] overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
               {detailLoading && (
                 <div className="flex items-center justify-center py-10 text-neutral-300">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -527,33 +660,10 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Patient & appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient / Ordered by
-                      </p>
-                      <p className="text-sm font-medium text-white">
-                        {getDisplayPatientName(selectedOrder, orderedByUser)}
-                      </p>
-                      {orderedByUser && (
-                        <p className="text-[11px] text-neutral-500">
-                          Account:{" "}
-                          {orderedByUser.name ||
-                            (orderedByUser as any).fullName ||
-                            `${(orderedByUser as any).firstName || ""} ${
-                              (orderedByUser as any).lastName || ""
-                            }`.trim() ||
-                            orderedByUser.email}
-                        </p>
-                      )}
-                      {selectedOrder.email && (
-                        <p className="text-xs text-neutral-400">
-                          {selectedOrder.email}
-                        </p>
-                      )}
-                    </div>
-                    <div>
+                  {/* Patient profile + appointment */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <PatientProfileCard user={orderedByUser} />
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-xs text-neutral-400 mb-0.5">
                         Appointment
                       </p>
@@ -621,7 +731,7 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* 🔹 Admin / Consultation / Rejection notes */}
+                  {/* 🔹 Admin + Consultation + Rejection notes */}
                   {hasAnyNotes && (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
                       <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
@@ -650,7 +760,6 @@ export default function Page() {
                             </p>
                           )}
                         </div>
-
                         <div>
                           <p className="text-[11px] font-semibold text-neutral-400 mb-1">
                             Consultation notes
@@ -672,7 +781,6 @@ export default function Page() {
                             </p>
                           )}
                         </div>
-
                         <div>
                           <p className="text-[11px] font-semibold text-neutral-400 mb-1">
                             Rejection notes

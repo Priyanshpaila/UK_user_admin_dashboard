@@ -1,7 +1,13 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { getPatientsApi, updateUserApi } from "../../../api";
+import {
+  getPatientsApi,
+  updateUserApi,
+  getOrdersApi,
+  type OrderDto,
+  type OrdersListMeta,
+} from "../../../api";
 import {
   Plus,
   Loader2,
@@ -11,8 +17,49 @@ import {
   MapPin,
   Mail,
   Phone,
+  ClipboardList,
+  ArrowRightCircle,
+  Clock,
 } from "lucide-react";
 import Link from "next/link";
+
+/* ---------- Helpers ---------- */
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatMoney(minor?: number | null) {
+  if (minor == null) return "—";
+  const pounds = minor / 100;
+  return `£${pounds.toFixed(2)}`;
+}
+
+function statusBadgeClasses(status: string | undefined) {
+  const s = (status || "").toLowerCase();
+
+  if (s === "completed")
+    return "bg-emerald-900/40 text-emerald-300 border-emerald-700/60";
+  if (s === "approved")
+    return "bg-blue-900/40 text-blue-300 border-blue-700/60";
+  if (s === "rejected")
+    return "bg-red-900/40 text-red-300 border-red-700/60";
+  if (s === "paid")
+    return "bg-emerald-900/30 text-emerald-300 border-emerald-700/50";
+  if (s === "pending")
+    return "bg-amber-900/30 text-amber-300 border-amber-700/50";
+
+  return "bg-neutral-800 text-neutral-200 border-neutral-700";
+}
 
 export default function PatientsPage() {
   const [patients, setPatients] = useState<any[]>([]);
@@ -22,6 +69,15 @@ export default function PatientsPage() {
   const [dobInput, setDobInput] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Orders state (for selected patient)
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
+    null
+  );
+  const [patientOrders, setPatientOrders] = useState<OrderDto[]>([]);
+  const [ordersMeta, setOrdersMeta] = useState<OrdersListMeta | null>(null);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
 
   /* ----------------------------------------
       FETCH PATIENTS
@@ -88,6 +144,53 @@ export default function PatientsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  /* ----------------------------------------
+      FETCH ORDERS FOR A PATIENT
+  ---------------------------------------- */
+  const fetchOrdersForPatient = async (patientId: string) => {
+    try {
+      setOrdersLoading(true);
+      setOrdersError("");
+      setPatientOrders([]);
+      setOrdersMeta(null);
+
+      // ⬇️ Using your existing getOrdersApi, passing only user_id
+      const res = await getOrdersApi({
+        user_id: patientId,
+        page: 1,
+        limit: 20,
+      });
+
+      setPatientOrders(res.data || []);
+      setOrdersMeta(res.meta || null);
+    } catch (err) {
+      console.error("Failed to load orders for patient:", err);
+      setOrdersError("Failed to load this patient's orders.");
+      setPatientOrders([]);
+      setOrdersMeta(null);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  const handleSelectPatient = (patient: any) => {
+    if (!patient?._id) return;
+
+    const id = patient._id as string;
+
+    // If clicking same card again: collapse
+    if (selectedPatientId === id) {
+      setSelectedPatientId(null);
+      setPatientOrders([]);
+      setOrdersMeta(null);
+      setOrdersError("");
+      return;
+    }
+
+    setSelectedPatientId(id);
+    fetchOrdersForPatient(id);
   };
 
   useEffect(() => {
@@ -219,11 +322,17 @@ export default function PatientsPage() {
               patient.lastName ?? ""
             }`.trim();
             const hasContact = patient.email || patient.phone;
+            const isSelected = selectedPatientId === patient._id;
 
             return (
               <div
                 key={patient._id}
-                className="group rounded-xl border border-neutral-800 bg-neutral-900/70 hover:bg-neutral-800 transition shadow-sm flex flex-col"
+                onClick={() => handleSelectPatient(patient)}
+                className={`group rounded-xl border bg-neutral-900/70 transition shadow-sm flex flex-col cursor-pointer ${
+                  isSelected
+                    ? "border-blue-500/70 shadow-blue-500/20 bg-neutral-900"
+                    : "border-neutral-800 hover:bg-neutral-800"
+                }`}
               >
                 <div className="p-4 flex-1 flex flex-col gap-2">
                   {/* Top row: avatar + name + gender */}
@@ -240,8 +349,14 @@ export default function PatientsPage() {
                     </div>
 
                     <div className="flex-1">
-                      <h2 className="text-sm font-semibold text-white line-clamp-1">
+                      <h2 className="text-sm font-semibold text-white line-clamp-1 flex items-center gap-1">
                         {fullName || "Unnamed patient"}
+                        {isSelected && (
+                          <ArrowRightCircle
+                            size={14}
+                            className="text-blue-400"
+                          />
+                        )}
                       </h2>
                       <p className="text-[11px] text-neutral-400 capitalize">
                         {patient.gender || "unspecified"}
@@ -281,17 +396,146 @@ export default function PatientsPage() {
                       </span>
                     </div>
                   )}
+
+                  {/* Orders section (only when selected) */}
+                  {isSelected && (
+                    <div className="mt-3 pt-3 border-t border-neutral-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1 text-xs text-neutral-300">
+                          <ClipboardList
+                            size={13}
+                            className="text-neutral-400"
+                          />
+                          <span>Orders for this patient</span>
+                        </div>
+
+                        {ordersMeta && (
+                          <span className="text-[11px] text-neutral-500">
+                            {ordersMeta.total} order
+                            {ordersMeta.total === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+
+                      {ordersLoading && (
+                        <div className="flex items-center gap-2 text-xs text-neutral-400">
+                          <Loader2
+                            size={14}
+                            className="animate-spin text-neutral-400"
+                          />
+                          <span>Loading orders…</span>
+                        </div>
+                      )}
+
+                      {!ordersLoading && ordersError && (
+                        <p className="text-xs text-red-400">{ordersError}</p>
+                      )}
+
+                      {!ordersLoading &&
+                        !ordersError &&
+                        patientOrders.length === 0 && (
+                          <p className="text-xs text-neutral-500">
+                            No orders found for this patient.
+                          </p>
+                        )}
+
+                      {!ordersLoading &&
+                        !ordersError &&
+                        patientOrders.length > 0 && (
+                          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            {patientOrders.map((order) => {
+                              const firstLine =
+                                order.meta?.lines?.[0] || null;
+                              const mainName =
+                                firstLine?.name ||
+                                order.meta?.selectedProduct?.name ||
+                                "Order items";
+                              const mainVariation =
+                                firstLine?.variation ||
+                                order.meta?.selectedProduct?.variation ||
+                                null;
+
+                              const totalMinor =
+                                order.meta?.totalMinor ??
+                                order.meta?.selectedProduct?.totalMinor ??
+                                null;
+
+                              const when =
+                                order.meta?.appointment_start_at ||
+                                order.createdAt;
+
+                              return (
+                                <div
+                                  key={order._id}
+                                  className="rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2.5 text-xs flex flex-col gap-1.5"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex flex-col gap-0.5">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-semibold text-neutral-100">
+                                          {mainName}
+                                        </span>
+                                        {mainVariation && (
+                                          <span className="text-[11px] text-neutral-400">
+                                            • {mainVariation}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
+                                        <Clock size={11} />
+                                        <span>{formatDateTime(when)}</span>
+                                      </div>
+                                      <div className="text-[11px] text-neutral-400">
+                                        Ref:{" "}
+                                        <span className="text-neutral-200 font-medium">
+                                          {order.reference}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-col items-end gap-1">
+                                      <div className="flex gap-1">
+                                        <span
+                                          className={`px-2 py-0.5 rounded-full border text-[10px] font-medium ${statusBadgeClasses(
+                                            order.status
+                                          )}`}
+                                        >
+                                          {order.status}
+                                        </span>
+                                        <span
+                                          className={`px-2 py-0.5 rounded-full border text-[10px] font-medium ${statusBadgeClasses(
+                                            order.payment_status
+                                          )}`}
+                                        >
+                                          {order.payment_status}
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] text-neutral-300">
+                                        Total:{" "}
+                                        <span className="font-semibold">
+                                          {formatMoney(totalMinor)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Footer: actions */}
+                {/* Footer: single Edit Patient button */}
                 <div className="px-4 py-3 border-t border-neutral-800 flex items-center justify-between">
-                  {/* Simple tag: patient type */}
                   <span className="text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300 bg-neutral-900/60">
                     Patient
                   </span>
 
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation(); // don't toggle card
                       setEditingPatient(patient);
                       setDobInput(
                         patient.dob

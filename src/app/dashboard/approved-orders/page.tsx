@@ -22,8 +22,12 @@ import {
   Filter,
   X,
   ClipboardList,
+  Mail,
+  Phone,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+
+/* ----------------- Helpers ----------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -85,18 +89,185 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (fromOrder) return fromOrder;
 
   if (user) {
+    const u: any = user;
     const fromUser =
-      (user as any).name ||
-      (user as any).fullName ||
-      `${(user as any).firstName || ""} ${
-        (user as any).lastName || ""
-      }`.trim() ||
-      (user as any).email;
+      u.name ||
+      u.fullName ||
+      `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+      u.email;
     if (fromUser) return fromUser;
   }
 
   return "Unknown";
 }
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatDobWithAge(value?: string | null) {
+  if (!value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+
+  const dateStr = d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+  return `${dateStr} (${age} yrs)`;
+}
+
+function getUserInitials(user: UserDto | null): string {
+  if (!user) return "PT";
+  const u: any = user;
+  const name =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    u.email ||
+    "";
+  if (!name) return "PT";
+  const parts = String(name)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+  return initials.join("") || "PT";
+}
+
+function PatientProfileCard({ user }: { user: UserDto | null }) {
+  if (!user) {
+    return (
+      <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4">
+        <p className="text-xs text-neutral-400 mb-1">Patient profile</p>
+        <p className="text-sm text-neutral-300">No patient details found.</p>
+      </div>
+    );
+  }
+
+  const u: any = user;
+  const fullName =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    "Unknown patient";
+
+  const gender =
+    u.gender && typeof u.gender === "string"
+      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
+      : null;
+
+  const dobLabel = formatDobWithAge(u.dob);
+  const createdAt = u.createdAt || u.created_at || null;
+  const updatedAt = u.updatedAt || u.updated_at || null;
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-4">
+      {/* Top row: avatar + name */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center">
+            <span className="text-sm font-semibold text-neutral-100">
+              {getUserInitials(user)}
+            </span>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">{fullName}</p>
+            <p className="text-[11px] text-neutral-400">
+              {gender ? gender : "Gender: —"}
+              {dobLabel && (
+                <>
+                  {" "}
+                  • <span>{dobLabel}</span>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Contact */}
+      <div className="flex flex-wrap gap-3 text-[11px] text-neutral-300">
+        {u.email && (
+          <div className="inline-flex items-center gap-1">
+            <Mail className="h-3 w-3 text-neutral-500" />
+            <span className="break-all">{u.email}</span>
+          </div>
+        )}
+        {(u.phone || u.phoneNumber) && (
+          <div className="inline-flex items-center gap-1">
+            <Phone className="h-3 w-3 text-neutral-500" />
+            <span>{u.phone || u.phoneNumber}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Address & meta fields */}
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
+        <div>
+          <dt className="text-neutral-500">Address line 1</dt>
+          <dd className="text-neutral-100">
+            {u.address_line1 || u.addressLine1 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Address line 2</dt>
+          <dd className="text-neutral-100">
+            {u.address_line2 || u.addressLine2 || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">City</dt>
+          <dd className="text-neutral-100">{u.city || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">County</dt>
+          <dd className="text-neutral-100">{u.county || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Postcode</dt>
+          <dd className="text-neutral-100">{u.postalcode || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-neutral-500">Country</dt>
+          <dd className="text-neutral-100">{u.country || "—"}</dd>
+        </div>
+      </dl>
+
+      {/* Created / updated */}
+      <div className="flex flex-wrap gap-4 text-[11px] text-neutral-500 pt-2 border-t border-neutral-800">
+        <span>
+          Created:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(createdAt) || "—"}
+          </span>
+        </span>
+        <span>
+          Updated:{" "}
+          <span className="text-neutral-200">
+            {formatDateOnly(updatedAt) || "—"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------- Page ----------------- */
 
 export default function Page() {
   const router = useRouter();
@@ -121,6 +292,13 @@ export default function Page() {
   // admin notes state (editable)
   const [adminNotes, setAdminNotes] = useState<string[]>([]);
   const [newNote, setNewNote] = useState("");
+
+  // consultation notes state (editable)
+  const [consultationNotesEdit, setConsultationNotesEdit] = useState<string[]>(
+    []
+  );
+  const [newConsultNote, setNewConsultNote] = useState("");
+
   const [savingNotes, setSavingNotes] = useState(false);
 
   // ordered-by user state (for detail modal)
@@ -129,27 +307,7 @@ export default function Page() {
   // 🔒 hard-coded filter
   const STATUS = "approved";
 
-  // 🔹 derived consultation / rejection notes from selectedOrder
-  const consultationNotes = useMemo(() => {
-    if (!selectedOrder) return [] as string[];
-    const o: any = selectedOrder;
-    const meta: any = o.meta || {};
-
-    const rawRoot =
-      o.consultation_notes ?? o.consultant_notes ?? o.consultationNotes;
-    const rawMeta =
-      meta.consultation_notes ??
-      meta.consultationNotes ??
-      meta.consultant_notes ??
-      meta.consultantNotes;
-
-    const raw = rawRoot ?? rawMeta ?? [];
-    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
-  }, [selectedOrder]);
-
+  // 🔹 rejection notes from selectedOrder (read-only)
   const rejectionNotes = useMemo(() => {
     if (!selectedOrder) return [] as string[];
     const o: any = selectedOrder;
@@ -172,9 +330,6 @@ export default function Page() {
       .map((n) => String(n).trim())
       .filter((n) => n.length > 0);
   }, [selectedOrder]);
-
-  const hasAnyOtherNotes =
-    consultationNotes.length > 0 || rejectionNotes.length > 0;
 
   // Load list (approved)
   useEffect(() => {
@@ -235,6 +390,25 @@ export default function Page() {
     };
   }, []); // always "approved"
 
+  function extractConsultationNotes(order: OrderDto): string[] {
+    const o: any = order;
+    const meta: any = o.meta || {};
+
+    const rawRoot =
+      o.consultation_notes ?? o.consultant_notes ?? o.consultationNotes;
+    const rawMeta =
+      meta.consultation_notes ??
+      meta.consultationNotes ??
+      meta.consultant_notes ??
+      meta.consultantNotes;
+
+    const raw = rawRoot ?? rawMeta ?? [];
+    const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+    return arr
+      .map((n) => String(n).trim())
+      .filter((n) => n.length > 0);
+  }
+
   // View details handler
   async function handleViewDetails(id: string) {
     setShowDetail(true);
@@ -242,13 +416,17 @@ export default function Page() {
     setDetailError(null);
     setSelectedOrder(null);
     setAdminNotes([]);
+    setConsultationNotesEdit([]);
     setNewNote("");
+    setNewConsultNote("");
     setOrderedByUser(null);
 
     try {
       const order = await getOrderByIdApi(id);
       setSelectedOrder(order);
+
       setAdminNotes((order as any).admin_notes || []);
+      setConsultationNotesEdit(extractConsultationNotes(order));
 
       // fetch the user who ordered (by user_id)
       const userId = (order as any).user_id as string | undefined;
@@ -267,27 +445,41 @@ export default function Page() {
     }
   }
 
-  // Save admin notes (using updateOrderStatusApi)
-  async function handleSaveAdminNotes() {
-    if (!selectedOrder) return;
+// Save admin + consultation notes
+async function handleSaveNotes() {
+  if (!selectedOrder) return;
 
-    setSavingNotes(true);
-    setDetailError(null);
+  setSavingNotes(true);
+  setDetailError(null);
 
-    try {
-      const updated = await updateOrderStatusApi(selectedOrder._id, {
-        status: selectedOrder.status,
-        admin_notes: adminNotes,
-      } as any);
+  try {
+    const payload: any = {
+      // keep current status, don't change it
+      status: selectedOrder.status,
 
-      setSelectedOrder(updated);
-      setAdminNotes((updated as any).admin_notes || []);
-    } catch (e: any) {
-      setDetailError(e?.message || "Failed to save admin notes");
-    } finally {
-      setSavingNotes(false);
-    }
+      // 🔹 root admin notes (already working)
+      admin_notes: adminNotes,
+
+      // 🔹 root consultation notes (what you want in DB)
+      consultation_notes: consultationNotesEdit,
+
+      // 🔹 alias for safety if backend uses this name instead
+      consultant_notes: consultationNotesEdit,
+    };
+
+    const updated = await updateOrderStatusApi(selectedOrder._id, payload);
+
+    // refresh from server so UI always shows what’s really stored
+    setSelectedOrder(updated);
+    setAdminNotes((updated as any).admin_notes || []);
+    setConsultationNotesEdit(extractConsultationNotes(updated));
+  } catch (e: any) {
+    setDetailError(e?.message || "Failed to save notes");
+  } finally {
+    setSavingNotes(false);
   }
+}
+
 
   // 👉 Start consultancy: navigate with service_id & order_id
   function handleStartConsultancy() {
@@ -480,27 +672,59 @@ export default function Page() {
 
       {/* 🔹 Detail modal */}
       {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60">
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-t-2xl md:rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex flex-col">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <ClipboardList className="h-4 w-4 text-emerald-400" />
-                <h2 className="text-sm font-semibold text-white">
-                  Order details
-                </h2>
+            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-4 w-4 text-emerald-400" />
+                  <h2 className="text-sm font-semibold text-white">
+                    Order details
+                  </h2>
+                </div>
+                {selectedOrder && (
+                  <p className="text-[11px] text-neutral-500">
+                    Ref:{" "}
+                    <span className="font-mono text-neutral-300">
+                      {selectedOrder.reference}
+                    </span>
+                  </p>
+                )}
               </div>
+              {selectedOrder && (
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                      statusBadgeClasses(selectedOrder.status)
+                    }
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                    {selectedOrder.status.toUpperCase()}
+                  </span>
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                      paymentBadgeClasses(selectedOrder.payment_status)
+                    }
+                  >
+                    <CreditCard className="h-3 w-3" />
+                    {selectedOrder.payment_status.toUpperCase()}
+                  </span>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setShowDetail(false)}
-                className="rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                className="ml-4 rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-4 text-sm text-neutral-200">
+            <div className="max-h-[80vh] overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
               {detailLoading && (
                 <div className="flex items-center justify-center py-10 text-neutral-300">
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -555,28 +779,11 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Patient & appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Patient / Ordered by
-                      </p>
-                      <p className="text-sm font-medium text-white">
-                        {getDisplayPatientName(selectedOrder, orderedByUser)}
-                      </p>
-                      {orderedByUser && (
-                        <p className="text-[11px] text-neutral-500">
-                          Account:{" "}
-                          {(orderedByUser as any).name ||
-                            (orderedByUser as any).fullName ||
-                            `${(orderedByUser as any).firstName || ""} ${
-                              (orderedByUser as any).lastName || ""
-                            }`.trim() ||
-                            (orderedByUser as any).email}
-                        </p>
-                      )}
-                    </div>
-                    <div>
+                  {/* Patient profile + appointment */}
+                  <div className="grid grid-cols-1 xl:grid-cols-[1.7fr,1.1fr] gap-4">
+                    <PatientProfileCard user={orderedByUser} />
+
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-4 space-y-2">
                       <p className="text-xs text-neutral-400 mb-0.5">
                         Appointment
                       </p>
@@ -589,14 +796,15 @@ export default function Page() {
                       {(selectedOrder as any).end_at &&
                         selectedOrder.meta?.appointment_start_at && (
                           <p className="text-xs text-neutral-400">
-                            End: {formatDateTime((selectedOrder as any).end_at)}
+                            End:{" "}
+                            {formatDateTime((selectedOrder as any).end_at)}
                           </p>
                         )}
                     </div>
                   </div>
 
                   {/* Items / lines */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
@@ -649,7 +857,7 @@ export default function Page() {
 
                   {/* RAF Answers (full questions + answers) */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
                         RAF Questions &amp; Answers
                       </p>
@@ -675,75 +883,114 @@ export default function Page() {
                     </div>
                   ) : null}
 
-                  {/* Notes card: consultation + rejection + editable admin notes */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                  {/* Notes card: consultation (editable) + rejection (read-only) + admin (editable) */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-xs font-semibold text-neutral-200">
                         Notes
                       </p>
                       <button
                         type="button"
-                        onClick={handleSaveAdminNotes}
+                        onClick={handleSaveNotes}
                         disabled={savingNotes}
                         className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
                         {savingNotes && (
                           <Loader2 className="h-3 w-3 animate-spin" />
                         )}
-                        {savingNotes ? "Saving…" : "Save admin notes"}
+                        {savingNotes ? "Saving…" : "Save notes"}
                       </button>
                     </div>
 
-                    {/* Read-only consultation + rejection notes */}
-                    {hasAnyOtherNotes && (
-                      <div className="grid gap-3 md:grid-cols-2 mb-3">
-                        <div>
-                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
-                            Consultation notes
-                          </p>
-                          {consultationNotes.length ? (
-                            <ul className="space-y-1">
-                              {consultationNotes.map((note, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-neutral-200 leading-snug"
+                    {/* Consultation + Rejection */}
+                    <div className="grid gap-3 md:grid-cols-2 mb-3">
+                      {/* Consultation notes (editable) */}
+                      <div>
+                        <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                          Consultation notes
+                        </p>
+                        {consultationNotesEdit.length ? (
+                          <ul className="space-y-1 mb-2">
+                            {consultationNotesEdit.map((note, idx) => (
+                              <li
+                                key={idx}
+                                className="flex items-start gap-2 text-xs"
+                              >
+                                <span className="mt-1 text-[10px] text-neutral-500">
+                                  #{idx + 1}
+                                </span>
+                                <div className="flex-1 bg-neutral-800/70 rounded-md px-2 py-1 text-neutral-100">
+                                  {note}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setConsultationNotesEdit((prev) =>
+                                      prev.filter((_, i) => i !== idx)
+                                    )
+                                  }
+                                  className="text-[11px] text-rose-400 hover:text-rose-300"
                                 >
-                                  • {note}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="text-[11px] text-neutral-500">
-                              No consultation notes.
-                            </p>
-                          )}
-                        </div>
+                                  Remove
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-[11px] text-neutral-500 mb-2">
+                            No consultation notes yet. Add one below.
+                          </p>
+                        )}
 
-                        <div>
-                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
-                            Rejection notes
-                          </p>
-                          {rejectionNotes.length ? (
-                            <ul className="space-y-1">
-                              {rejectionNotes.map((note, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-neutral-200 leading-snug"
-                                >
-                                  • {note}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : (
-                            <p className="text-[11px] text-neutral-500">
-                              No rejection notes.
-                            </p>
-                          )}
+                        <div className="flex gap-2">
+                          <textarea
+                            value={newConsultNote}
+                            onChange={(e) => setNewConsultNote(e.target.value)}
+                            placeholder="Add a consultation note…"
+                            className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 resize-none min-h-[60px]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!newConsultNote.trim()) return;
+                              setConsultationNotesEdit((prev) => [
+                                ...prev,
+                                newConsultNote.trim(),
+                              ]);
+                              setNewConsultNote("");
+                            }}
+                            className="self-end inline-flex items-center justify-center rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold px-3 py-1.5"
+                          >
+                            Add
+                          </button>
                         </div>
                       </div>
-                    )}
 
-                    {/* Editable admin notes list */}
+                      {/* Rejection notes (read-only) */}
+                      <div>
+                        <p className="text-[11px] font-semibold text-neutral-400 mb-1">
+                          Rejection notes
+                        </p>
+                        {rejectionNotes.length ? (
+                          <ul className="space-y-1">
+                            {rejectionNotes.map((note, idx) => (
+                              <li
+                                key={idx}
+                                className="text-xs text-neutral-200 leading-snug"
+                              >
+                                • {note}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-[11px] text-neutral-500">
+                            No rejection notes.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Admin notes (editable) */}
                     {adminNotes.length === 0 && (
                       <p className="text-xs text-neutral-500 mb-2">
                         No admin notes yet. Add your first note below.
@@ -779,12 +1026,11 @@ export default function Page() {
                       </ul>
                     )}
 
-                    {/* Add new admin note */}
                     <div className="flex gap-2">
                       <textarea
                         value={newNote}
                         onChange={(e) => setNewNote(e.target.value)}
-                        placeholder="Add a note about this order…"
+                        placeholder="Add an admin note about this order…"
                         className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 resize-none min-h-[60px]"
                       />
                       <button

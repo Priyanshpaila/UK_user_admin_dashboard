@@ -29,6 +29,8 @@ import {
   Mail,
   ShieldCheck,
   ShieldAlert,
+  MapPin,
+  Hash,
 } from "lucide-react";
 import { useOrdersStats } from "../orders-badge-context";
 
@@ -43,6 +45,31 @@ function formatDateTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function calculateAgeFromDob(dob?: string | null): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) {
+    age--;
+  }
+  if (age < 0 || age > 120) return null;
+  return age;
 }
 
 function formatMoney(minor?: number | null) {
@@ -94,12 +121,12 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
 
   if (user) {
     const fromUser =
-      user.name ||
-      user.fullName ||
+      (user as any).name ||
+      (user as any).fullName ||
       `${(user as any).firstName || ""} ${
         (user as any).lastName || ""
       }`.trim() ||
-      user.email;
+      (user as any).email;
     if (fromUser) return fromUser;
   }
 
@@ -133,7 +160,7 @@ export default function Page() {
   const [consultationNotes, setConsultationNotes] = useState<string[]>([]);
   const [newConsultationNote, setNewConsultationNote] = useState("");
 
-  // rejection notes (previous ones hidden in UI)
+  // rejection notes
   const [existingRejectionNotes, setExistingRejectionNotes] = useState<
     string[]
   >([]);
@@ -419,11 +446,10 @@ export default function Page() {
       (selectedOrder.service_name &&
         selectedOrder.service_name.toLowerCase() === "weight management"));
 
-  // 🔁 TOGGLE SCR / ID VERIFIED (no more "only set true once")
+  // 🔁 TOGGLE SCR / ID VERIFIED
   async function handleVerify(field: "scr_verified" | "id_verified") {
     if (!orderedByUser) return;
 
-    // current value (ensure boolean)
     const current = !!(orderedByUser as any)[field];
 
     setVerifyingField(field);
@@ -435,7 +461,6 @@ export default function Page() {
 
       setOrderedByUser(updatedUser);
 
-      // also update cache so other cards have fresh data
       setOrderUsers((prev) => ({
         ...prev,
         [updatedUser._id]: updatedUser,
@@ -601,7 +626,7 @@ export default function Page() {
       {/* Detail modal */}
       {showDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col">
+          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
               <div className="flex flex-col gap-0.5">
@@ -691,45 +716,153 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Patient / appointment & verification */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4">
-                    <div className="space-y-2">
-                      <p className="text-[11px] text-neutral-400">
-                        Patient / Ordered by
-                      </p>
-                      <p className="text-sm font-semibold text-white">
-                        {getDisplayPatientName(selectedOrder, orderedByUser)}
-                      </p>
-
-                      {orderedByUser && (
-                        <>
-                          {orderedByUser.email && (
-                            <p className="flex items-center gap-1 text-[11px] text-neutral-300">
-                              <Mail className="h-3 w-3 text-neutral-400" />
-                              {orderedByUser.email}
-                            </p>
-                          )}
-                          {((orderedByUser as any).phone ||
-                            (orderedByUser as any).phoneNumber) && (
-                            <p className="flex items-center gap-1 text-[11px] text-neutral-300">
-                              <Phone className="h-3 w-3 text-neutral-400" />
-                              {(orderedByUser as any).phone ||
-                                (orderedByUser as any).phoneNumber}
-                            </p>
-                          )}
-                          {(orderedByUser as any).createdAt && (
-                            <p className="text-[11px] text-neutral-500">
-                              Account created:{" "}
-                              {formatDateTime(
-                                (orderedByUser as any).createdAt
+                  {/* Patient details + appointment */}
+                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)] gap-4">
+                    {/* Patient details card */}
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="h-10 w-10 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 text-xs font-semibold text-neutral-200">
+                            {getDisplayPatientName(
+                              selectedOrder,
+                              orderedByUser
+                            )
+                              .split(" ")
+                              .map((s) => s[0])
+                              .join("")
+                              .slice(0, 2)
+                              .toUpperCase() || "PT"}
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              {getDisplayPatientName(
+                                selectedOrder,
+                                orderedByUser
                               )}
                             </p>
-                          )}
-                        </>
-                      )}
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
+                              {orderedByUser && (
+                                <>
+                                  {(orderedByUser as any).gender && (
+                                    <span className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900/60 px-2 py-0.5 capitalize">
+                                      {(orderedByUser as any).gender}
+                                    </span>
+                                  )}
+                                  {(orderedByUser as any)._id && (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Hash className="h-3 w-3 text-neutral-500" />
+                                      {(orderedByUser as any)._id}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        {orderedByUser && (
+                          <div className="text-right text-[11px] text-neutral-400 space-y-1">
+                            {(orderedByUser as any).createdAt && (
+                              <p>
+                                Account created:{" "}
+                                <span className="text-neutral-200">
+                                  {formatDateTime(
+                                    (orderedByUser as any).createdAt
+                                  )}
+                                </span>
+                              </p>
+                            )}
+                            {(orderedByUser as any).updatedAt && (
+                              <p>
+                                Last updated:{" "}
+                                <span className="text-neutral-200">
+                                  {formatDateTime(
+                                    (orderedByUser as any).updatedAt
+                                  )}
+                                </span>
+                              </p>
+                            )}
+                            {(orderedByUser as any).__v !== undefined && (
+                              <p>Record version: {(orderedByUser as any).__v}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
 
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-neutral-300">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-neutral-400">
+                            Contact
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <Mail className="h-3 w-3 text-neutral-500" />
+                            <span className="truncate">
+                              {(orderedByUser as any)?.email ||
+                                (selectedOrder as any).email ||
+                                "—"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Phone className="h-3 w-3 text-neutral-500" />
+                            <span className="truncate">
+                              {(orderedByUser as any)?.phone ||
+                                (orderedByUser as any)?.phoneNumber ||
+                                (selectedOrder as any).phone ||
+                                "—"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <CalendarDays className="h-3 w-3 text-neutral-500" />
+                            <span>
+                              DOB:{" "}
+                              {formatDateOnly((orderedByUser as any)?.dob) ||
+                                "—"}
+                              {(() => {
+                                const age = calculateAgeFromDob(
+                                  (orderedByUser as any)?.dob
+                                );
+                                return age ? ` (${age} yrs)` : "";
+                              })()}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="font-semibold text-neutral-400">
+                            Address
+                          </p>
+                          <div className="flex items-start gap-2">
+                            <MapPin className="h-3 w-3 text-neutral-500 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <p>
+                                {(orderedByUser as any)?.address_line1 || "—"}
+                              </p>
+                              {(orderedByUser as any)?.address_line2 && (
+                                <p>{(orderedByUser as any).address_line2}</p>
+                              )}
+                              <p>
+                                {[
+                                  (orderedByUser as any)?.city,
+                                  (orderedByUser as any)?.county,
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ") || "—"}
+                              </p>
+                              <p>
+                                {[
+                                  (orderedByUser as any)?.postalcode,
+                                  (orderedByUser as any)?.country,
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ") || ""}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Weight management verification inside patient card */}
                       {isWeightManagement && orderedByUser && (
-                        <div className="pt-2 space-y-1">
+                        <div className="pt-3 border-t border-neutral-800 space-y-1">
                           <p className="text-[11px] text-neutral-400">
                             Verification (Weight Management only)
                           </p>
@@ -787,7 +920,8 @@ export default function Page() {
                       )}
                     </div>
 
-                    <div className="space-y-2">
+                    {/* Appointment card */}
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-2">
                       <p className="text-[11px] text-neutral-400">
                         Appointment
                       </p>
@@ -799,7 +933,8 @@ export default function Page() {
                       </p>
                       {(selectedOrder as any).end_at && (
                         <p className="text-xs text-neutral-400">
-                          End: {formatDateTime((selectedOrder as any).end_at)}
+                          End:{" "}
+                          {formatDateTime((selectedOrder as any).end_at)}
                         </p>
                       )}
                     </div>
@@ -936,7 +1071,7 @@ export default function Page() {
                     </div>
 
                     {/* Consultation notes */}
-                    <div className="space-y-2">
+                    {/* <div className="space-y-2">
                       <p className="text-[11px] font-medium text-neutral-300">
                         Consultation notes
                       </p>
@@ -978,7 +1113,7 @@ export default function Page() {
                           + Add
                         </button>
                       </div>
-                    </div>
+                    </div> */}
                   </div>
 
                   {/* Action bar */}
