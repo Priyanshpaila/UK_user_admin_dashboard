@@ -7,12 +7,7 @@ import {
   updateOrderStatusApi,
   type OrderDto,
 } from "../../../../api";
-import {
-  Loader2,
-  ArrowLeft,
-  AlertCircle,
-  CheckCircle2,
-} from "lucide-react";
+import { Loader2, ArrowLeft, AlertCircle, CheckCircle2 } from "lucide-react";
 
 import RecordOfSupplyTab from "./RecordOfSupplyTab";
 import RiskAssessmentTab from "./RiskAssessmentTab";
@@ -39,9 +34,7 @@ function getDisplayPatientName(order: OrderDto): string {
 
   if (order.patient_name) return order.patient_name;
 
-  const fromOrder = `${order.first_name || ""} ${
-    order.last_name || ""
-  }`.trim();
+  const fromOrder = `${order.first_name || ""} ${order.last_name || ""}`.trim();
   if (fromOrder) return fromOrder;
 
   return order.email || "Unknown";
@@ -134,14 +127,14 @@ export default function ConsultationPageClient() {
       };
 
       const risk = readJson("risk") as RiskAnswerLS[] | null;
-      const advice = readJson("advice"); // { selectAll, adviceState }
-      const declaration = readJson("declaration"); // { fields, signatureUrl, signaturePath, ... }
-      const record = readJson("record"); // { fields }
+      const advice = readJson("advice");
+      const declaration = readJson("declaration");
+      const record = readJson("record");
 
       // Start from existing meta
       const updatedMeta: any = { ...(order.meta || {}) };
 
-      // ------------------ RISK: merge into formsQA.raf.qa ------------------
+      // -------- RISK ----------
       if (risk && Array.isArray(risk) && risk.length) {
         if (!updatedMeta.formsQA) updatedMeta.formsQA = {};
 
@@ -150,7 +143,6 @@ export default function ConsultationPageClient() {
           ? [...existingRaf.qa]
           : [];
 
-        // index existing by key
         const byKey: Record<string, any> = {};
         for (const q of existingQa) {
           if (!q || !q.key) continue;
@@ -161,7 +153,6 @@ export default function ConsultationPageClient() {
           if (!ans || !ans.key) continue;
           const existing = byKey[ans.key];
 
-          // ---------- normalise ans.value safely ----------
           let valueStr = "";
           let raw: any;
 
@@ -191,13 +182,10 @@ export default function ConsultationPageClient() {
           }
 
           if (existing) {
-            // update existing entry
-            existing.question =
-              ans.question || existing.question || ans.key;
+            existing.question = ans.question || existing.question || ans.key;
             existing.answer = valueStr;
 
             if (Array.isArray(existing.raw)) {
-              // keep as array if it was array before
               if (Array.isArray(raw)) {
                 existing.raw = raw;
               } else if (valueStr) {
@@ -209,7 +197,6 @@ export default function ConsultationPageClient() {
               existing.raw = raw;
             }
           } else {
-            // new entry
             existingQa.push({
               key: ans.key,
               question: ans.question || ans.key,
@@ -221,7 +208,6 @@ export default function ConsultationPageClient() {
 
         existingRaf.qa = existingQa;
 
-        // keep / restore form_id if we had it anywhere
         if (!existingRaf.form_id) {
           existingRaf.form_id =
             existingRaf.formId ||
@@ -232,17 +218,15 @@ export default function ConsultationPageClient() {
         }
 
         updatedMeta.formsQA.raf = existingRaf;
-
-        // optional: also store flat copy
         updatedMeta.riskAssessment = risk;
       }
 
-      // ------------------ Pharmacist advice ------------------
+      // -------- Advice ----------
       if (advice) {
         updatedMeta.pharmacistAdvice = advice;
       }
 
-      // ------------------ Declaration (incl signature) ------------------
+      // -------- Declaration ----------
       if (declaration) {
         updatedMeta.pharmacistDeclaration = {
           ...(declaration || {}),
@@ -250,13 +234,15 @@ export default function ConsultationPageClient() {
         };
       }
 
-      // ------------------ Record of supply / clinic notes ------------------
+      // -------- Record of supply ----------
       if (record) {
         updatedMeta.recordOfSupply = record;
       }
 
+      // ✅ include completed_at with current time
       const payload: any = {
-        status: "completed", // adjust if needed
+        status: "completed",
+        completed_at: new Date().toISOString(),
         meta: updatedMeta,
       };
 
@@ -270,11 +256,8 @@ export default function ConsultationPageClient() {
         });
       }
 
-      setEndSuccess(
-        "Consultation data saved and order marked as completed."
-      );
+      setEndSuccess("Consultation data saved and order marked as completed.");
 
-      // ✅ After successful save, go directly to Approved Orders list
       router.push("/dashboard/approved-orders");
     } catch (e: any) {
       setEndError(e?.message || "Failed to end consultation");
@@ -395,10 +378,7 @@ export default function ConsultationPageClient() {
         )}
 
         {activeTab === "declaration" && (
-          <PharmacistDeclarationTab
-            orderId={order._id}
-            serviceId={serviceId}
-          />
+          <PharmacistDeclarationTab orderId={order._id} serviceId={serviceId} />
         )}
 
         {activeTab === "record" && (

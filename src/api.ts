@@ -999,7 +999,6 @@ export async function updateOrderStatusApi(
 }
 
 
-/* ------------------- Appointments APIs ------------------- */
 
 /* ------------------- Appointments APIs ------------------- */
 
@@ -1092,6 +1091,22 @@ export async function updateAppointmentApi(
   });
 }
 
+export async function getAppointmentByIdApi(
+  id: string
+): Promise<AppointmentDto> {
+  const base = getBackendBase();
+  const url = `${base}/appointments/${id}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+  return jsonFetch<AppointmentDto>(url, { headers });
+}
+
 
 /* ------------------- Tenant APIs ------------------- */
 
@@ -1138,4 +1153,42 @@ export async function getPlatformTenantBySlugApi(
   return jsonFetch<any>(`${base}/platform-tenants/${slug}`);
 }
 
+// ---------- Types ----------
+export type AppointmentsCalendarSummaryDay = {
+  date: string; // "2025-12-01"
+  total: number;
+  byStatus: Record<string, number>;
+  appointments: {
+    _id: string;
+    start_at: string; // ISO
+    status: string;   // "pending" | "approved" | ...
+  }[];
+};
+
+export type AppointmentsCalendarSummaryResponse = {
+  data: AppointmentsCalendarSummaryDay[];
+};
+
+// ---------- Helper ----------
+export async function getAppointmentsCalendarSummaryApi(params: {
+  from: string; // "YYYY-MM-DD"
+  to: string;   // "YYYY-MM-DD"
+}): Promise<AppointmentsCalendarSummaryResponse> {
+  const base = getBackendBase(); // e.g. http://tenant.domain:8000/api
+  const qs = new URLSearchParams({
+    from: params.from,
+    to: params.to,
+  }).toString();
+
+  const url = `${base}/appointments/calendar-summary?${qs}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+  return jsonFetch<AppointmentsCalendarSummaryResponse>(url, { headers });
+}
 
