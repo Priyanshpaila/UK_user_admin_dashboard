@@ -404,22 +404,19 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
   });
 }
 
+
 /* ------------------- Users APIs ------------------- */
 
 export type UserDto = {
   _id: string;
-
-  // existing
   name?: string;
   fullName?: string;
   firstName?: string;
   lastName?: string;
   email?: string;
-
-  // from /users/me
-  gender?: string;
   phone?: string;
-  dob?: string; // ISO string
+  gender?: string;
+  dob?: string;
   address_line1?: string;
   address_line2?: string;
   city?: string;
@@ -427,16 +424,11 @@ export type UserDto = {
   postalcode?: string;
   country?: string;
   user_priority?: string;
-
-  // optional signature (base64 data URL)
-  signature?: string;
-
+  gphc_number?: string;       // ✅ GPhC number
+  signature_image?: string;   // ✅ stored signature image path/url
   [key: string]: any;
 };
 
-/**
- * GET /users/me – current logged-in user
- */
 export async function getCurrentUserApi(): Promise<UserDto> {
   const base = getBackendBase();
   const url = `${base}/users/me`;
@@ -477,15 +469,12 @@ export async function getUserByIdApi(userId: string) {
   });
 }
 
-// PUT /users/:id -> Update a user by ID
+// JSON-based updater (keep for all places that don't send files)
 export async function updateUserApi(userId: string, payload: any) {
   const base = getBackendBase();
   const url = `${base}/users/${userId}`;
 
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("session_token")
-      : null;
+  const token = localStorage.getItem("session_token");
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -501,15 +490,59 @@ export async function updateUserApi(userId: string, payload: any) {
   });
 }
 
-// POST /users -> Create a new user
-export async function createUserApi(payload: any) {
+// ✅ NEW: multipart updater to send signature_image file
+export async function updateUserWithFormDataApi(
+  userId: string,
+  payload: Record<string, any>,
+  signatureFile?: File | null
+) {
   const base = getBackendBase();
-  const url = `${base}/users`;
+  const url = `${base}/users/${userId}`;
 
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("session_token")
       : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  const fd = new FormData();
+
+  // append primitive fields as strings
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    fd.append(key, String(value));
+  });
+
+  // append signature image if we have one
+  if (signatureFile) {
+    fd.append("signature_image", signatureFile); // 👈 field name required by backend
+  }
+
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`, // DO NOT set Content-Type (browser will set boundary)
+    },
+    body: fd,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to update user: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// POST /users -> Create a new user (JSON)
+export async function createUserApi(payload: any) {
+  const base = getBackendBase();
+  const url = `${base}/users`;
+
+  const token = localStorage.getItem("session_token");
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -524,6 +557,7 @@ export async function createUserApi(payload: any) {
     body: JSON.stringify(payload),
   });
 }
+
 
 
 // Single weekday config

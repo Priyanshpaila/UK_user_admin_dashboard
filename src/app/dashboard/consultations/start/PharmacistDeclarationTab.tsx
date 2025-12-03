@@ -1,20 +1,14 @@
 "use client";
 
-import React, {
-  useEffect,
-  useRef,
-  useState,
-  PointerEvent,
-} from "react";
+import React, { useEffect, useState } from "react";
 import {
   getClinicFormsApi,
   type ClinicForm,
-  uploadPageImageApi,
   getBackendBase,
   getUserByIdApi,
   type UserDto,
 } from "../../../../api";
-import { Loader2, Trash2, Save } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface Props {
   orderId: string;
@@ -29,7 +23,7 @@ type DeclarationStorage = {
   fields: FieldsState;
   signatureUrl?: string | null; // full URL to image
   signaturePath?: string | null; // raw path from backend (/uploads/...png)
-  signatureDataUrl?: string | null; // legacy base64
+  signatureDataUrl?: string | null; // legacy base64 (backward compat)
 };
 
 // Helper to resolve stored path to full URL
@@ -90,14 +84,9 @@ export default function PharmacistDeclarationTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserDto | null>(null);
 
   const storageKey = `consultation_${orderId}_declaration`;
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
 
   /* ---------------- Load form + localStorage ---------------- */
   useEffect(() => {
@@ -183,79 +172,93 @@ export default function PharmacistDeclarationTab({
     };
   }, [serviceId, storageKey]);
 
-  /* ------------- Auto-fill Pharmacist Name from getUserByIdApi ------------- */
+  /* ------------- Load current user (for name, GPhC, signature) ------------- */
   useEffect(() => {
-    if (!form) return;
-    if (typeof window === "undefined") return;
-
     let cancelled = false;
+    const userId = getLoggedInUserIdFromLocal();
+    if (!userId) return;
 
-    async function fillPharmacistName() {
+    async function loadUser() {
       try {
-        const schema: any[] = (form as any).schema || [];
-
-        // Find a text field that looks like "Pharmacist Name"
-        const pharmacistField = schema.find((f: any) => {
-          if (f.type !== "text") return false;
-          const label = (f.data?.label || "").toLowerCase();
-          const key = (f.data?.key || "").toLowerCase();
-          const combined = `${label} ${key}`;
-          return (
-            combined.includes("pharmacist") &&
-            combined.includes("name")
-          );
-        });
-
-        if (!pharmacistField) return;
-
-        const pharmacistKey =
-          pharmacistField.data?.key || pharmacistField.data?.label;
-        if (!pharmacistKey) return;
-
-        // If user already typed something or LS has a value, don't override
-        if (fields[pharmacistKey]) return;
-
-        const userId = getLoggedInUserIdFromLocal();
-        if (!userId) {
-          console.warn(
-            "[PharmacistDeclaration] No logged-in user id found in localStorage"
-          );
-          return;
+        const user = await getUserByIdApi(userId as string);
+        if (!cancelled) {
+          setCurrentUser(user);
         }
-
-        const user: UserDto = await getUserByIdApi(userId);
-        if (cancelled) return;
-
-        const pharmacistName =
-          user.name ||
-          user.fullName ||
-          `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
-          user.email ||
-          "";
-
-        if (!pharmacistName) return;
-
-        setFields((prev) => {
-          // Double-check again to not override if user typed while we were fetching
-          if (prev[pharmacistKey]) return prev;
-          return {
-            ...prev,
-            [pharmacistKey]: pharmacistName,
-          };
-        });
       } catch (err) {
-        console.error("Failed to auto-fill pharmacist name:", err);
+        console.error("Failed to load current user for declaration:", err);
       }
     }
 
-    fillPharmacistName();
+    loadUser();
 
     return () => {
       cancelled = true;
     };
-    // we intentionally only depend on `form` so it runs once after form load
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form]);
+  }, []);
+
+  /* ------------- Auto-fill pharmacist name & GPhC number ------------- */
+  useEffect(() => {
+    if (!form || !currentUser) return;
+
+    const schema: any[] = (form as any).schema || [];
+
+    let pharmacistKey: string | null = null;
+    let gphcKey: string | null = null;
+
+    for (const field of schema) {
+      if (!["text", "textarea"].includes(field.type)) continue;
+      const label = (field.data?.label || "").toLowerCase();
+      const key = (field.data?.key || "").toLowerCase();
+      const combined = `${label} ${key}`;
+
+      if (
+        !pharmacistKey &&
+        combined.includes("pharmacist") &&
+        combined.includes("name")
+      ) {
+        pharmacistKey = field.data?.key || field.data?.label || null;
+      }
+
+      if (!gphcKey && combined.includes("gphc")) {
+        gphcKey = field.data?.key || field.data?.label || null;
+      }
+
+      if (pharmacistKey && gphcKey) break;
+    }
+
+    setFields((prev) => {
+      const next: FieldsState = { ...prev };
+
+      // Build pharmacist display name
+      const pharmacistName =
+        currentUser.name ||
+        currentUser.fullName ||
+        `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim() ||
+        currentUser.email ||
+        "";
+
+      if (pharmacistKey && !next[pharmacistKey] && pharmacistName) {
+        next[pharmacistKey] = pharmacistName;
+      }
+
+      if (gphcKey && !next[gphcKey] && currentUser.gphc_number) {
+        next[gphcKey] = currentUser.gphc_number;
+      }
+
+      return next;
+    });
+  }, [form, currentUser]);
+
+  /* ------------- Signature from profile (read-only) ------------- */
+  useEffect(() => {
+    if (!currentUser || !currentUser.signature_image) return;
+
+    const path = currentUser.signature_image;
+    const url = resolveImageUrl(path);
+
+    setSignaturePath(path);
+    setSignatureUrl(url);
+  }, [currentUser]);
 
   /* ---------------- Persist to localStorage ---------------- */
   useEffect(() => {
@@ -270,105 +273,6 @@ export default function PharmacistDeclarationTab({
 
   function handleFieldChange(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
-  }
-
-  /* ---------------- Canvas drawing handlers ---------------- */
-  function getCanvasPos(
-    e: PointerEvent<HTMLCanvasElement>
-  ): { x: number; y: number } | null {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-    };
-  }
-
-  function handlePointerDown(e: PointerEvent<HTMLCanvasElement>) {
-    const pos = getCanvasPos(e);
-    if (!pos) return;
-    drawingRef.current = true;
-    lastPosRef.current = pos;
-  }
-
-  function handlePointerMove(e: PointerEvent<HTMLCanvasElement>) {
-    if (!drawingRef.current) return;
-    const canvas = canvasRef.current;
-    const lastPos = lastPosRef.current;
-    if (!canvas || !lastPos) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const pos = getCanvasPos(e);
-    if (!pos) return;
-
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#ffffff";
-
-    ctx.beginPath();
-    ctx.moveTo(lastPos.x, lastPos.y);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
-
-    lastPosRef.current = pos;
-  }
-
-  function endDrawing() {
-    drawingRef.current = false;
-    lastPosRef.current = null;
-  }
-
-  /* ---------------- Signature upload ---------------- */
-  async function handleSaveSignature() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    setUploading(true);
-    setUploadError(null);
-
-    try {
-      const blob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob((b) => resolve(b), "image/png")
-      );
-
-      if (!blob) {
-        throw new Error("Failed to capture signature image.");
-      }
-
-      const file = new File([blob], `signature-${orderId || "order"}.png`, {
-        type: "image/png",
-      });
-
-      const res = await uploadPageImageApi(file);
-      const rawPath = (res as any).url || (res as any).path;
-      if (!rawPath) {
-        throw new Error("Upload succeeded but no URL was returned.");
-      }
-
-      const fullUrl = resolveImageUrl(rawPath);
-
-      setSignatureUrl(fullUrl);
-      setSignaturePath(rawPath);
-    } catch (err: any) {
-      console.error("Signature upload failed:", err);
-      setUploadError(err?.message || "Failed to upload signature.");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  function handleClearSignature() {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-    setSignatureUrl(null);
-    setSignaturePath(null);
-    setUploadError(null);
   }
 
   /* ---------------- Render ---------------- */
@@ -463,80 +367,27 @@ export default function PharmacistDeclarationTab({
             </p>
           )}
           <p className="text-[11px] text-neutral-500">
-            Use your mouse or finger to sign inside the box. Click{" "}
+            This signature is loaded from your profile and{" "}
             <span className="font-semibold text-neutral-300">
-              “Save signature”
-            </span>{" "}
-            to upload and store it.
+              cannot be changed here
+            </span>
+            . To update it, please edit your Profile.
           </p>
 
-          <div className="border border-neutral-700 rounded-lg bg-neutral-950/70 p-2">
-            <canvas
-              ref={canvasRef}
-              width={500}
-              height={200}
-              className="w-full h-40 bg-neutral-900 rounded-md cursor-crosshair"
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={endDrawing}
-              onPointerLeave={endDrawing}
-            />
-            <div className="flex justify-between items-center mt-2 gap-2">
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveSignature}
-                  disabled={uploading}
-                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {uploading && (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  )}
-                  {!uploading && <Save className="h-3 w-3" />}
-                  {uploading ? "Uploading…" : "Save signature"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearSignature}
-                  className="inline-flex items-center gap-1 rounded-full border border-rose-500/70 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/20"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  Clear
-                </button>
-              </div>
-
-              <div className="flex flex-col items-end gap-1">
-                {signatureUrl && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-emerald-300">
-                      Signature uploaded
-                    </span>
-                    <a
-                      href={signatureUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] text-emerald-300 underline"
-                    >
-                      View
-                    </a>
-                  </div>
-                )}
-                {uploadError && (
-                  <span className="text-[11px] text-rose-300">
-                    {uploadError}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {signatureUrl && (
-              <div className="mt-3">
+          <div className="border border-neutral-700 rounded-lg bg-neutral-950/70 p-3">
+            {signatureUrl ? (
+              <div className="flex items-center justify-center h-40 bg-neutral-900 rounded-md border border-neutral-700">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={signatureUrl}
-                  alt="Uploaded signature preview"
-                  className="h-16 rounded-md border border-neutral-700 bg-neutral-900 object-contain"
+                  alt="Pharmacist signature"
+                  className="max-h-32 max-w-full object-contain"
                 />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-40 bg-neutral-900 rounded-md border border-neutral-700 text-[11px] text-neutral-500 text-center px-4">
+                No signature is configured for your profile. Please contact
+                your admin or update your Profile to add a signature.
               </div>
             )}
           </div>
