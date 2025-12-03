@@ -18,9 +18,11 @@ import {
   LogOut,
   Atom,
   Pill,
+  PackageX,
+  PackageCheck,
+  User, // 👈 added
 } from "lucide-react";
-import { useOrdersStats } from "../../app/dashboard/orders-badge-context";
- // 🔁 adjust path
+import { useOrdersStats } from "../../app/dashboard/orders-badge-context"; // 🔁 adjust path
 
 type MenuItem = {
   key: string;
@@ -58,7 +60,7 @@ const menu: SidebarEntry[] = [
     group: "Operations",
     items: [
       { key: "/dashboard/services", label: "Services", icon: Settings },
-      { key: "/dashboard/medicine", label: "Medicines", icon: Pill },
+      // { key: "/dashboard/medicine", label: "Medicines", icon: Pill },
     ],
   },
   {
@@ -88,8 +90,8 @@ const menu: SidebarEntry[] = [
   {
     group: "Orders",
     items: [
-      { key: "/dashboard/orders/completed", label: "Completed", icon: Check },
-      { key: "/dashboard/orders/rejected", label: "Rejected", icon: Clock },
+      { key: "/dashboard/orders/completed", label: "Completed", icon: PackageCheck },
+      { key: "/dashboard/orders/rejected", label: "Rejected", icon: PackageX },
       { key: "/dashboard/orders/unpaid", label: "Unpaid", icon: ClipboardList },
     ],
   },
@@ -131,6 +133,9 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
     }
     return true;
   });
+
+  // 👇 Active state for profile tab at bottom
+  const profileActive = path.startsWith("/dashboard/profile");
 
   return (
     <aside className="w-64 bg-[#0b0b0c] border-r border-neutral-800 min-h-screen flex flex-col">
@@ -227,14 +232,29 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
         })}
       </div>
 
-      {/* Logout */}
-      <div className="p-5 border-t border-neutral-800">
+      {/* Bottom fixed area: Profile + Logout */}
+      <div className="p-5 border-t border-neutral-800 space-y-2">
+        {/* Profile tab – fixed like Logout */}
+        <Link
+          href="/dashboard/profile" // 👈 change this if your profile route is different
+          onClick={onClose}
+          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition font-medium text-sm ${
+            profileActive
+              ? "bg-neutral-800 text-white"
+              : "bg-neutral-900 text-neutral-300 hover:bg-neutral-800 hover:text-white"
+          }`}
+        >
+          <User size={16} />
+          <span>Profile</span>
+        </Link>
+
+        {/* Logout */}
         <button
           onClick={() => {
             logout();
             onClose?.();
           }}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 transition text-red-400 hover:text-red-300 font-medium"
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-neutral-900 hover:bg-neutral-800 transition text-red-400 hover:text-red-300 font-medium text-sm"
         >
           <LogOut size={16} />
           <span>Logout</span>

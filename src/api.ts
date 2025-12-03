@@ -406,17 +406,56 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
 
 /* ------------------- Users APIs ------------------- */
 
-/* ------------------- Users APIs ------------------- */
-
 export type UserDto = {
   _id: string;
+
+  // existing
   name?: string;
   fullName?: string;
   firstName?: string;
   lastName?: string;
   email?: string;
+
+  // from /users/me
+  gender?: string;
+  phone?: string;
+  dob?: string; // ISO string
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  county?: string;
+  postalcode?: string;
+  country?: string;
+  user_priority?: string;
+
+  // optional signature (base64 data URL)
+  signature?: string;
+
   [key: string]: any;
 };
+
+/**
+ * GET /users/me – current logged-in user
+ */
+export async function getCurrentUserApi(): Promise<UserDto> {
+  const base = getBackendBase();
+  const url = `${base}/users/me`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<UserDto>(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
 
 export async function getUserByIdApi(userId: string) {
   const base = getBackendBase();
@@ -440,11 +479,13 @@ export async function getUserByIdApi(userId: string) {
 
 // PUT /users/:id -> Update a user by ID
 export async function updateUserApi(userId: string, payload: any) {
-  const base = getBackendBase(); // Get the correct backend base URL dynamically
-  const url = `${base}/users/${userId}`; // Construct the URL using the userId
+  const base = getBackendBase();
+  const url = `${base}/users/${userId}`;
 
-  // Get the token from local storage or a global auth state (use your own method of getting it)
-  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -453,10 +494,10 @@ export async function updateUserApi(userId: string, payload: any) {
   return jsonFetch<any>(url, {
     method: "PUT",
     headers: {
-      Authorization: `Bearer ${token}`, // Add the Bearer token to the request
-      "Content-Type": "application/json", // Specify content type for the payload
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload), // Send the updated user data
+    body: JSON.stringify(payload),
   });
 }
 
@@ -465,7 +506,10 @@ export async function createUserApi(payload: any) {
   const base = getBackendBase();
   const url = `${base}/users`;
 
-  const token = localStorage.getItem("session_token");
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
 
   if (!token) {
     throw new Error("No authentication token found.");
@@ -474,12 +518,13 @@ export async function createUserApi(payload: any) {
   return jsonFetch<any>(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`, // Bearer token
-      "Content-Type": "application/json", // JSON body
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
   });
 }
+
 
 // Single weekday config
 export type ScheduleWeekDay = {
