@@ -6,6 +6,7 @@ import {
   getOrderByIdApi,
   updateOrderStatusApi,
   getUserByIdApi,
+  updateUserApi,
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
@@ -76,6 +77,15 @@ function paymentBadgeClasses(status: string) {
     default:
       return "bg-neutral-500/10 text-neutral-300 border-neutral-500/40";
   }
+}
+
+function priorityBadgeClasses(priority?: string | null) {
+  const p = (priority || "yellow").toLowerCase();
+  if (p === "red")
+    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "green")
+    return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
+  return "border-amber-500/60 bg-amber-500/10 text-amber-200"; // default yellow
 }
 
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
@@ -149,7 +159,19 @@ function getUserInitials(user: UserDto | null): string {
   return initials.join("") || "PT";
 }
 
-function PatientProfileCard({ user }: { user: UserDto | null }) {
+function PatientProfileCard({
+  user,
+  priority,
+  onPriorityChange,
+  prioritySaving,
+  priorityError,
+}: {
+  user: UserDto | null;
+  priority?: string;
+  onPriorityChange?: (p: string) => void;
+  prioritySaving?: boolean;
+  priorityError?: string | null;
+}) {
   if (!user) {
     return (
       <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4">
@@ -174,6 +196,9 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
   const dobLabel = formatDobWithAge(u.dob);
   const createdAt = u.createdAt || u.created_at || null;
   const updatedAt = u.updatedAt || u.updated_at || null;
+
+  const currentPriority =
+    (priority ?? u.user_priority ?? "yellow") as string;
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-4">
@@ -263,6 +288,39 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
           </span>
         </span>
       </div>
+
+      {/* Priority status (editable) */}
+      {onPriorityChange && (
+        <div className="pt-3 border-t border-neutral-800 space-y-2">
+          <p className="text-[11px] text-neutral-400">Priority status</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${priorityBadgeClasses(
+                currentPriority
+              )}`}
+            >
+              <span className="h-2 w-2 rounded-full bg-current" />
+              {currentPriority}
+            </span>
+            <select
+              className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-emerald-500"
+              disabled={prioritySaving}
+              value={currentPriority}
+              onChange={(e) => onPriorityChange(e.target.value)}
+            >
+              <option value="red">Red – High risk</option>
+              <option value="yellow">Yellow – Medium</option>
+              <option value="green">Green – Low</option>
+            </select>
+            {prioritySaving && (
+              <Loader2 className="h-3 w-3 animate-spin text-neutral-400" />
+            )}
+          </div>
+          {priorityError && (
+            <p className="text-[11px] text-rose-300">{priorityError}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -303,6 +361,10 @@ export default function Page() {
 
   // ordered-by user state (for detail modal)
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
+
+  // priority editing state
+  const [prioritySaving, setPrioritySaving] = useState(false);
+  const [priorityError, setPriorityError] = useState<string | null>(null);
 
   // 🔒 hard-coded filter
   const STATUS = "approved";
@@ -420,6 +482,8 @@ export default function Page() {
     setNewNote("");
     setNewConsultNote("");
     setOrderedByUser(null);
+    setPriorityError(null);
+    setPrioritySaving(false);
 
     try {
       const order = await getOrderByIdApi(id);
@@ -445,41 +509,81 @@ export default function Page() {
     }
   }
 
-// Save admin + consultation notes
-async function handleSaveNotes() {
-  if (!selectedOrder) return;
+  // Save admin + consultation notes
+  async function handleSaveNotes() {
+    if (!selectedOrder) return;
 
-  setSavingNotes(true);
-  setDetailError(null);
+    setSavingNotes(true);
+    setDetailError(null);
 
-  try {
-    const payload: any = {
-      // keep current status, don't change it
-      status: selectedOrder.status,
+    try {
+      const payload: any = {
+        // keep current status, don't change it
+        status: selectedOrder.status,
 
-      // 🔹 root admin notes (already working)
-      admin_notes: adminNotes,
+        // root admin notes
+        admin_notes: adminNotes,
 
-      // 🔹 root consultation notes (what you want in DB)
-      consultation_notes: consultationNotesEdit,
+        // root consultation notes
+        consultation_notes: consultationNotesEdit,
+        consultant_notes: consultationNotesEdit,
+      };
 
-      // 🔹 alias for safety if backend uses this name instead
-      consultant_notes: consultationNotesEdit,
-    };
+      const updated = await updateOrderStatusApi(selectedOrder._id, payload);
 
-    const updated = await updateOrderStatusApi(selectedOrder._id, payload);
-
-    // refresh from server so UI always shows what’s really stored
-    setSelectedOrder(updated);
-    setAdminNotes((updated as any).admin_notes || []);
-    setConsultationNotesEdit(extractConsultationNotes(updated));
-  } catch (e: any) {
-    setDetailError(e?.message || "Failed to save notes");
-  } finally {
-    setSavingNotes(false);
+      setSelectedOrder(updated);
+      setAdminNotes((updated as any).admin_notes || []);
+      setConsultationNotesEdit(extractConsultationNotes(updated));
+    } catch (e: any) {
+      setDetailError(e?.message || "Failed to save notes");
+    } finally {
+      setSavingNotes(false);
+    }
   }
-}
 
+  // priority change (patient)
+  async function handlePriorityChange(newPriority: string) {
+    if (!orderedByUser) return;
+
+    const userId = orderedByUser._id;
+    const prevPriority = (orderedByUser as any).user_priority || "yellow";
+
+    setPrioritySaving(true);
+    setPriorityError(null);
+
+    try {
+      // optimistic
+      setOrderedByUser({
+        ...(orderedByUser as any),
+        user_priority: newPriority,
+      } as any);
+
+      const updatedUser = await updateUserApi(userId, {
+        user_priority: newPriority,
+      });
+
+      setOrderedByUser(updatedUser);
+
+      // update cached users for list
+      setOrderUsers((prev) => ({
+        ...prev,
+        [updatedUser._id]: updatedUser,
+      }));
+    } catch (e: any) {
+      console.error("Failed to update priority", e);
+      setPriorityError(e?.message || "Failed to update priority status.");
+      setOrderedByUser((prev) =>
+        prev
+          ? ({
+              ...(prev as any),
+              user_priority: prevPriority,
+            } as any)
+          : prev
+      );
+    } finally {
+      setPrioritySaving(false);
+    }
+  }
 
   // 👉 Start consultancy: navigate with service_id & order_id
   function handleStartConsultancy() {
@@ -562,6 +666,9 @@ async function handleSaveNotes() {
                 : null;
 
             const patientName = getDisplayPatientName(order, cardUser);
+            const priority =
+              ((cardUser as any)?.user_priority as string | undefined) ||
+              undefined;
 
             return (
               <div
@@ -613,12 +720,22 @@ async function handleSaveNotes() {
 
                 {/* Middle: patient + appointment */}
                 <div className="mt-4 flex flex-col gap-2 text-xs text-neutral-300">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <User className="h-4 w-4 text-neutral-400" />
                     <span className="font-medium">{patientName}</span>
                     {(order as any).email && (
-                      <span className="ml-2 truncate text-neutral-400">
+                      <span className="truncate text-neutral-400">
                         {(order as any).email}
+                      </span>
+                    )}
+                    {priority && (
+                      <span
+                        className={`ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                          priority
+                        )}`}
+                      >
+                        <span className="h-2 w-2 rounded-full bg-current" />
+                        {priority}
                       </span>
                     )}
                   </div>
@@ -781,7 +898,17 @@ async function handleSaveNotes() {
 
                   {/* Patient profile + appointment */}
                   <div className="grid grid-cols-1 xl:grid-cols-[1.7fr,1.1fr] gap-4">
-                    <PatientProfileCard user={orderedByUser} />
+                    <PatientProfileCard
+                      user={orderedByUser}
+                      priority={
+                        ((orderedByUser as any)?.user_priority as
+                          | string
+                          | undefined) || "yellow"
+                      }
+                      onPriorityChange={handlePriorityChange}
+                      prioritySaving={prioritySaving}
+                      priorityError={priorityError}
+                    />
 
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-4 space-y-2">
                       <p className="text-xs text-neutral-400 mb-0.5">

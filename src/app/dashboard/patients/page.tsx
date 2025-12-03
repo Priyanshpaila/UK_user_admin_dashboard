@@ -61,6 +61,16 @@ function statusBadgeClasses(status: string | undefined) {
   return "bg-neutral-800 text-neutral-200 border-neutral-700";
 }
 
+function priorityBadgeClasses(priority: string | undefined) {
+  const p = (priority || "yellow").toLowerCase();
+  if (p === "red")
+    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "green")
+    return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
+  // default yellow
+  return "border-amber-500/60 bg-amber-500/10 text-amber-200";
+}
+
 export default function PatientsPage() {
   const [patients, setPatients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +138,7 @@ export default function PatientsPage() {
         county: editingPatient.county ?? "",
         postalcode: editingPatient.postalcode ?? "",
         country: editingPatient.country ?? "",
+        user_priority: editingPatient.user_priority ?? "yellow", // 🔹 allow changing priority
       };
 
       if (dobInput) {
@@ -156,7 +167,6 @@ export default function PatientsPage() {
       setPatientOrders([]);
       setOrdersMeta(null);
 
-      // ⬇️ Using your existing getOrdersApi, passing only user_id
       const res = await getOrdersApi({
         user_id: patientId,
         page: 1,
@@ -323,6 +333,7 @@ export default function PatientsPage() {
             }`.trim();
             const hasContact = patient.email || patient.phone;
             const isSelected = selectedPatientId === patient._id;
+            const priority = (patient.user_priority || "yellow") as string;
 
             return (
               <div
@@ -335,8 +346,8 @@ export default function PatientsPage() {
                 }`}
               >
                 <div className="p-4 flex-1 flex flex-col gap-2">
-                  {/* Top row: avatar + name + gender */}
-                  <div className="flex items-center gap-3">
+                  {/* Top row: avatar + name + gender + priority */}
+                  <div className="flex items-start gap-3">
                     <div className="h-10 w-10 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 text-sm font-semibold text-neutral-200">
                       {fullName
                         ? fullName
@@ -349,15 +360,28 @@ export default function PatientsPage() {
                     </div>
 
                     <div className="flex-1">
-                      <h2 className="text-sm font-semibold text-white line-clamp-1 flex items-center gap-1">
-                        {fullName || "Unnamed patient"}
-                        {isSelected && (
-                          <ArrowRightCircle
-                            size={14}
-                            className="text-blue-400"
-                          />
-                        )}
-                      </h2>
+                      <div className="flex items-center gap-2 justify-between">
+                        <h2 className="text-sm font-semibold text-white line-clamp-1 flex items-center gap-1">
+                          {fullName || "Unnamed patient"}
+                          {isSelected && (
+                            <ArrowRightCircle
+                              size={14}
+                              className="text-blue-400"
+                            />
+                          )}
+                        </h2>
+
+                        {/* Priority chip */}
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${priorityBadgeClasses(
+                            priority
+                          )}`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-current" />
+                          {priority}
+                        </span>
+                      </div>
+
                       <p className="text-[11px] text-neutral-400 capitalize">
                         {patient.gender || "unspecified"}
                         {patient.city ? ` • ${patient.city}` : ""}
@@ -527,11 +551,20 @@ export default function PatientsPage() {
                   )}
                 </div>
 
-                {/* Footer: single Edit Patient button */}
+                {/* Footer: Edit Patient & Priority label */}
                 <div className="px-4 py-3 border-t border-neutral-800 flex items-center justify-between">
-                  <span className="text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300 bg-neutral-900/60">
-                    Patient
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full border border-neutral-700 text-neutral-300 bg-neutral-900/60">
+                      Patient
+                    </span>
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded-full border ${priorityBadgeClasses(
+                        priority
+                      )}`}
+                    >
+                      Priority: {priority}
+                    </span>
+                  </div>
 
                   <button
                     onClick={(e) => {
@@ -662,6 +695,27 @@ export default function PatientsPage() {
                     })
                   }
                 />
+              </div>
+
+              {/* Priority */}
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Priority status
+                </label>
+                <select
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
+                  value={editingPatient.user_priority ?? "yellow"}
+                  onChange={(e) =>
+                    setEditingPatient({
+                      ...editingPatient,
+                      user_priority: e.target.value,
+                    })
+                  }
+                >
+                  <option value="red">Red – High risk</option>
+                  <option value="yellow">Yellow – Medium</option>
+                  <option value="green">Green – Low</option>
+                </select>
               </div>
 
               {/* Address Line 1 */}

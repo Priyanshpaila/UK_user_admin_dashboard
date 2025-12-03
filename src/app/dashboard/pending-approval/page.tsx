@@ -108,10 +108,18 @@ function paymentBadgeClasses(status: string) {
   }
 }
 
+function priorityBadgeClasses(priority?: string | null) {
+  const p = (priority || "yellow").toLowerCase();
+  if (p === "red")
+    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "green")
+    return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
+  return "border-amber-500/60 bg-amber-500/10 text-amber-200"; // default yellow
+}
+
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (!order) return "Unknown";
 
-  // if backend adds patient_name directly
   if ((order as any).patient_name) return (order as any).patient_name;
 
   const fromOrder = `${(order as any).first_name || ""} ${
@@ -181,6 +189,10 @@ export default function Page() {
   const [verificationError, setVerificationError] = useState<string | null>(
     null
   );
+
+  // priority editing state
+  const [prioritySaving, setPrioritySaving] = useState(false);
+  const [priorityError, setPriorityError] = useState<string | null>(null);
 
   // global stats actions (for sidebar badges)
   const { applyStatusChange, refresh } = useOrdersStats();
@@ -294,6 +306,8 @@ export default function Page() {
     setOrderedByUser(null);
     setVerificationError(null);
     setVerifyingField(null);
+    setPriorityError(null);
+    setPrioritySaving(false);
 
     try {
       const order = await getOrderByIdApi(id);
@@ -446,6 +460,49 @@ export default function Page() {
       (selectedOrder.service_name &&
         selectedOrder.service_name.toLowerCase() === "weight management"));
 
+  // 🔁 priority change
+  async function handlePriorityChange(newPriority: string) {
+    if (!orderedByUser) return;
+
+    const userId = orderedByUser._id;
+    const prevPriority = (orderedByUser as any).user_priority || "yellow";
+
+    setPrioritySaving(true);
+    setPriorityError(null);
+
+    try {
+      // optimistic local update
+      setOrderedByUser({
+        ...(orderedByUser as any),
+        user_priority: newPriority,
+      } as any);
+
+      const updatedUser = await updateUserApi(userId, {
+        user_priority: newPriority,
+      });
+
+      setOrderedByUser(updatedUser);
+      setOrderUsers((prev) => ({
+        ...prev,
+        [updatedUser._id]: updatedUser,
+      }));
+    } catch (e: any) {
+      console.error("Failed to update priority", e);
+      setPriorityError(e?.message || "Failed to update priority status.");
+      // revert
+      setOrderedByUser((prev) =>
+        prev
+          ? ({
+              ...(prev as any),
+              user_priority: prevPriority,
+            } as any)
+          : prev
+      );
+    } finally {
+      setPrioritySaving(false);
+    }
+  }
+
   // 🔁 TOGGLE SCR / ID VERIFIED
   async function handleVerify(field: "scr_verified" | "id_verified") {
     if (!orderedByUser) return;
@@ -533,6 +590,9 @@ export default function Page() {
                 : null;
 
             const patientName = getDisplayPatientName(order, cardUser);
+            const priority =
+              ((cardUser as any)?.user_priority as string | undefined) ||
+              "yellow";
 
             return (
               <div
@@ -584,14 +644,24 @@ export default function Page() {
 
                 {/* Middle: patient + appointment */}
                 <div className="mt-4 flex flex-col gap-2 text-xs text-neutral-300">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <User className="h-4 w-4 text-neutral-400" />
                     <span className="font-medium">{patientName}</span>
                     {(order as any).email && (
-                      <span className="ml-2 truncate text-neutral-400">
+                      <span className="truncate text-neutral-400">
                         {(order as any).email}
                       </span>
                     )}
+
+                    {/* Priority badge on card */}
+                    <span
+                      className={`ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                        priority
+                      )}`}
+                    >
+                      <span className="h-2 w-2 rounded-full bg-current" />
+                      {priority}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <CalendarDays className="h-4 w-4 text-neutral-400" />
@@ -860,9 +930,55 @@ export default function Page() {
                         </div>
                       </div>
 
+                      {/* Priority status (editable) */}
+                      {orderedByUser && (
+                        <div className="pt-3 border-t border-neutral-800 mt-1 space-y-2">
+                          <p className="text-[11px] text-neutral-400">
+                            Priority status
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${priorityBadgeClasses(
+                                (orderedByUser as any)?.user_priority
+                              )}`}
+                            >
+                              <span className="h-2 w-2 rounded-full bg-current" />
+                              {(
+                                (orderedByUser as any)?.user_priority ||
+                                "yellow"
+                              ).toString()}
+                            </span>
+                            <select
+                              className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-emerald-500"
+                              disabled={prioritySaving}
+                              value={
+                                ((orderedByUser as any)?.user_priority as
+                                  | string
+                                  | undefined) || "yellow"
+                              }
+                              onChange={(e) =>
+                                handlePriorityChange(e.target.value)
+                              }
+                            >
+                              <option value="red">Red – High risk</option>
+                              <option value="yellow">Yellow – Medium</option>
+                              <option value="green">Green – Low</option>
+                            </select>
+                            {prioritySaving && (
+                              <Loader2 className="h-3 w-3 animate-spin text-neutral-400" />
+                            )}
+                          </div>
+                          {priorityError && (
+                            <p className="text-[11px] text-rose-300">
+                              {priorityError}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {/* Weight management verification inside patient card */}
                       {isWeightManagement && orderedByUser && (
-                        <div className="pt-3 border-t border-neutral-800 space-y-1">
+                        <div className="pt-3 border-t border-neutral-800 space-y-1 mt-2">
                           <p className="text-[11px] text-neutral-400">
                             Verification (Weight Management only)
                           </p>
@@ -951,7 +1067,7 @@ export default function Page() {
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
-                        <span className="font-semibold text-white">
+                          <span className="font-semibold text-white">
                           {formatMoney(selectedOrder.meta?.totalMinor)}
                         </span>
                       </p>
@@ -1070,50 +1186,7 @@ export default function Page() {
                       </div>
                     </div>
 
-                    {/* Consultation notes */}
-                    {/* <div className="space-y-2">
-                      <p className="text-[11px] font-medium text-neutral-300">
-                        Consultation notes
-                      </p>
-                      {consultationNotes.length > 0 && (
-                        <div className="space-y-1">
-                          {consultationNotes.map((note, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
-                            >
-                              <span className="flex-1 truncate">{note}</span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleRemoveConsultationNote(idx)
-                                }
-                                className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={newConsultationNote}
-                          onChange={(e) =>
-                            setNewConsultationNote(e.target.value)
-                          }
-                          className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
-                          placeholder="Add new consultation note"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleAddConsultationNote}
-                          className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-emerald-500 hover:text-emerald-200"
-                        >
-                          + Add
-                        </button>
-                      </div>
-                    </div> */}
+                    {/* (Consultation notes block left commented as before) */}
                   </div>
 
                   {/* Action bar */}
