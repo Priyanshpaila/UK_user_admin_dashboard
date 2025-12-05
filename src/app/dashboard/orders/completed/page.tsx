@@ -25,6 +25,7 @@ import {
   Mail,
   Phone,
 } from "lucide-react";
+import jsPDF from "jspdf";
 
 /* ----------------- Helpers ----------------- */
 
@@ -140,13 +141,707 @@ function getUserInitials(user: UserDto | null): string {
     u.email ||
     "";
   if (!name) return "PT";
-  const parts = String(name)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
   return initials.join("") || "PT";
 }
+
+/* ----------------- PDF Helpers ----------------- */
+
+type PdfCursor = { y: number };
+
+const MARGIN_X = 18;
+const TOP_CONTENT_Y = 32;
+
+function getPageWidth(doc: jsPDF) {
+  return (
+    (doc.internal as any).pageSize?.getWidth?.() ??
+    (doc.internal as any).pageSize?.width ??
+    210
+  );
+}
+
+function ensureSpace(doc: jsPDF, cursor: PdfCursor, extra = 6) {
+  const pageHeight =
+    (doc.internal as any).pageSize?.getHeight?.() ??
+    (doc.internal as any).pageSize?.height ??
+    297; // A4 height in mm
+  const bottomMargin = 18;
+  if (cursor.y + extra > pageHeight - bottomMargin) {
+    doc.addPage();
+    cursor.y = TOP_CONTENT_Y;
+  }
+}
+
+function createPdfBaseDoc(title: string) {
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const pageWidth = getPageWidth(doc);
+
+  // Header band
+  doc.setFillColor(15, 23, 42); // dark slate
+  doc.rect(0, 0, pageWidth, 26, "F");
+
+  // Brand
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.text("Pharmacy Express", MARGIN_X, 14);
+
+  // Subtitle + timestamp
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  const generated = formatDateTime(new Date().toISOString());
+  const label = `Generated: ${generated}`;
+  const labelWidth = doc.getTextWidth(label);
+  doc.text(label, pageWidth - MARGIN_X - labelWidth, 14);
+
+  const subtitle = title;
+  const subWidth = doc.getTextWidth(subtitle);
+  doc.text(subtitle, pageWidth - MARGIN_X - subWidth, 20);
+
+  // Accent line under header
+  doc.setDrawColor(56, 189, 248); // cyan-ish
+  doc.setLineWidth(0.7);
+  doc.line(MARGIN_X, 26, pageWidth - MARGIN_X, 26);
+
+  // Reset content style
+  doc.setTextColor(31, 41, 55); // neutral-800
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+
+  return doc;
+}
+
+function writeSectionTitle(doc: jsPDF, cursor: PdfCursor, title: string) {
+  ensureSpace(doc, cursor, 10);
+  const pageWidth = getPageWidth(doc);
+
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(15, 118, 110); // teal-ish
+  doc.text(title.toUpperCase(), MARGIN_X, cursor.y);
+
+  doc.setDrawColor(148, 163, 184); // gray-400
+  doc.setLineWidth(0.4);
+  doc.line(MARGIN_X, cursor.y + 1.8, pageWidth - MARGIN_X, cursor.y + 1.8);
+
+  cursor.y += 8;
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(31, 41, 55);
+}
+
+function writeLabelValueRow(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  label: string,
+  value: string,
+  x: number
+) {
+  ensureSpace(doc, cursor, 7);
+  doc.setFontSize(8.5);
+  doc.setTextColor(100, 116, 139); // label
+  doc.text(label.toUpperCase(), x, cursor.y);
+  cursor.y += 3.5;
+  doc.setFontSize(10);
+  doc.setTextColor(31, 41, 55);
+
+  const lines = doc.splitTextToSize(value || "—", 80);
+  lines.forEach((line: string) => {
+    ensureSpace(doc, cursor);
+    doc.text(line, x, cursor.y);
+    cursor.y += 4.2;
+  });
+}
+
+/**
+ * Two-column Patient / Order summary (no background box).
+ */
+function writePatientOrderBlock(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  order: OrderDto,
+  user: UserDto | null
+) {
+  const pageWidth = getPageWidth(doc);
+  const colGap = 8;
+  const colWidth = (pageWidth - 2 * MARGIN_X - colGap) / 2;
+  const leftX = MARGIN_X;
+  const rightX = MARGIN_X + colWidth + colGap;
+
+  // Make sure we have enough space near the top of the page
+  ensureSpace(doc, cursor, 40);
+
+  const leftCursor: PdfCursor = { y: cursor.y };
+  const rightCursor: PdfCursor = { y: cursor.y };
+
+  const patientName = getDisplayPatientName(order, user || undefined);
+  const u: any = user || {};
+  const dob = formatDobWithAge(u.dob);
+  const gender =
+    u.gender && typeof u.gender === "string"
+      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
+      : null;
+
+  const addr1 =
+    u.address_line1 || u.addressLine1 || u.address_line_1 || u.address1;
+  const city = u.city;
+  const county = u.county;
+  const postcode = u.postalcode || u.postcode;
+  const country = u.country;
+  const addrParts = [addr1, city, county, postcode, country].filter(Boolean);
+
+  /* ---------- Left column: Patient ---------- */
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.setFont("helvetica", "bold");
+  doc.text("PATIENT DETAILS", leftX, leftCursor.y);
+  leftCursor.y += 5;
+
+  doc.setFont("helvetica", "normal");
+  writeLabelValueRow(doc, leftCursor, "Name", patientName, leftX);
+  if (dob) writeLabelValueRow(doc, leftCursor, "Date of birth", dob, leftX);
+  if (gender) writeLabelValueRow(doc, leftCursor, "Gender", gender, leftX);
+  if (addrParts.length) {
+    writeLabelValueRow(doc, leftCursor, "Address", addrParts.join(", "), leftX);
+  }
+
+  /* ---------- Right column: Order ---------- */
+  doc.setFontSize(9);
+  doc.setTextColor(100, 116, 139);
+  doc.setFont("helvetica", "bold");
+  doc.text("ORDER DETAILS", rightX, rightCursor.y);
+  rightCursor.y += 5;
+
+  doc.setFont("helvetica", "normal");
+  writeLabelValueRow(
+    doc,
+    rightCursor,
+    "Reference",
+    order.reference || order._id,
+    rightX
+  );
+  writeLabelValueRow(
+    doc,
+    rightCursor,
+    "Service",
+    `${order.service_name} (${order.service_slug || "N/A"})`,
+    rightX
+  );
+
+  const appointmentAt =
+    order.meta?.appointment_start_at || order.start_at || null;
+  if (appointmentAt) {
+    writeLabelValueRow(
+      doc,
+      rightCursor,
+      "Appointment",
+      formatDateTime(appointmentAt),
+      rightX
+    );
+  }
+
+  if (order.status || order.payment_status) {
+    writeLabelValueRow(
+      doc,
+      rightCursor,
+      "Status",
+      `${order.status?.toUpperCase()} / ${
+        order.payment_status?.toUpperCase() || "N/A"
+      }`,
+      rightX
+    );
+  }
+
+  // Move main cursor below whichever column is taller
+  const blockBottom = Math.max(leftCursor.y, rightCursor.y);
+  cursor.y = blockBottom + 6;
+}
+
+/* ----- RAF section ----- */
+function writeRafSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
+  const meta: any = order.meta || {};
+  const raf = meta.formsQA?.raf;
+  const hasRaf = !!raf?.qa?.length;
+
+  writeSectionTitle(doc, cursor, "Risk Assessment Form (RAF)");
+
+  if (!hasRaf) {
+    ensureSpace(doc, cursor);
+    doc.text("No RAF data captured for this order.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+    return;
+  }
+
+  doc.setFontSize(10);
+
+  raf.qa.forEach((qa: any, idx: number) => {
+    const q = qa.question || qa.key || `Question ${idx + 1}`;
+    const ans = Array.isArray(qa.raw)
+      ? qa.raw.join(", ")
+      : qa.answer ?? qa.raw ?? "—";
+
+    // Question (bold)
+    doc.setFont("helvetica", "bold");
+    const qLines = doc.splitTextToSize(
+      `${idx + 1}. ${q}`,
+      getPageWidth(doc) - 2 * MARGIN_X
+    );
+    qLines.forEach((line: string) => {
+      ensureSpace(doc, cursor);
+      doc.text(line, MARGIN_X, cursor.y);
+      cursor.y += 4.5;
+    });
+
+    // Answer
+    doc.setFont("helvetica", "normal");
+    const aLines = doc.splitTextToSize(
+      `Answer: ${ans}`,
+      getPageWidth(doc) - 2 * MARGIN_X - 4
+    );
+    aLines.forEach((line: string) => {
+      ensureSpace(doc, cursor);
+      doc.text(line, MARGIN_X + 4, cursor.y);
+      cursor.y += 4.2;
+    });
+
+    cursor.y += 3;
+  });
+}
+
+/* ----- Advice section ----- */
+function extractAdviceTexts(order: OrderDto): string[] {
+  const meta: any = order.meta || {};
+  const advice = meta.pharmacistAdvice;
+  const adviceState: Record<string, string[]> = advice?.adviceState || {};
+  return Object.values(adviceState)
+    .flatMap((arr) => arr || [])
+    .filter((s) => !!s && String(s).trim().length > 0)
+    .map((s) => String(s));
+}
+
+function writeAdviceSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
+  const adviceTexts = extractAdviceTexts(order);
+  const hasAdvice = adviceTexts.length > 0;
+
+  writeSectionTitle(doc, cursor, "Pharmacist Advice");
+
+  if (!hasAdvice) {
+    ensureSpace(doc, cursor);
+    doc.text(
+      "No Pharmacist Advice has been recorded for this order.",
+      MARGIN_X,
+      cursor.y
+    );
+    cursor.y += 6;
+    return;
+  }
+
+  const intro = doc.splitTextToSize(
+    "The following advice text snippets were selected during the consultation:",
+    getPageWidth(doc) - 2 * MARGIN_X
+  );
+  intro.forEach((line: string) => {
+    ensureSpace(doc, cursor);
+    doc.text(line, MARGIN_X, cursor.y);
+    cursor.y += 4.2;
+  });
+  cursor.y += 2;
+
+  adviceTexts.forEach((txt, idx) => {
+    const bullet = `• ${txt}`;
+    const lines = doc.splitTextToSize(bullet, getPageWidth(doc) - 2 * MARGIN_X);
+    lines.forEach((line: string) => {
+      ensureSpace(doc, cursor);
+      doc.text(line, MARGIN_X, cursor.y);
+      cursor.y += 4.2;
+    });
+    cursor.y += 1;
+  });
+}
+
+/* ----- Signature loader ----- */
+
+async function getSignatureDataUrl(order: OrderDto): Promise<string | null> {
+  try {
+    const meta: any = order.meta || {};
+    const declaration = meta.pharmacistDeclaration;
+    const url: string | undefined = declaration?.signatureUrl;
+    if (!url) return null;
+
+    // Already a data URL
+    if (url.startsWith("data:image")) return url;
+
+    // Fetch remote image and convert to data URL
+    const res = await fetch(url, { mode: "cors" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/* ----- Declaration section ----- */
+
+function writeDeclarationSection(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  order: OrderDto,
+  signatureDataUrl?: string | null
+) {
+  const meta: any = order.meta || {};
+  const declaration = meta.pharmacistDeclaration;
+  const hasDeclaration = !!declaration;
+
+  writeSectionTitle(doc, cursor, "Pharmacist Declaration");
+
+  if (!hasDeclaration) {
+    ensureSpace(doc, cursor);
+    doc.text(
+      "No Pharmacist Declaration has been recorded.",
+      MARGIN_X,
+      cursor.y
+    );
+    cursor.y += 6;
+    return;
+  }
+
+  const fields: Record<string, string> = declaration.fields || {};
+  const entries = Object.entries(fields);
+
+  if (!entries.length) {
+    ensureSpace(doc, cursor);
+    doc.text("No declaration fields were filled.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+  } else {
+    entries.forEach(([key, value]) => {
+      const labelLines = doc.splitTextToSize(`${key}:`, 60);
+      const valueLines = doc.splitTextToSize(
+        value || "—",
+        getPageWidth(doc) - MARGIN_X - 60 - 10
+      );
+
+      const numLines = Math.max(labelLines.length, valueLines.length);
+      for (let i = 0; i < numLines; i++) {
+        ensureSpace(doc, cursor);
+        const l = labelLines[i] || "";
+        const v = valueLines[i] || "";
+        if (l) {
+          doc.setFontSize(9);
+          doc.setTextColor(100, 116, 139);
+          doc.text(l, MARGIN_X, cursor.y);
+        }
+        if (v) {
+          doc.setFontSize(10);
+          doc.setTextColor(31, 41, 55);
+          doc.text(v, MARGIN_X + 60, cursor.y);
+        }
+        cursor.y += 4.2;
+      }
+      cursor.y += 2;
+    });
+  }
+
+  cursor.y += 4;
+
+  // Signature
+  if (signatureDataUrl) {
+    ensureSpace(doc, cursor, 30);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Pharmacist signature", MARGIN_X, cursor.y);
+    cursor.y += 4;
+
+    try {
+      const imgWidth = 40;
+      const imgHeight = 18;
+      doc.addImage(
+        signatureDataUrl,
+        "PNG",
+        MARGIN_X,
+        cursor.y,
+        imgWidth,
+        imgHeight
+      );
+      cursor.y += imgHeight + 4;
+    } catch {
+      ensureSpace(doc, cursor);
+      doc.setTextColor(148, 163, 184);
+      doc.text("Signature recorded in system.", MARGIN_X, cursor.y);
+      cursor.y += 5;
+    }
+  } else if (declaration?.signatureUrl) {
+    ensureSpace(doc, cursor);
+    doc.setFontSize(9);
+    doc.setTextColor(148, 163, 184);
+    doc.text("Signature recorded in system.", MARGIN_X, cursor.y);
+    cursor.y += 5;
+  }
+
+  if (declaration?.saved_at) {
+    ensureSpace(doc, cursor);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text("Saved at:", MARGIN_X, cursor.y);
+    doc.setTextColor(31, 41, 55);
+    doc.text(formatDateTime(declaration.saved_at), MARGIN_X + 20, cursor.y);
+    cursor.y += 5;
+  }
+}
+
+/* ----- Record of supply section ----- */
+function writeRecordSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
+  const meta: any = order.meta || {};
+  const record = meta.recordOfSupply;
+  const hasRecord = !!record;
+
+  writeSectionTitle(doc, cursor, "Record of Supply");
+
+  if (!hasRecord) {
+    ensureSpace(doc, cursor);
+    doc.text("No Record of Supply has been captured.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+    return;
+  }
+
+  const fields: Record<string, string> = record.fields || {};
+  const entries = Object.entries(fields);
+
+  if (!entries.length) {
+    ensureSpace(doc, cursor);
+    doc.text("Record of Supply fields are empty.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+    return;
+  }
+
+  entries.forEach(([key, value]) => {
+    const labelLines = doc.splitTextToSize(`${key}:`, 60);
+    const valueLines = doc.splitTextToSize(
+      value || "—",
+      getPageWidth(doc) - MARGIN_X - 60 - 10
+    );
+    const numLines = Math.max(labelLines.length, valueLines.length);
+
+    for (let i = 0; i < numLines; i++) {
+      ensureSpace(doc, cursor);
+      const l = labelLines[i] || "";
+      const v = valueLines[i] || "";
+      if (l) {
+        doc.setFontSize(9);
+        doc.setTextColor(100, 116, 139);
+        doc.text(l, MARGIN_X, cursor.y);
+      }
+      if (v) {
+        doc.setFontSize(10);
+        doc.setTextColor(31, 41, 55);
+        doc.text(v, MARGIN_X + 60, cursor.y);
+      }
+      cursor.y += 4.2;
+    }
+    cursor.y += 2;
+  });
+}
+
+/* ----- Invoice PDF ----- */
+async function exportInvoicePdf(order: OrderDto, user: UserDto | null) {
+  const doc = createPdfBaseDoc("Invoice");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+
+  writePatientOrderBlock(doc, cursor, order, user);
+
+  writeSectionTitle(doc, cursor, "Invoice Summary");
+
+  const statusLine = `Order status: ${order.status.toUpperCase()} | Payment: ${order.payment_status.toUpperCase()}`;
+  ensureSpace(doc, cursor);
+  doc.text(statusLine, MARGIN_X, cursor.y);
+  cursor.y += 6;
+
+  if ((order as any).createdAt || (order as any).created_at) {
+    ensureSpace(doc, cursor);
+    doc.text(
+      `Order created: ${formatDateTime(
+        (order as any).createdAt || (order as any).created_at
+      )}`,
+      MARGIN_X,
+      cursor.y
+    );
+    cursor.y += 6;
+  }
+
+  cursor.y += 2;
+  writeSectionTitle(doc, cursor, "Line Items");
+
+  const pageWidth = getPageWidth(doc);
+  const tableX = MARGIN_X;
+  const tableWidth = pageWidth - 2 * MARGIN_X;
+  const colItem = tableX + 2;
+  const colQty = tableX + tableWidth * 0.55;
+  const colUnit = tableX + tableWidth * 0.72;
+  const colTotal = tableX + tableWidth * 0.86;
+
+  const items = (order.meta?.items || []) as any[];
+
+  if (!items.length) {
+    ensureSpace(doc, cursor);
+    doc.text("No items found for this order.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+  } else {
+    // Table header background
+    ensureSpace(doc, cursor, 10);
+    const headerY = cursor.y;
+    const headerHeight = 7;
+    doc.setFillColor(15, 23, 42);
+    doc.setDrawColor(15, 23, 42);
+    doc.rect(tableX, headerY - 5, tableWidth, headerHeight, "FD");
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(9);
+    doc.text("Item", colItem, headerY);
+    doc.text("Qty", colQty, headerY);
+    doc.text("Unit (£)", colUnit, headerY);
+    doc.text("Total (£)", colTotal, headerY);
+
+    cursor.y += 5;
+    doc.setFontSize(9.5);
+    doc.setTextColor(31, 41, 55);
+
+    items.forEach((it, rowIdx) => {
+      const name = it.name || "Item";
+      const qty = it.qty ?? 1;
+      const unitMinor = it.unitMinor ?? null;
+      const totalMinor = it.totalMinor ?? it.totalMinor ?? null;
+
+      const nameLines = doc.splitTextToSize(name, colQty - colItem - 4);
+      const rowHeight = nameLines.length * 4.2 + 3;
+
+      ensureSpace(doc, cursor, rowHeight);
+
+      const rowY = cursor.y;
+
+      // Zebra row background (drawn before text)
+      if (rowIdx % 2 === 0) {
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(226, 232, 240);
+        doc.rect(tableX, rowY - 4, tableWidth, rowHeight, "FD");
+      }
+
+      // Text
+      doc.setTextColor(31, 41, 55);
+      nameLines.forEach((line: string, index: number) => {
+        doc.text(line, colItem, rowY + index * 4.2);
+      });
+
+      const numY = rowY;
+      doc.text(String(qty), colQty, numY);
+      if (unitMinor != null)
+        doc.text((unitMinor / 100).toFixed(2), colUnit, numY);
+      if (totalMinor != null)
+        doc.text((totalMinor / 100).toFixed(2), colTotal, numY);
+
+      cursor.y = rowY + rowHeight;
+    });
+  }
+
+  // Total
+  cursor.y += 4;
+  doc.setFontSize(11);
+  doc.setTextColor(15, 118, 110);
+  const total = order.meta?.totalMinor ?? null;
+  const totalText = `Total amount due: ${formatMoney(total)}`;
+  ensureSpace(doc, cursor);
+  doc.text(totalText, MARGIN_X, cursor.y);
+  cursor.y += 6;
+
+  doc.save(`Invoice_${order.reference || order._id}.pdf`);
+}
+
+/* ----- Export wrappers for each clinical PDF ----- */
+
+async function exportRafPdf(order: OrderDto, user: UserDto | null) {
+  const doc = createPdfBaseDoc("Risk Assessment Form (RAF)");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+  writePatientOrderBlock(doc, cursor, order, user);
+  writeRafSection(doc, cursor, order);
+  doc.save(`RAF_${order.reference || order._id}.pdf`);
+}
+
+async function exportAdvicePdf(order: OrderDto, user: UserDto | null) {
+  const doc = createPdfBaseDoc("Pharmacist Advice");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+  writePatientOrderBlock(doc, cursor, order, user);
+  writeAdviceSection(doc, cursor, order);
+  doc.save(`Advice_${order.reference || order._id}.pdf`);
+}
+
+async function exportDeclarationPdf(order: OrderDto, user: UserDto | null) {
+  const signatureDataUrl = await getSignatureDataUrl(order);
+  const doc = createPdfBaseDoc("Pharmacist Declaration");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+  writePatientOrderBlock(doc, cursor, order, user);
+  writeDeclarationSection(doc, cursor, order, signatureDataUrl);
+  doc.save(`Declaration_${order.reference || order._id}.pdf`);
+}
+
+async function exportRecordPdf(order: OrderDto, user: UserDto | null) {
+  const doc = createPdfBaseDoc("Record of Supply");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+  writePatientOrderBlock(doc, cursor, order, user);
+  writeRecordSection(doc, cursor, order);
+  doc.save(`RecordOfSupply_${order.reference || order._id}.pdf`);
+}
+
+async function exportAllClinicalPdf(order: OrderDto, user: UserDto | null) {
+  const signatureDataUrl = await getSignatureDataUrl(order);
+  const doc = createPdfBaseDoc("Clinical Documentation Bundle");
+  const cursor: PdfCursor = { y: TOP_CONTENT_Y };
+  writePatientOrderBlock(doc, cursor, order, user);
+
+  const meta: any = order.meta || {};
+  const raf = meta.formsQA?.raf;
+  const hasRaf = !!raf?.qa?.length;
+  const hasAdvice = extractAdviceTexts(order).length > 0;
+  const hasDeclaration = !!meta.pharmacistDeclaration;
+  const hasRecord = !!meta.recordOfSupply;
+
+  if (!hasRaf && !hasAdvice && !hasDeclaration && !hasRecord) {
+    writeSectionTitle(doc, cursor, "Clinical Documentation");
+    ensureSpace(doc, cursor);
+    doc.text(
+      "No clinical documentation has been recorded for this order.",
+      MARGIN_X,
+      cursor.y
+    );
+    doc.save(`ClinicalDocs_${order.reference || order._id}.pdf`);
+    return;
+  }
+
+  if (hasRaf) {
+    writeRafSection(doc, cursor, order);
+    cursor.y += 4;
+  }
+  if (hasAdvice) {
+    writeAdviceSection(doc, cursor, order);
+    cursor.y += 4;
+  }
+  if (hasDeclaration) {
+    writeDeclarationSection(doc, cursor, order, signatureDataUrl);
+    cursor.y += 4;
+  }
+  if (hasRecord) {
+    writeRecordSection(doc, cursor, order);
+  }
+
+  doc.save(`ClinicalDocs_${order.reference || order._id}.pdf`);
+}
+
+/* ----------------- UI: Patient card ----------------- */
 
 function PatientProfileCard({ user }: { user: UserDto | null }) {
   if (!user) {
@@ -273,9 +968,9 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   // cache of user info for cards: user_id -> user
-  const [orderUsers, setOrderUsers] = useState<
-    Record<string, UserDto | null>
-  >({});
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
+    {}
+  );
 
   // detail modal state
   const [showDetail, setShowDetail] = useState(false);
@@ -445,6 +1140,37 @@ export default function Page() {
       setStatusAction(null);
     }
   }
+
+  // ---- PDF handlers (use selectedOrder + orderedByUser) ----
+  const handleExportRafPdf = async () => {
+    if (!selectedOrder) return;
+    await exportRafPdf(selectedOrder, orderedByUser);
+  };
+
+  const handleExportAdvicePdf = async () => {
+    if (!selectedOrder) return;
+    await exportAdvicePdf(selectedOrder, orderedByUser);
+  };
+
+  const handleExportDeclarationPdf = async () => {
+    if (!selectedOrder) return;
+    await exportDeclarationPdf(selectedOrder, orderedByUser);
+  };
+
+  const handleExportRecordPdf = async () => {
+    if (!selectedOrder) return;
+    await exportRecordPdf(selectedOrder, orderedByUser);
+  };
+
+  const handleExportAllClinicalPdf = async () => {
+    if (!selectedOrder) return;
+    await exportAllClinicalPdf(selectedOrder, orderedByUser);
+  };
+
+  const handleExportInvoicePdf = async () => {
+    if (!selectedOrder) return;
+    await exportInvoicePdf(selectedOrder, orderedByUser);
+  };
 
   const totalCompleted = meta?.total ?? orders.length;
 
@@ -702,21 +1428,30 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Items / lines */}
+                  {/* Items / lines + Invoice PDF */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
                         <p className="text-xs font-semibold text-neutral-200">
                           Items
                         </p>
                       </div>
-                      <p className="text-xs text-neutral-400">
-                        Total:{" "}
-                        <span className="font-semibold text-white">
-                          {formatMoney(selectedOrder.meta?.totalMinor)}
-                        </span>
-                      </p>
+                      <div className="flex items-center gap-3">
+                        <p className="text-xs text-neutral-400">
+                          Total:{" "}
+                          <span className="font-semibold text-white">
+                            {formatMoney(selectedOrder.meta?.totalMinor)}
+                          </span>
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleExportInvoicePdf}
+                          className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
+                        >
+                          Invoice PDF
+                        </button>
+                      </div>
                     </div>
 
                     {selectedOrder.meta?.items?.length ? (
@@ -808,18 +1543,13 @@ export default function Page() {
                     </div>
                   )}
 
-                  {/* 🔹 Clinical Documentation Tabs: RAF / Advice / Declaration / Record of Supply */}
+                  {/* 🔹 Clinical Documentation Tabs + PDF buttons */}
                   {(() => {
                     const meta: any = selectedOrder.meta || {};
                     const raf = meta.formsQA?.raf;
                     const hasRaf = !!raf?.qa?.length;
 
-                    const advice = meta.pharmacistAdvice;
-                    const adviceState: Record<string, string[]> =
-                      advice?.adviceState || {};
-                    const adviceTexts = Object.values(adviceState)
-                      .flatMap((arr) => arr || [])
-                      .filter((s) => !!s && String(s).trim().length > 0);
+                    const adviceTexts = extractAdviceTexts(selectedOrder);
                     const hasAdvice = adviceTexts.length > 0;
 
                     const declaration = meta.pharmacistDeclaration;
@@ -927,7 +1657,7 @@ export default function Page() {
                             </p>
                           )}
 
-                          <div className="mt-2 border-t border-neutral-800 pt-2 text-[11px] space-y-1">
+                          <div className="mt-2 border-t border-neutral-800 pt-2 text-[11px] space-y-2">
                             {declaration.signatureUrl && (
                               <div>
                                 <p className="text-neutral-500 mb-1">
@@ -1050,7 +1780,51 @@ export default function Page() {
                           </div>
                         </div>
 
-                        <div className="mt-2 border-t border-neutral-800 pt-3 text-xs text-neutral-200">
+                        {/* PDF buttons */}
+                        <div className="mt-2 flex flex-wrap gap-2 border-t border-neutral-800 pt-2">
+                          <button
+                            type="button"
+                            onClick={handleExportRafPdf}
+                            disabled={!hasRaf}
+                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:hover:border-neutral-700"
+                          >
+                            RAF PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportAdvicePdf}
+                            disabled={!hasAdvice}
+                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:hover:border-neutral-700"
+                          >
+                            Advice PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportDeclarationPdf}
+                            disabled={!hasDeclaration}
+                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:hover:border-neutral-700"
+                          >
+                            Declaration PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportRecordPdf}
+                            disabled={!hasRecord}
+                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:hover:border-neutral-700"
+                          >
+                            Record of Supply PDF
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportAllClinicalPdf}
+                            disabled={!hasAnyClinical}
+                            className="inline-flex items-center gap-1 rounded-full border border-emerald-500/80 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50 disabled:hover:bg-emerald-500/10"
+                          >
+                            All Clinical Docs (PDF)
+                          </button>
+                        </div>
+
+                        <div className="mt-3 border-t border-neutral-800 pt-3 text-xs text-neutral-200">
                           {activeSection === "raf" && renderRaf()}
                           {activeSection === "advice" && renderAdvice()}
                           {activeSection === "declaration" &&
