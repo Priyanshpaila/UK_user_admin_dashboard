@@ -20,9 +20,10 @@ import {
   Pill,
   PackageX,
   PackageCheck,
-  User, // 👈 added
+  User,
+  LayoutTemplate, // 👈 NEW icon for landing page builder
 } from "lucide-react";
-import { useOrdersStats } from "../../app/dashboard/orders-badge-context"; // 🔁 adjust path
+import { useOrdersStats } from "../../app/dashboard/orders-badge-context";
 
 type MenuItem = {
   key: string;
@@ -73,7 +74,14 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "Front",
-    items: [{ key: "/dashboard/pages", label: "Pages", icon: FileText }],
+    items: [
+      { key: "/dashboard/pages", label: "Pages", icon: FileText },
+      {
+        key: "/dashboard/landing",          // 👈 NEW route for landing page creation
+        label: "Landing Page Builder",      // text in sidebar
+        icon: LayoutTemplate,               // uses new icon
+      },
+    ],
   },
   {
     group: "Logs",
@@ -90,9 +98,21 @@ const menu: SidebarEntry[] = [
   {
     group: "Orders",
     items: [
-      { key: "/dashboard/orders/completed", label: "Completed", icon: PackageCheck },
-      { key: "/dashboard/orders/rejected", label: "Rejected", icon: PackageX },
-      { key: "/dashboard/orders/unpaid", label: "Unpaid", icon: ClipboardList },
+      {
+        key: "/dashboard/orders/completed",
+        label: "Completed",
+        icon: PackageCheck,
+      },
+      {
+        key: "/dashboard/orders/rejected",
+        label: "Rejected",
+        icon: PackageX,
+      },
+      {
+        key: "/dashboard/orders/unpaid",
+        label: "Unpaid",
+        icon: ClipboardList,
+      },
     ],
   },
   {
@@ -106,7 +126,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const { stats } = useOrdersStats(); // 🔥 live numbers here
+  const { stats } = useOrdersStats();
 
   useEffect(() => {
     try {
@@ -134,7 +154,6 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
     return true;
   });
 
-  // 👇 Active state for profile tab at bottom
   const profileActive = path.startsWith("/dashboard/profile");
 
   return (
@@ -234,9 +253,8 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Bottom fixed area: Profile + Logout */}
       <div className="p-5 border-t border-neutral-800 space-y-2">
-        {/* Profile tab – fixed like Logout */}
         <Link
-          href="/dashboard/profile" // 👈 change this if your profile route is different
+          href="/dashboard/profile"
           onClick={onClose}
           className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition font-medium text-sm ${
             profileActive
@@ -248,7 +266,6 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
           <span>Profile</span>
         </Link>
 
-        {/* Logout */}
         <button
           onClick={() => {
             logout();

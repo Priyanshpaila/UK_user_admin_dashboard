@@ -1192,3 +1192,101 @@ export async function getAppointmentsCalendarSummaryApi(params: {
   return jsonFetch<AppointmentsCalendarSummaryResponse>(url, { headers });
 }
 
+
+
+/* ------------------- Dynamic Home Page APIs ------------------- */
+
+export type DynamicNavbarContent = {
+  logoUrl?: string;
+  logoAlt?: string;
+  searchPlaceholder?: string;
+  navLinks?: {
+    label: string;
+    href: string;
+    external?: boolean;
+  }[];
+};
+
+export type DynamicFooterContent = {
+  brandName?: string;
+  brandDescription?: string;
+  infoLinks?: { label: string; href: string }[];
+  contact?: {
+    phoneLabel?: string;
+    emailLabel?: string;
+    addressLabel?: string;
+  };
+  bottomLeft?: string;
+  bottomRight?: string;
+};
+
+/**
+ * Shape returned by GET /dynamicHomePages/:slug
+ * Your backend currently returns:
+ *   { slug, ...(doc.content || {}) }
+ * so we model sections and allow extra keys.
+ */
+export type DynamicHomePageContent = {
+  slug: string;
+  navbar?: DynamicNavbarContent;
+  hero?: any;
+  safeSecure?: any;
+  keyBenefits?: any;
+  faq?: any;
+  contact?: any;
+  testimonials?: any;
+  footer?: DynamicFooterContent;
+  [key: string]: any; // allow future sections
+};
+
+/**
+ * GET /dynamicHomePages/:slug
+ * Used in admin UI to load current home-page JSON (navbar, hero, footer, etc.)
+ */
+export async function getDynamicHomePageApi(
+  slug: string
+): Promise<DynamicHomePageContent> {
+  const base = getBackendBase();
+  const url = `${base}/dynamicHomePages/${encodeURIComponent(slug)}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+  return jsonFetch<DynamicHomePageContent>(url, { headers });
+}
+
+/**
+ * PUT /dynamicHomePages/:slug
+ * Partial update – you can send only the section you edit:
+ *   updateDynamicHomePageApi("home", { hero: { titleHighlight: "25%" } })
+ * Backend merges with existing content (using the updated service we wrote).
+ */
+export async function updateDynamicHomePageApi(
+  slug: string,
+  payload: Partial<DynamicHomePageContent>
+): Promise<DynamicHomePageContent> {
+  const base = getBackendBase();
+  const url = `${base}/dynamicHomePages/${encodeURIComponent(slug)}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<DynamicHomePageContent>(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      // Content-Type is set by jsonFetch
+    },
+    body: JSON.stringify(payload),
+  });
+}
