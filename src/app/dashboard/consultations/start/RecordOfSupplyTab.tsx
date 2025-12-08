@@ -69,6 +69,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
             try {
               const parsed = JSON.parse(raw);
               if (parsed && typeof parsed === "object") {
+                // parsed.fields is already { label: value }
                 initialFields = parsed.fields || {};
               }
             } catch {
@@ -97,10 +98,10 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
     };
   }, [serviceId, storageKey]);
 
-  // Persist to LS
+  // Persist to LS as { label: value } pairs
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const payload = { fields };
+    const payload = { fields }; // fields is already { label: value }
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
   }, [fields, storageKey]);
 
@@ -135,8 +136,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
   if (!fieldsToRender.length) {
     return (
       <div className="text-xs text-neutral-400">
-        No editable fields found in this Record of Supply / Clinic Notes
-        form.
+        No editable fields found in this Record of Supply / Clinic Notes form.
       </div>
     );
   }
@@ -152,22 +152,29 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
       </p>
 
       {fieldsToRender.map((field: any, idx: number) => {
-        const key =
+        // React key (can stay as original key)
+        const reactKey =
           field.data?.key || field.data?.label || `field_${idx}`;
+
+        // 🔑 Storage key: prefer LABEL so localStorage is { label: value }
+        const storageFieldKey =
+          field.data?.label || field.data?.key || `field_${idx}`;
+
         const label = field.data?.label || `Field ${idx + 1}`;
-        const value = fields[key] || "";
+        const value = fields[storageFieldKey] || "";
 
         const commonProps = {
           value,
-          onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-            handleFieldChange(key, e.target.value),
+          onChange: (
+            e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+          ) => handleFieldChange(storageFieldKey, e.target.value),
           className:
             "w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500",
           placeholder: label,
         };
 
         return (
-          <div key={key} className="space-y-1">
+          <div key={reactKey} className="space-y-1">
             <p className="text-xs font-medium text-neutral-200">
               {label}
             </p>
@@ -175,8 +182,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
               <textarea
                 {...(commonProps as any)}
                 className={
-                  commonProps.className +
-                  " min-h-[60px] resize-y"
+                  commonProps.className + " min-h-[60px] resize-y"
                 }
               />
             ) : (

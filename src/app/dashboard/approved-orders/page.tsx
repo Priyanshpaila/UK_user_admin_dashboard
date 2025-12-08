@@ -81,8 +81,7 @@ function paymentBadgeClasses(status: string) {
 
 function priorityBadgeClasses(priority?: string | null) {
   const p = (priority || "yellow").toLowerCase();
-  if (p === "red")
-    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "red") return "border-red-500/60 bg-red-500/10 text-red-300";
   if (p === "green")
     return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
   return "border-amber-500/60 bg-amber-500/10 text-amber-200"; // default yellow
@@ -151,10 +150,7 @@ function getUserInitials(user: UserDto | null): string {
     u.email ||
     "";
   if (!name) return "PT";
-  const parts = String(name)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = String(name).trim().split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
   return initials.join("") || "PT";
 }
@@ -197,8 +193,7 @@ function PatientProfileCard({
   const createdAt = u.createdAt || u.created_at || null;
   const updatedAt = u.updatedAt || u.updated_at || null;
 
-  const currentPriority =
-    (priority ?? u.user_priority ?? "yellow") as string;
+  const currentPriority = (priority ?? u.user_priority ?? "yellow") as string;
 
   return (
     <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-4">
@@ -337,9 +332,9 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   // cache of user info for cards: user_id -> user
-  const [orderUsers, setOrderUsers] = useState<
-    Record<string, UserDto | null>
-  >({});
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
+    {}
+  );
 
   // detail modal state
   const [showDetail, setShowDetail] = useState(false);
@@ -388,9 +383,7 @@ export default function Page() {
 
     const raw = rawRoot ?? rawMeta ?? [];
     const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
+    return arr.map((n) => String(n).trim()).filter((n) => n.length > 0);
   }, [selectedOrder]);
 
   // Load list (approved)
@@ -466,9 +459,7 @@ export default function Page() {
 
     const raw = rawRoot ?? rawMeta ?? [];
     const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
-    return arr
-      .map((n) => String(n).trim())
-      .filter((n) => n.length > 0);
+    return arr.map((n) => String(n).trim()).filter((n) => n.length > 0);
   }
 
   // View details handler
@@ -585,7 +576,7 @@ export default function Page() {
     }
   }
 
-  // 👉 Start consultancy: navigate with service_id & order_id
+  // 👉 Start consultancy: save patient to localStorage + navigate
   function handleStartConsultancy() {
     if (!selectedOrder) return;
 
@@ -597,6 +588,62 @@ export default function Page() {
       return;
     }
 
+    // ⬇️ Save patient + order snapshot to localStorage
+    if (typeof window !== "undefined") {
+      try {
+        const patientName = getDisplayPatientName(selectedOrder, orderedByUser);
+        const patientEmail =
+          (orderedByUser as any)?.email || (selectedOrder as any).email || null;
+        const patientPhone =
+          (orderedByUser as any)?.phone ||
+          (orderedByUser as any)?.phoneNumber ||
+          null;
+
+        const payload = {
+          orderId,
+          serviceId,
+          orderReference: selectedOrder.reference,
+          serviceSlug: selectedOrder.service_slug,
+          serviceName: selectedOrder.service_name,
+          appointmentAt:
+            selectedOrder.meta?.appointment_start_at ||
+            (selectedOrder as any).start_at ||
+            null,
+          patient: {
+            id: orderedByUser?._id ?? null,
+            name: patientName,
+            email: patientEmail,
+            phone: patientPhone,
+            gender: (orderedByUser as any)?.gender ?? null,
+            dob: (orderedByUser as any)?.dob ?? null,
+            address: {
+              line1:
+                (orderedByUser as any)?.address_line1 ||
+                (orderedByUser as any)?.addressLine1 ||
+                null,
+              line2:
+                (orderedByUser as any)?.address_line2 ||
+                (orderedByUser as any)?.addressLine2 ||
+                null,
+              city: (orderedByUser as any)?.city ?? null,
+              county: (orderedByUser as any)?.county ?? null,
+              postalcode: (orderedByUser as any)?.postalcode ?? null,
+              country: (orderedByUser as any)?.country ?? null,
+            },
+            priority: (orderedByUser as any)?.user_priority ?? "yellow",
+          },
+        };
+
+        window.localStorage.setItem(
+          "current_consult_patient",
+          JSON.stringify(payload)
+        );
+      } catch (err) {
+        console.error("Failed to store consult patient data", err);
+      }
+    }
+
+    // existing navigation
     const url = `/dashboard/consultations/start?service_id=${encodeURIComponent(
       serviceId
     )}&order_id=${encodeURIComponent(orderId)}`;
@@ -923,8 +970,7 @@ export default function Page() {
                       {(selectedOrder as any).end_at &&
                         selectedOrder.meta?.appointment_start_at && (
                           <p className="text-xs text-neutral-400">
-                            End:{" "}
-                            {formatDateTime((selectedOrder as any).end_at)}
+                            End: {formatDateTime((selectedOrder as any).end_at)}
                           </p>
                         )}
                     </div>

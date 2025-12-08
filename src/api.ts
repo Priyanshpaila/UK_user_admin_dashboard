@@ -1290,3 +1290,56 @@ export async function updateDynamicHomePageApi(
     body: JSON.stringify(payload),
   });
 }
+
+/* ------------------- Email APIs ------------------- */
+
+export type SendEmailRequest = {
+  to: string;
+  subject: string;
+  template: string;
+  context: Record<string, any>;
+  /**
+   * Optional attachments – e.g. your generated invoice PDF
+   * We send them as multipart/form-data.
+   */
+  attachments?: File[];
+};
+
+export async function sendEmailApi(payload: SendEmailRequest) {
+  const base = getBackendBase(); // tenant-aware base, e.g. http://tenant.domain/api
+  const url = `${base}/email/send`;
+
+  const formData = new FormData();
+  formData.append("to", payload.to);
+  formData.append("subject", payload.subject);
+  formData.append("template", payload.template);
+  formData.append("context", JSON.stringify(payload.context || {}));
+
+  // Attach files if provided
+  (payload.attachments || []).forEach((file, index) => {
+    // backend field name "attachments" – adjust if your API expects another name
+    formData.append("attachments", file, file.name || `attachment-${index}`);
+  });
+
+  // Bearer token if available
+  let headers: HeadersInit = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("session_token");
+    if (token) {
+      headers = { ...headers, Authorization: `Bearer ${token}` };
+    }
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,          // ❗ no Content-Type – browser sets multipart boundary
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Email send failed: ${res.status}`);
+  }
+
+  return res.json();
+}
