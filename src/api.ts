@@ -1343,3 +1343,135 @@ export async function sendEmailApi(payload: SendEmailRequest) {
 
   return res.json();
 }
+
+
+/* ------------------- NHS Service (NHS nominations) APIs ------------------- */
+
+export type NhsServiceRequestDto = {
+  _id: string;
+
+  first_name: string;
+  last_name: string;
+  dob: string; // ISO date string
+  gender: string;
+  nhs_number: string;
+
+  email: string;
+  phone: string;
+
+  address: string;
+  address1: string;
+  address2: string;
+  city: string;
+  postcode: string;
+  country: string;
+
+  use_alt_delivery: boolean;
+  delivery_address: string;
+  delivery_address1: string;
+  delivery_address2: string;
+  delivery_city: string;
+  delivery_postcode: string;
+  delivery_country: string;
+
+  exemption: string;          // e.g. "age_60_plus", "pays"
+  exemption_number: string;
+  exemption_expiry: string;   // ISO date string
+
+  consent_patient: boolean;
+  consent_nomination: boolean;
+  consent_nomination_explained: boolean;
+  consent_exemption_signed: boolean;
+  consent_scr_access: boolean;
+
+  status: string;             // "pending" | "approved" | "rejected" | etc.
+  approved_at: string | null;
+  approvedBy: string | null;
+  approval_note: string;
+  rejection_note: string;
+  notes: string[];
+
+  meta?: {
+    source?: string;
+    utm_campaign?: string;
+    [key: string]: any;
+  };
+
+  createdAt: string;
+  updatedAt: string;
+  __v: number;
+};
+
+export type NhsServiceListMeta = {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+};
+
+export type NhsServiceListResponse = {
+  data: NhsServiceRequestDto[];
+  meta: NhsServiceListMeta;
+};
+
+/**
+ * GET /nhsService
+ * (no query params for now)
+ */
+export async function getNhsServicesApi(): Promise<NhsServiceListResponse> {
+  const base = getBackendBase();
+  const url = `${base}/nhsService`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
+
+  return jsonFetch<NhsServiceListResponse>(url, { headers });
+}
+
+/* ---------- UPDATE /nhsService/:id ---------- */
+
+export type UpdateNhsServicePayload = {
+  status?: string; // "approved" | "rejected" | "pending" | etc.
+  approval_note?: string;
+  rejection_note?: string;
+  notes?: string[];
+  approved_at?: string | null;
+  approvedBy?: string | null;
+  [key: string]: any; // allow extra fields if backend supports them
+};
+
+/**
+ * PUT /nhsService/:id
+ * Example: updateNhsServiceApi("6937d323537a2eaea5073f5c", { status: "approved" })
+ */
+export async function updateNhsServiceApi(
+  id: string,
+  payload: UpdateNhsServicePayload
+): Promise<NhsServiceRequestDto> {
+  const base = getBackendBase();
+  const url = `${base}/nhsService/${encodeURIComponent(id)}`;
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  return jsonFetch<NhsServiceRequestDto>(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      // Content-Type is added by jsonFetch
+    },
+    body: JSON.stringify(payload),
+  });
+}

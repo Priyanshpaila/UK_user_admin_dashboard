@@ -17,10 +17,11 @@ import {
   LucideIcon,
   LogOut,
   Atom,
-  Pill,
+  ShieldCheck ,
   PackageX,
   PackageCheck,
   User,
+  UserCheck,
   LayoutTemplate, // 👈 NEW icon for landing page builder
 } from "lucide-react";
 import { useOrdersStats } from "../../app/dashboard/orders-badge-context";
@@ -51,6 +52,11 @@ const menu: SidebarEntry[] = [
     label: "Approved Orders",
     icon: Check,
   },
+   {
+    key: "/dashboard/nhs/approval-list",
+    label: "NHS Approval",
+    icon: ShieldCheck ,
+  },
   {
     group: "Notifications",
     items: [
@@ -70,7 +76,9 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "People",
-    items: [{ key: "/dashboard/patients", label: "Patients", icon: Users }],
+    items: [{ key: "/dashboard/patients", label: "Patients", icon: Users },
+      { key: "/dashboard/nhs/nhs-patients", label: "NHS Patients", icon: UserCheck  }
+    ],
   },
   {
     group: "Front",
