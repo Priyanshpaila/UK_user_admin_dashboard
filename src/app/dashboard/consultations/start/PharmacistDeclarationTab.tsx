@@ -233,7 +233,9 @@ export default function PharmacistDeclarationTab({
       const pharmacistName =
         currentUser.name ||
         currentUser.fullName ||
-        `${currentUser.firstName || ""} ${currentUser.lastName || ""}`.trim() ||
+        `${currentUser.firstName || ""} ${
+          currentUser.lastName || ""
+        }`.trim() ||
         currentUser.email ||
         "";
 
@@ -245,9 +247,19 @@ export default function PharmacistDeclarationTab({
         next[gphcKey] = currentUser.gphc_number;
       }
 
+      // 🔹 NEW: immediately persist auto-filled values into localStorage
+      if (typeof window !== "undefined") {
+        const payload: DeclarationStorage = {
+          fields: next,
+          signatureUrl,
+          signaturePath,
+        };
+        window.localStorage.setItem(storageKey, JSON.stringify(payload));
+      }
+
       return next;
     });
-  }, [form, currentUser]);
+  }, [form, currentUser, storageKey, signatureUrl, signaturePath]);
 
   /* ------------- Signature from profile (read-only) ------------- */
   useEffect(() => {
@@ -260,7 +272,7 @@ export default function PharmacistDeclarationTab({
     setSignatureUrl(url);
   }, [currentUser]);
 
-  /* ---------------- Persist to localStorage ---------------- */
+  /* ---------------- Persist to localStorage on any manual change ---------------- */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload: DeclarationStorage = {

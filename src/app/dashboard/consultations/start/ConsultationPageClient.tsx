@@ -11,6 +11,7 @@ import {
 import {
   Loader2,
   ArrowLeft,
+  ArrowRight,
   AlertCircle,
   CheckCircle2,
 } from "lucide-react";
@@ -22,6 +23,13 @@ import PharmacistAdviceTab from "./PharmacistAdviceTab";
 import PharmacistDeclarationTab from "./PharmacistDeclarationTab";
 
 type TabKey = "risk" | "advice" | "declaration" | "record";
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "risk", label: "Risk Assessment" },
+  { key: "advice", label: "Pharmacist’s Advice" },
+  { key: "declaration", label: "Pharmacist Declaration" },
+  { key: "record", label: "Record of Supply" },
+];
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -112,6 +120,157 @@ function clearNonAuthLocalStorage() {
   }
 }
 
+// Add these helpers near the top of the file --------------------------
+
+function formatDateOnly(value?: string | Date | null): string {
+  if (!value) return "—";
+
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return "—";
+    return value.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
+  const str = String(value);
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
+  // fallback for raw "YYYY-MM-DD"
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  }
+  return str;
+}
+
+type PharmacistDeclarationPdf = {
+  pharmacistName: string;
+  gphcNumber: string;
+  declarationDate: string;
+  signatureUrl?: string | null;
+};
+
+function extractPharmacistDeclarationForPdf(
+  order: OrderDto
+): PharmacistDeclarationPdf {
+  const meta: any = order.meta || {};
+  const decMeta: any = meta.pharmacistDeclaration || {};
+
+  let fields: Record<string, any> =
+    (decMeta && typeof decMeta === "object" && decMeta.fields) || {};
+
+  let pharmacistName = decMeta.pharmacistName || decMeta.pharmacist_name || "";
+  let gphcNumber = decMeta.gphcNumber || decMeta.gphc_number || "";
+  let signatureUrl: string | null =
+    decMeta.signatureUrl || decMeta.signature_url || null;
+
+  // Also merge data from localStorage (your example object lives here)
+  if (typeof window !== "undefined") {
+    try {
+      const lsKey = `consultation_${order._id}_declaration`;
+      const raw = window.localStorage.getItem(lsKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          fields?: Record<string, any>;
+          signatureUrl?: string;
+          signaturePath?: string;
+        };
+
+        if (parsed && parsed.fields && typeof parsed.fields === "object") {
+          fields = { ...fields, ...parsed.fields };
+        }
+
+        if (parsed?.signatureUrl) {
+          signatureUrl = parsed.signatureUrl;
+        } else if (!signatureUrl && parsed?.signaturePath) {
+          // crude fallback if only path is stored
+          const path = parsed.signaturePath;
+          if (/^https?:\/\//i.test(path)) {
+            signatureUrl = path;
+          } else if (typeof window !== "undefined") {
+            const origin = window.location.origin.replace(/\/+$/, "");
+            const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+            signatureUrl = `${origin}${normalizedPath}`;
+          }
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  // If not explicitly present, infer from fields
+  if (
+    (!pharmacistName || !gphcNumber) &&
+    fields &&
+    typeof fields === "object"
+  ) {
+    const entries = Object.entries(fields).map(([k, v]) => [
+      k.toLowerCase(),
+      String(v ?? "").trim(),
+    ]) as [string, string][];
+
+    for (const [k, v] of entries) {
+      if (!pharmacistName && k.includes("pharmacist") && k.includes("name")) {
+        pharmacistName = v;
+      }
+      if (!gphcNumber && k.includes("gphc")) {
+        gphcNumber = v;
+      }
+    }
+
+    const values = entries.map(([, v]) => v).filter(Boolean);
+    if (!pharmacistName && values.length) {
+      pharmacistName = values[0]; // e.g. "Abhishek Paul"
+    }
+    if (!gphcNumber && values.length > 1) {
+      const numericLike =
+        values.find((v) => /^[0-9\s-]+$/.test(v)) || values[1]; // e.g. "345345345"
+      gphcNumber = numericLike;
+    }
+  }
+
+  const declarationDate = formatDateOnly(
+    decMeta.saved_at || new Date().toISOString()
+  );
+
+  return {
+    pharmacistName: pharmacistName || "—",
+    gphcNumber: gphcNumber || "—",
+    declarationDate,
+    signatureUrl,
+  };
+}
+
+async function loadImageAsDataUrl(url?: string | null): Promise<string | null> {
+  if (!url || typeof window === "undefined") return null;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("Failed to read image blob"));
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.error("Failed to load signature image for PDF:", err);
+    return null;
+  }
+}
+
 async function generateRecordOfSupplyPdf(
   order: OrderDto,
   record: any,
@@ -124,120 +283,343 @@ async function generateRecordOfSupplyPdf(
   const contentWidth = pageWidth - margin * 2;
   const lineHeight = 16;
 
-  // accent
-  doc.setFillColor(16, 185, 129);
-  doc.rect(0, 0, pageWidth, 6, "F");
+  const GREEN = { r: 16, g: 185, b: 129 };
 
-  const headerTopY = 36;
+  // Top accent line
+  doc.setFillColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.rect(0, 0, pageWidth, 4, "F");
+
+  const todayLabel = new Date().toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+
   const patientName = consult?.patient?.name || getDisplayPatientName(order);
   const patientEmail = consult?.patient?.email || order.email || "";
   const patientPhone = consult?.patient?.phone || "";
-  const appointmentAt =
-    consult?.appointmentAt ||
-    order.meta?.appointment_start_at ||
-    order.start_at ||
+
+  const rawDob =
+    consult?.patient?.dob ||
+    (order as any).dob ||
+    (order.meta as any)?.patient?.dob ||
     null;
+  const patientDob = formatDateOnly(rawDob);
 
-  // brand
+  // Build address from consult patient if available
+  let patientAddress = "";
+  const addr = consult?.patient?.address;
+  if (addr) {
+    const parts = [
+      addr.line1,
+      addr.line2,
+      addr.city,
+      addr.county,
+      addr.postalcode,
+      addr.country,
+    ]
+      .map((p) => (p ?? "").toString().trim())
+      .filter(Boolean);
+    patientAddress = parts.join(", ");
+  }
+
+  const ref = order.reference || order._id;
+
+  /* ---------------- Header: brand + title + meta line ---------------- */
+
+  const headerTopY = 40;
+
+  // Brand text
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(15, 23, 42);
+  doc.text("PHARMACY", margin, headerTopY);
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("EXPRESS", margin + 98, headerTopY);
+
+  // Title
   doc.setFontSize(20);
-  doc.setTextColor(16, 185, 129);
-  doc.text("Pharmacy Express", margin, headerTopY);
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("RECORD OF SUPPLY", margin, headerTopY + 28);
 
-  doc.setFontSize(26);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Record of Supply", pageWidth - margin, headerTopY, {
-    align: "right",
-  });
+  // Reference + date
+  doc.setFontSize(9);
+  doc.setTextColor(107, 114, 128);
+  const refLineParts: string[] = [];
+  if (ref) refLineParts.push(`Reference: ${ref}`);
+  refLineParts.push(`Date: ${todayLabel}`);
+  doc.text(refLineParts.join(" | "), margin, headerTopY + 42);
 
-  let y = headerTopY + 26;
+  // Horizontal rule
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.setLineWidth(0.8);
+  doc.line(margin, headerTopY + 48, pageWidth - margin, headerTopY + 48);
+
+  /* ---------------- Pharmacy + Patient cards ---------------- */
+
+  const cardsTop = headerTopY + 60;
+  const cardGap = 20;
+  const cardWidth = (contentWidth - cardGap) / 2;
+  const cardHeight = 150;
+
+  const lightBorder = { r: 211, g: 214, b: 219 };
+
+  // Pharmacy Details (left)
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(margin, cardsTop, cardWidth, cardHeight, 6, 6);
+
+  let yLeft = cardsTop + 20;
+  let xLeft = margin + 12;
+
   doc.setFontSize(11);
-  doc.setTextColor(31, 41, 55);
-  doc.text(`Patient: ${patientName}`, margin, y);
-  y += lineHeight;
-  if (patientEmail) {
-    doc.text(`Email: ${patientEmail}`, margin, y);
-    y += lineHeight;
-  }
-  if (patientPhone) {
-    doc.text(`Phone: ${patientPhone}`, margin, y);
-    y += lineHeight;
-  }
-  if (appointmentAt) {
-    doc.text(
-      `Consultation: ${formatDateTime(appointmentAt)}`,
-      margin,
-      y
-    );
-    y += lineHeight;
-  }
-  const todayLabel = new Date().toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-  doc.text(`Generated: ${todayLabel}`, margin, y);
-  y += lineHeight;
-  if (order.reference) {
-    doc.text(`Reference: ${order.reference}`, margin, y);
-    y += lineHeight;
-  }
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("Pharmacy Details", xLeft, yLeft);
+  yLeft += 8;
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.setLineWidth(0.7);
+  doc.line(xLeft, yLeft, margin + cardWidth - 12, yLeft);
+  yLeft += 10;
 
-  y += lineHeight;
-
-  // section title
-  doc.setFontSize(12);
+  doc.setFontSize(9);
   doc.setTextColor(15, 23, 42);
-  doc.text("Record of supply details", margin, y);
-  y += lineHeight;
 
-  doc.setFontSize(10);
+  const labelWidthLeft = 55;
+  const putRowLeft = (label: string, value: string | string[]) => {
+    const v =
+      Array.isArray(value) && value.length > 0 ? value.join("\n") : value;
+
+    doc.setFont("helvetica", "bold");
+    doc.text(label, xLeft, yLeft);
+
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(String(v || ""), cardWidth - labelWidthLeft - 24);
+    doc.text(lines, xLeft + labelWidthLeft, yLeft);
+
+    yLeft += lineHeight * Math.max(1, lines.length);
+  };
+
+  putRowLeft("Name:", "Pharmacy Express");
+  putRowLeft("Address:", [
+    "Unit 4, The Office Campus",
+    "Paragon Business Park,",
+    "Wakefield, West Yorkshire",
+    "WF1 2UY",
+  ]);
+  putRowLeft("Tel:", "01924 971414");
+  putRowLeft("Email:", "info@pharmacy-express.co.uk");
+
+  // Patient Information (right)
+  const rightX = margin + cardWidth + cardGap;
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(rightX, cardsTop, cardWidth, cardHeight, 6, 6);
+
+  let yRight = cardsTop + 20;
+  const xRight = rightX + 12;
+
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("Patient Information", xRight, yRight);
+  yRight += 8;
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.setLineWidth(0.7);
+  doc.line(xRight, yRight, rightX + cardWidth - 12, yRight);
+  yRight += 10;
+
+  doc.setFontSize(9);
+  doc.setTextColor(15, 23, 42);
+
+  const labelWidthRight = 55;
+  const putRowRight = (label: string, value: string | string[]) => {
+    const v =
+      Array.isArray(value) && value.length > 0 ? value.join("\n") : value;
+
+    doc.setFont("helvetica", "bold");
+    doc.text(label, xRight, yRight);
+
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(String(v || ""), cardWidth - labelWidthRight - 24);
+    doc.text(lines, xRight + labelWidthRight, yRight);
+
+    yRight += lineHeight * Math.max(1, lines.length);
+  };
+
+  putRowRight("Name:", patientName || "—");
+  putRowRight("DOB:", patientDob || "—");
+  putRowRight("Address:", patientAddress || "—");
+  const contactParts = [patientEmail, patientPhone].filter(Boolean);
+  putRowRight("Contact:", contactParts.join(" | ") || "—");
+
+  /* ---------------- Clinical Notes table ---------------- */
+
+  let sectionTop = cardsTop + cardHeight + 30;
+  if (sectionTop > pageHeight - margin - 200) {
+    doc.addPage();
+    sectionTop = margin;
+  }
+
+  // Section header bar
+  doc.setFillColor(232, 248, 240);
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  const sectionWidth = contentWidth;
+  doc.rect(margin, sectionTop, sectionWidth, 22, "F");
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("Clinical Notes", margin + 8, sectionTop + 14);
+
+  let y = sectionTop + 28;
+  doc.setFontSize(9);
   doc.setTextColor(55, 65, 81);
 
-  // 🔹 NEW: use record.fields if present, otherwise fall back to record
   const fieldsObj: any =
     record && typeof record === "object" && (record as any).fields
       ? (record as any).fields
       : record;
 
   if (!fieldsObj || typeof fieldsObj !== "object") {
-    doc.text("No record of supply data captured.", margin, y);
+    doc.text("No record of supply data captured.", margin + 8, y + 10);
+    y += 24;
   } else {
     const entries = Object.entries(fieldsObj as Record<string, any>);
-
     if (!entries.length) {
-      doc.text("No record of supply data captured.", margin, y);
+      doc.text("No record of supply data captured.", margin + 8, y + 10);
+      y += 24;
     } else {
-      entries.forEach(([key, value]) => {
-        if (y > pageHeight - margin - 40) {
+      const labelColWidth = sectionWidth * 0.28;
+      const valueColWidth = sectionWidth - labelColWidth;
+
+      for (const [key, value] of entries) {
+        if (y > pageHeight - margin - 160) {
           doc.addPage();
           y = margin;
         }
 
-        // Use the key as label (your localStorage now stores label → value,
-        // but this also works if the key is still text_xxx)
-        const label = String(key);
+        doc.setDrawColor(229, 231, 235);
+        const rowTop = y;
+        const baseRowHeight = 20;
 
+        const label = String(key);
         let valStr: string;
         if (Array.isArray(value)) valStr = value.join(", ");
         else if (value == null) valStr = "—";
-        else if (typeof value === "object") valStr = JSON.stringify(value);
         else valStr = String(value);
 
-        const labelX = margin;
-        const valueX = margin + 110;
+        const labelText = doc.splitTextToSize(label, labelColWidth - 12);
+        const valueText = doc.splitTextToSize(valStr, valueColWidth - 12);
+        const rowHeight =
+          baseRowHeight * Math.max(labelText.length, valueText.length, 1);
 
-        // Render like a bullet list: "Label: value"
-        doc.text(`• ${label}:`, labelX, y);
-        const wrapped = doc.splitTextToSize(valStr, contentWidth - 120);
-        doc.text(wrapped, valueX, y);
-        y += lineHeight * Math.max(1, wrapped.length);
-      });
+        doc.rect(margin, rowTop, labelColWidth, rowHeight);
+        doc.rect(margin + labelColWidth, rowTop, valueColWidth, rowHeight);
+
+        doc.setFont("helvetica", "bold");
+        doc.text(labelText, margin + 6, rowTop + 13);
+        doc.setFont("helvetica", "normal");
+        doc.text(valueText, margin + labelColWidth + 6, rowTop + 13);
+
+        y += rowHeight;
+      }
     }
   }
 
-  // footer
-  const footerY = pageHeight - 40;
+  /* ---------------- Pharmacist Declaration ---------------- */
+
+  y += 24;
+  if (y > pageHeight - margin - 160) {
+    doc.addPage();
+    y = margin;
+  }
+
+  const decHeaderTop = y;
+  const decBoxHeight = 160;
+
+  doc.setFillColor(232, 248, 240);
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.rect(margin, decHeaderTop, contentWidth, 22, "F");
+  doc.setFontSize(11);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("Pharmacist Declaration", margin + 8, decHeaderTop + 14);
+
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.roundedRect(margin, decHeaderTop, contentWidth, decBoxHeight, 6, 6);
+
+  y = decHeaderTop + 40;
   doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(55, 65, 81);
+
+  const declarationParagraph =
+    "I confirm that the above named patient has been clinically assessed and supplied medication in accordance with the service protocol. The supply is appropriate, counselling has been provided, and relevant records have been completed.";
+
+  const wrappedDecl = doc.splitTextToSize(
+    declarationParagraph,
+    contentWidth - 16
+  );
+  doc.text(wrappedDecl, margin + 8, y);
+  y += lineHeight * wrappedDecl.length + 6;
+
+  const { pharmacistName, gphcNumber, declarationDate, signatureUrl } =
+    extractPharmacistDeclarationForPdf(order);
+
+  const labelX = margin + 8;
+  const valueX = margin + 130;
+
+  const row = (label: string, value: string) => {
+    doc.setFont("helvetica", "bold");
+    doc.text(label, labelX, y);
+    doc.setFont("helvetica", "normal");
+    doc.text(value || "—", valueX, y);
+    y += lineHeight - 2;
+  };
+
+  row("Pharmacist Name:", pharmacistName);
+  row("GPhC Number:", gphcNumber);
+  row("Date:", declarationDate);
+
+  // Signature label + line
+  const sigLabelY = y + 10;
+  doc.setFont("helvetica", "bold");
+  doc.text("Signature:", labelX, sigLabelY);
+
+  const lineY = sigLabelY + 4;
+  const lineStartX = valueX;
+  const lineEndX = margin + contentWidth - 40;
+
+  doc.setDrawColor(148, 163, 184);
+  doc.line(lineStartX, lineY, lineEndX, lineY);
+
+  // Signature image above the line (if available)
+  if (signatureUrl) {
+    const dataUrl = await loadImageAsDataUrl(signatureUrl);
+    if (dataUrl) {
+      const sigHeight = 32;
+      const sigWidth = 140;
+      const sigY = lineY - sigHeight + 2;
+      const sigX = lineStartX;
+
+      try {
+        doc.addImage(
+          dataUrl,
+          undefined as any,
+          sigX,
+          sigY,
+          sigWidth,
+          sigHeight
+        );
+      } catch (err) {
+        console.error("Failed to add signature image to PDF:", err);
+      }
+    }
+  }
+
+  // Footer
+  const footerY = pageHeight - 40;
+  doc.setFontSize(8);
   doc.setTextColor(156, 163, 175);
   doc.text(
     "This record of supply was generated from your consultation at Pharmacy Express.",
@@ -247,7 +629,7 @@ async function generateRecordOfSupplyPdf(
   );
 
   const blob = doc.output("blob");
-  const fileName = `record-of-supply-${order.reference || order._id}.pdf`;
+  const fileName = `${ref}-record-of-supply.pdf`;
 
   let file: File;
   try {
@@ -270,16 +652,51 @@ async function generateInvoicePdfFromOrder(
   const contentWidth = pageWidth - margin * 2;
   const lineHeight = 16;
 
-  const ref = order.reference;
-  const dateLabel = new Date().toLocaleDateString("en-GB", {
+  const GREEN = { r: 16, g: 185, b: 129 };
+
+  const ref = order.reference || order._id;
+  const today = new Date();
+  const dateLabel = today.toLocaleDateString("en-GB", {
     day: "2-digit",
-    month: "short",
+    month: "2-digit",
     year: "numeric",
   });
 
+  const vatNumber = process.env.NEXT_PUBLIC_VAT_NUMBER || "274797643";
+
   const patientName = consult?.patient?.name || getDisplayPatientName(order);
   const patientEmail = consult?.patient?.email || order.email || "";
-  const serviceName = consult?.serviceName || order.service_name;
+  const patientPhone =
+    consult?.patient?.phone ||
+    (order.meta as any)?.phone ||
+    (order as any)?.phone ||
+    "";
+
+  const patientDobRaw: any =
+    consult?.patient?.dob ||
+    (order.meta as any)?.dob ||
+    (order as any)?.dob ||
+    null;
+  const patientDob = formatDateOnly(patientDobRaw);
+
+  const addr =
+    consult?.patient?.address ||
+    (order.meta as any)?.patient_address ||
+    (order.meta as any)?.address ||
+    {};
+
+  const patientAddressParts = [
+    addr.line1,
+    addr.line2,
+    addr.city,
+    addr.county,
+    addr.postalcode,
+    addr.country,
+  ]
+    .filter(Boolean)
+    .map((s: string) => String(s));
+
+  const patientAddress = patientAddressParts.join(", ");
 
   const items: any[] = Array.isArray(order.meta?.items)
     ? (order.meta!.items as any[])
@@ -292,152 +709,248 @@ async function generateInvoicePdfFromOrder(
   if (!subtotalMinor && typeof order.meta?.totalMinor === "number") {
     subtotalMinor = order.meta.totalMinor;
   }
-  const totalMinor = subtotalMinor;
-
-  // accent
-  doc.setFillColor(16, 185, 129);
-  doc.rect(0, 0, pageWidth, 6, "F");
-
-  const headerTopY = 36;
-
-  doc.setFontSize(22);
-  doc.setTextColor(16, 185, 129);
-  doc.text("Pharmacy Express", margin, headerTopY);
-
-  doc.setFontSize(26);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Invoice", pageWidth - margin, headerTopY, {
-    align: "right",
-  });
-
-  let y = headerTopY + 24;
-  doc.setFontSize(11);
-  doc.setTextColor(31, 41, 55);
-
-  doc.text(`Invoice # ${ref}`, margin, y);
-  y += lineHeight;
-  doc.text(`Invoice date: ${dateLabel}`, margin, y);
-  y += lineHeight;
-  doc.text(`Service: ${serviceName}`, margin, y);
-  y += lineHeight * 2;
-
-  // Bill to
-  doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Bill to", margin, y);
-  y += lineHeight;
-  doc.setTextColor(31, 41, 55);
-  doc.text(patientName, margin, y);
-  y += lineHeight;
-  if (patientEmail) {
-    doc.setFontSize(10);
-    doc.setTextColor(107, 114, 128);
-    doc.text(patientEmail, margin, y);
-    y += lineHeight;
+  if (!subtotalMinor && typeof order.meta?.total === "number") {
+    subtotalMinor = Math.round(order.meta.total * 100);
   }
-  y += lineHeight;
+  const totalMinor = subtotalMinor || 0;
 
-  // Table headers
-  const headerY = y;
-  const tableHeight = 22;
+  /* -------------------- Header (same style as record-of-supply) -------------------- */
+
+  // Top accent line
+  doc.setFillColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.rect(0, 0, pageWidth, 4, "F");
+
+  const headerTopY = 40;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(15, 23, 42);
+  doc.text("PHARMACY", margin, headerTopY);
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("EXPRESS", margin + 98, headerTopY);
+
+  doc.setFontSize(20);
+  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.text("INVOICE", margin, headerTopY + 28);
+
+  doc.setFontSize(9);
+  doc.setTextColor(107, 114, 128);
+  const metaLine = `Invoice No: #${ref} | VAT No: ${vatNumber} | Date: ${dateLabel}`;
+  doc.text(metaLine, margin, headerTopY + 42);
+
+  doc.setDrawColor(GREEN.r, GREEN.g, GREEN.b);
+  doc.setLineWidth(0.8);
+  doc.line(margin, headerTopY + 48, pageWidth - margin, headerTopY + 48);
+
+  /* -------------------- From / Bill To cards -------------------- */
+
+  const cardsTop = headerTopY + 60;
+  const cardWidth = (contentWidth - 20) / 2;
+  const cardHeight = 150;
+  const leftCardX = margin;
+  const rightCardX = margin + cardWidth + 20;
+
+  const lightBorder = { r: 211, g: 214, b: 219 };
+  const headerFill = { r: 241, g: 250, b: 245 };
+  const headerGreen = GREEN;
+
+  const drawCard = (x: number, title: string) => {
+    doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+    doc.setLineWidth(0.8);
+    doc.roundedRect(x, cardsTop, cardWidth, cardHeight, 6, 6, "S");
+
+    doc.setFillColor(headerFill.r, headerFill.g, headerFill.b);
+    doc.roundedRect(x, cardsTop, cardWidth, 22, 6, 6, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(headerGreen.r, headerGreen.g, headerGreen.b);
+    doc.text(title, x + 10, cardsTop + 15);
+  };
+
+  drawCard(leftCardX, "From");
+  drawCard(rightCardX, "Bill To");
+
+  // From content
+  let y = cardsTop + 38;
+  const labelXLeft = leftCardX + 12;
+  const valueXLeft = leftCardX + 80;
+
+  doc.setFontSize(10);
+  doc.setTextColor(34, 34, 34);
+
+  const putRowLeft = (label: string, value: string | string[]) => {
+    const v =
+      Array.isArray(value) && value.length > 0 ? value.join("\n") : value;
+    doc.setFont("helvetica", "bold");
+    doc.text(`${label}:`, labelXLeft, y);
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(String(v || ""), cardWidth - 90);
+    doc.text(lines, valueXLeft, y);
+    y += lineHeight * Math.max(1, lines.length);
+  };
+
+  putRowLeft("Name", "Pharmacy Express");
+  putRowLeft("Address", [
+    "Unit 4, The Office Campus",
+    "Paragon Business Park,",
+    "Wakefield, West Yorkshire",
+    "WF1 2UY",
+  ]);
+  putRowLeft("Tel", "01924 971414");
+  putRowLeft("Email", "info@pharmacy-express.co.uk");
+
+  // Bill To content
+  let yRight = cardsTop + 38;
+  const labelXRight = rightCardX + 12;
+  const valueXRight = rightCardX + 80;
+
+  const putRowRight = (label: string, value: string | string[]) => {
+    const v =
+      Array.isArray(value) && value.length > 0 ? value.join("\n") : value;
+    doc.setFont("helvetica", "bold");
+    doc.text(`${label}:`, labelXRight, yRight);
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(String(v || ""), cardWidth - 90);
+    doc.text(lines, valueXRight, yRight);
+    yRight += lineHeight * Math.max(1, lines.length);
+  };
+
+  putRowRight("Patient", patientName || "—");
+  if (patientDob) putRowRight("DOB", patientDob);
+  if (patientAddress) putRowRight("Address", patientAddress);
+  const contactLine = [patientEmail, patientPhone].filter(Boolean).join(" | ");
+  if (contactLine) putRowRight("Contact", contactLine);
+
+  /* -------------------- Invoice Details table -------------------- */
+
+  const detailsTop = cardsTop + cardHeight + 28;
+
+  doc.setFillColor(headerFill.r, headerFill.g, headerFill.b);
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.rect(margin, detailsTop, contentWidth, 22, "F");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(headerGreen.r, headerGreen.g, headerGreen.b);
+  doc.text("Invoice Details", margin + 8, detailsTop + 14);
+
+  const tableTop = detailsTop + 24;
+  const rowHeightHeader = 22;
+  const rowHeight = 22;
 
   const descX = margin + 10;
-  const qtyX = margin + contentWidth * 0.55;
-  const unitX = margin + contentWidth * 0.7;
-  const amountX = margin + contentWidth * 0.85;
+  const qtyX = margin + contentWidth * 0.6;
+  const unitX = margin + contentWidth * 0.75;
+  const netX = margin + contentWidth * 0.9;
 
-  doc.setFillColor(243, 244, 246);
-  doc.rect(
-    margin,
-    headerY - tableHeight + 6,
-    contentWidth,
-    tableHeight,
-    "F"
-  );
+  doc.setFillColor(247, 249, 252);
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.rect(margin, tableTop, contentWidth, rowHeightHeader, "FD");
 
   doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont("helvetica", "bold");
+  const headerY = tableTop + 14;
   doc.text("Description", descX, headerY);
-  doc.text("Qty", qtyX, headerY);
-  doc.text("Unit", unitX, headerY);
-  doc.text("Amount", amountX, headerY);
+  doc.text("Qty", qtyX, headerY, { align: "right" });
+  doc.text("Unit Price", unitX, headerY, { align: "right" });
+  doc.text("Net", netX, headerY, { align: "right" });
 
-  y += 14;
-  doc.setFontSize(10);
-  doc.setTextColor(31, 41, 55);
+  let currentY = tableTop + rowHeightHeader;
+
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(34, 34, 34);
+
+  const drawItemRow = (
+    desc: string,
+    qty: number,
+    unitMinor: number,
+    totalMinorLine: number
+  ) => {
+    doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+    doc.rect(margin, currentY, contentWidth, rowHeight, "S");
+
+    const descLines = doc.splitTextToSize(desc, qtyX - descX - 10);
+    const lineY = currentY + 14;
+
+    doc.text(descLines, descX, lineY);
+    doc.text(String(qty), qtyX, lineY, { align: "right" });
+    doc.text(formatMinorGBP(unitMinor), unitX, lineY, { align: "right" });
+    doc.text(formatMinorGBP(totalMinorLine), netX, lineY, { align: "right" });
+
+    currentY += rowHeight;
+  };
 
   if (!items.length) {
-    doc.text(serviceName || "Service", descX, y);
-    doc.text("1", qtyX, y);
-    doc.text(formatMinorGBP(totalMinor), unitX, y);
-    doc.text(formatMinorGBP(totalMinor), amountX, y);
-    y += lineHeight;
+    drawItemRow(
+      consult?.serviceName || order.service_name || "Service",
+      1,
+      totalMinor,
+      totalMinor
+    );
   } else {
     items.forEach((it) => {
-      if (y > pageHeight - margin - 80) {
-        doc.addPage();
-        y = margin;
-      }
-      const name = String(it.name || "Item");
+      const name = String(it.name || order.service_name || "Item");
       const variation = it.variation || it.variations || "";
-      const fullDesc = variation ? `${name} – ${variation}` : name;
+      const fullDesc = variation ? `${name} | ${variation}` : name;
 
-      const wrapped = doc.splitTextToSize(fullDesc, qtyX - descX - 12);
-      doc.text(wrapped, descX, y);
-      doc.text(String(it.qty || 1), qtyX, y);
-      doc.text(formatMinorGBP(it.unitMinor), unitX, y);
-      doc.text(formatMinorGBP(it.totalMinor), amountX, y);
+      const qty = Number(it.qty || 1);
+      const unitMinor = Number(it.unitMinor || it.unit_minor || totalMinor);
+      const lineTotalMinor = Number(it.totalMinor || unitMinor * qty);
 
-      y += lineHeight * Math.max(1, wrapped.length);
+      drawItemRow(fullDesc, qty, unitMinor, lineTotalMinor);
     });
   }
 
-  // line
-  doc.setDrawColor(229, 231, 235);
-  doc.line(margin, y, pageWidth - margin, y);
-  y += lineHeight;
+  // total row
+  currentY += 2;
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.rect(margin, currentY, contentWidth, rowHeight, "S");
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(0, 0, 0);
+  const totalLabelY = currentY + 14;
+  doc.text("Total incl. VAT", unitX, totalLabelY, { align: "right" });
+  doc.text(formatMinorGBP(totalMinor), netX, totalLabelY, { align: "right" });
 
-  // totals
-  const totalsX = margin + contentWidth * 0.55;
-  const labelX = totalsX + contentWidth * 0.25;
-  const valueX = pageWidth - margin;
+  /* -------------------- Payment Information -------------------- */
 
-  doc.setFontSize(10);
-  doc.setTextColor(107, 114, 128);
+  const paymentTop = currentY + rowHeight + 26;
 
-  doc.text("Subtotal", labelX, y, { align: "right" });
-  doc.text(formatMinorGBP(subtotalMinor), valueX, y, { align: "right" });
-  y += lineHeight;
+  const paymentStatusRaw =
+    (order as any).payment_status ||
+    (order.meta as any)?.payment_status ||
+    order.status;
+  const paymentStatus = (paymentStatusRaw || "PAID").toString().toUpperCase();
 
-  const taxMinor = 0;
-  const shippingMinor = 0;
+  doc.setFillColor(headerFill.r, headerFill.g, headerFill.b);
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.rect(margin, paymentTop, contentWidth, 22, "F");
 
-  doc.text("Sales tax", labelX, y, { align: "right" });
-  doc.text(formatMinorGBP(taxMinor), valueX, y, { align: "right" });
-  y += lineHeight;
-
-  doc.text("Shipping", labelX, y, { align: "right" });
-  doc.text(formatMinorGBP(shippingMinor), valueX, y, { align: "right" });
-  y += lineHeight + 4;
-
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  doc.text("Total", labelX, y, { align: "right" });
-  doc.setFontSize(12);
-  doc.text(formatMinorGBP(totalMinor), valueX, y, { align: "right" });
+  doc.setTextColor(headerGreen.r, headerGreen.g, headerGreen.b);
+  doc.text("Payment Information", margin + 8, paymentTop + 14);
 
-  const footerY = pageHeight - 40;
+  const paymentBodyTop = paymentTop + 24;
+  doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
+  doc.rect(margin, paymentBodyTop, contentWidth, 26, "S");
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(34, 34, 34);
+  const paymentLine = `Status: ${paymentStatus}  |  Date: ${dateLabel}`;
+  doc.text(paymentLine, margin + 10, paymentBodyTop + 17);
+
+  /* -------------------- Footer -------------------- */
+
+  const footerY = pageHeight - 32;
   doc.setFontSize(9);
-  doc.setTextColor(156, 163, 175);
-  doc.text(
-    "Thank you for choosing Pharmacy Express. For questions, please contact support@safescript.co.uk",
-    margin,
-    footerY,
-    { maxWidth: contentWidth }
-  );
+  doc.setTextColor(150, 150, 150);
+  doc.text("Thank you for choosing Pharmacy Express.", margin, footerY);
 
   const blob = doc.output("blob");
-  const fileName = `invoice-${ref || order._id}.pdf`;
+  const fileName = `${ref}-invoice.pdf`;
 
   let file: File;
   try {
@@ -447,6 +960,7 @@ async function generateInvoicePdfFromOrder(
   }
   return file;
 }
+
 
 async function sendConsultationSummaryEmail(
   order: OrderDto,
@@ -503,7 +1017,7 @@ async function sendConsultationSummaryEmail(
   await sendEmailApi({
     to: email,
     subject,
-    template: "consultationcompleted", // 🔁 adjust to match your backend template name
+    template: "consultationcompleted", // adjust to match your backend template name
     context: {
       name: patientName,
       email,
@@ -716,7 +1230,7 @@ export default function ConsultationPageClient() {
         updatedMeta.recordOfSupply = record;
       }
 
-      // ✅ include completed_at with current time
+      // include completed_at with current time
       const payload: any = {
         status: "completed",
         completed_at: new Date().toISOString(),
@@ -789,6 +1303,14 @@ export default function ConsultationPageClient() {
 
   const patientName = getDisplayPatientName(order);
 
+  // For Next / Prev buttons
+  const currentIndex = TABS.findIndex((t) => t.key === activeTab);
+  const prevTab = currentIndex > 0 ? TABS[currentIndex - 1] : null;
+  const nextTab =
+    currentIndex >= 0 && currentIndex < TABS.length - 1
+      ? TABS[currentIndex + 1]
+      : null;
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
       {/* Top bar */}
@@ -838,15 +1360,7 @@ export default function ConsultationPageClient() {
 
       {/* Tabs header */}
       <div className="flex flex-wrap gap-2 border-b border-neutral-800 pb-2">
-        {[
-          { key: "risk" as TabKey, label: "Risk Assessment" },
-          { key: "advice" as TabKey, label: "Pharmacist’s Advice" },
-          {
-            key: "declaration" as TabKey,
-            label: "Pharmacist Declaration",
-          },
-          { key: "record" as TabKey, label: "Record of Supply" },
-        ].map((tab) => {
+        {TABS.map((tab) => {
           const isActive = activeTab === tab.key;
           return (
             <button
@@ -874,10 +1388,7 @@ export default function ConsultationPageClient() {
         )}
 
         {activeTab === "declaration" && (
-          <PharmacistDeclarationTab
-            orderId={order._id}
-            serviceId={serviceId}
-          />
+          <PharmacistDeclarationTab orderId={order._id} serviceId={serviceId} />
         )}
 
         {activeTab === "record" && (
@@ -885,45 +1396,77 @@ export default function ConsultationPageClient() {
         )}
       </div>
 
-      {/* End consultation area – ONLY on Record of Supply tab */}
-      {activeTab === "record" && (
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-t border-neutral-800 pt-3">
-          <div className="text-xs text-neutral-500">
-            When you click{" "}
-            <span className="text-neutral-200 font-semibold">
-              End consultation
-            </span>
-            , all tab data will be saved into the order meta, the patient
-            will receive a summary email with PDFs attached, and local
-            consultation data will be cleared.
-          </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            {endError && (
-              <div className="text-xs text-rose-300 flex items-center gap-1">
-                <AlertCircle className="h-3 w-3" />
-                {endError}
-              </div>
-            )}
-            {endSuccess && (
-              <div className="text-xs text-emerald-300 flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" />
-                {endSuccess}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={handleEndConsultation}
-              disabled={endSaving}
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {endSaving && (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              )}
-              {endSaving ? "Saving & ending…" : "End consultation"}
-            </button>
-          </div>
+      {/* Bottom navigation + End consultation */}
+      <div className="border-t border-neutral-800 pt-3 space-y-3">
+        {/* Next / Previous buttons */}
+        <div className="flex flex-col sm:flex-row justify-between gap-2">
+          <button
+            type="button"
+            disabled={!prevTab}
+            onClick={() => prevTab && setActiveTab(prevTab.key)}
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-medium ${
+              prevTab
+                ? "border-neutral-700 bg-neutral-900 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
+                : "border-neutral-800 bg-neutral-950 text-neutral-500 cursor-not-allowed opacity-60"
+            }`}
+          >
+            <ArrowLeft className="h-3 w-3" />
+            {prevTab ? `Previous: ${prevTab.label}` : "Previous"}
+          </button>
+
+          <button
+            type="button"
+            disabled={!nextTab}
+            onClick={() => nextTab && setActiveTab(nextTab.key)}
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold ${
+              nextTab
+                ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                : "border-neutral-800 bg-neutral-950 text-neutral-500 cursor-not-allowed opacity-60"
+            }`}
+          >
+            {nextTab ? `Next: ${nextTab.label}` : "Next"}
+            <ArrowRight className="h-3 w-3" />
+          </button>
         </div>
-      )}
+
+        {/* End consultation area – ONLY on Record of Supply tab */}
+        {activeTab === "record" && (
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="text-xs text-neutral-500">
+              When you click{" "}
+              <span className="text-neutral-200 font-semibold">
+                End consultation
+              </span>
+              , all tab data will be saved into the order meta, the patient will
+              receive a summary email with PDFs attached, and local consultation
+              data will be cleared.
+            </div>
+            <div className="flex flex-wrap gap-2 justify-end">
+              {endError && (
+                <div className="text-xs text-rose-300 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {endError}
+                </div>
+              )}
+              {endSuccess && (
+                <div className="text-xs text-emerald-300 flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" />
+                  {endSuccess}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleEndConsultation}
+                disabled={endSaving}
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {endSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                {endSaving ? "Saving & ending…" : "End consultation"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

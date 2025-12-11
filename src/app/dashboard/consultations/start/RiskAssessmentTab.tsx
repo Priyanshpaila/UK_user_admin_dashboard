@@ -5,6 +5,7 @@ import {
   type OrderDto,
   type ClinicForm,
   getClinicFormByIdApi,
+  getBackendBase,
 } from "../../../../api";
 import { Loader2 } from "lucide-react";
 
@@ -66,6 +67,12 @@ type RiskAnswer = {
   value: any;
 };
 
+type NormalizedFile = {
+  url: string;
+  name: string;
+  type?: string;
+};
+
 interface Props {
   order: OrderDto;
 }
@@ -80,6 +87,58 @@ const slugify = (s: string) =>
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+
+/** Normalise backend-relative URLs to absolute, removing trailing `/api`. */
+function resolveFileUrl(pathOrUrl?: string | null): string {
+  if (!pathOrUrl) return "";
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+
+  const normalized = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
+  const baseWithApi = getBackendBase(); // e.g. https://tenant.domain.com/api
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, ""); // → https://tenant.domain.com
+
+  return `${cleanBase}${normalized}`;
+}
+
+/** Turn any stored value (string/object/array) into a list of file descriptors. */
+function normalizeFilesValue(value: any): NormalizedFile[] {
+  if (!value) return [];
+  const arr: any[] = Array.isArray(value) ? value : [value];
+
+  return arr
+    .map((item, idx): NormalizedFile | null => {
+      if (!item) return null;
+
+      if (typeof item === "string") {
+        return {
+          url: item,
+          name: `File ${idx + 1}`,
+        };
+      }
+
+      if (typeof item === "object") {
+        const url =
+          item.url ||
+          item.path ||
+          item.location ||
+          item.href ||
+          item.downloadUrl ||
+          "";
+        const name =
+          item.name ||
+          item.filename ||
+          item.originalname ||
+          item.originalName ||
+          `File ${idx + 1}`;
+        const type = item.type || item.mimetype || item.mimeType || "";
+        if (!url && !name) return null;
+        return { url, name, type };
+      }
+
+      return null;
+    })
+    .filter((x): x is NormalizedFile => !!x);
+}
 
 function extractShowIf(input: any): VisibilityCond | undefined {
   const cand =
@@ -348,10 +407,9 @@ function toQuestionArray(input: any): Question[] {
 
       const keyFromData =
         (x.data?.key ??
-        x.key ??
-        x.id ??
-        slugify(label)) ||
-        `q_${i}`;
+          x.key ??
+          x.id ??
+          slugify(label)) || `q_${i}`;
 
       const id = String(keyFromData);
 
@@ -425,6 +483,7 @@ export default function RiskAssessmentTab({ order }: Props) {
   const [qaList, setQaList] = useState<RiskAnswer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false); // 👈 for safe LS writes
 
   const storageKey = `consultation_${order._id}_risk`;
 
@@ -519,7 +578,10 @@ export default function RiskAssessmentTab({ order }: Props) {
           setError(e?.message || "Failed to load RAF data.");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setHydrated(true); // ✅ now safe to write to LS
+        }
       }
     }
 
@@ -532,9 +594,9 @@ export default function RiskAssessmentTab({ order }: Props) {
 
   // Persist qaList to localStorage for End Consultation
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(qaList));
-  }, [qaList, storageKey]);
+  }, [qaList, storageKey, hydrated]);
 
   function setValueForKey(key: string, questionLabel: string, value: any) {
     setQaList((prev) => {
@@ -602,9 +664,17 @@ export default function RiskAssessmentTab({ order }: Props) {
       visibleQuestions.some(
         (q) =>
           !q.isLayoutOnly &&
-          ["text", "textarea", "number", "boolean", "select", "multiselect", "radio", "date", "file"].includes(
-            q.type
-          )
+          [
+            "text",
+            "textarea",
+            "number",
+            "boolean",
+            "select",
+            "multiselect",
+            "radio",
+            "date",
+            "file",
+          ].includes(q.type)
       ),
     [visibleQuestions]
   );
@@ -663,6 +733,36 @@ export default function RiskAssessmentTab({ order }: Props) {
     );
   }
 
+  // helper for fallback display (avoid [object Object] for file values)
+  const makeDisplayText = (val: any): string => {
+    if (Array.isArray(val)) {
+      if (val.length && typeof val[0] === "object") {
+        const names = val
+          .map(
+            (f: any) =>
+              f?.name ||
+              f?.filename ||
+              f?.originalname ||
+              f?.url ||
+              f?.path
+          )
+          .filter(Boolean);
+        return names.length ? names.join(", ") : "[File attachments]";
+      }
+      return val.join(", ");
+    }
+    if (val && typeof val === "object") {
+      const name =
+        (val as any).name ||
+        (val as any).filename ||
+        (val as any).originalname ||
+        (val as any).url ||
+        (val as any).path;
+      return name ? String(name) : "[File attachment]";
+    }
+    return val ?? "";
+  };
+
   // 2) Fallback: no schema, but we DO have QA -> simple list with textareas
   if (qaList.length > 0) {
     return (
@@ -680,9 +780,7 @@ export default function RiskAssessmentTab({ order }: Props) {
 
         <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
           {qaList.map((qa, idx) => {
-            const displayValue = Array.isArray(qa.value)
-              ? qa.value.join(", ")
-              : qa.value ?? "";
+            const displayValue = makeDisplayText(qa.value);
 
             return (
               <div
@@ -695,11 +793,7 @@ export default function RiskAssessmentTab({ order }: Props) {
                 <textarea
                   value={displayValue}
                   onChange={(e) =>
-                    setValueForKey(
-                      qa.key,
-                      qa.question,
-                      e.target.value
-                    )
+                    setValueForKey(qa.key, qa.question, e.target.value)
                   }
                   className="w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 resize-y min-h-[60px]"
                   placeholder="Answer…"
@@ -774,7 +868,8 @@ function QuestionRow({
   }
 
   if (q.type === "image") {
-    const src = q.imageUrl || "";
+    const rawSrc = q.imageUrl || "";
+    const src = resolveFileUrl(rawSrc);
     return (
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2">
         {q.label && (
@@ -787,7 +882,7 @@ function QuestionRow({
           <img
             src={src}
             alt={q.label || "Image"}
-            className="max-h-64 w-auto rounded-md border border-neutral-800 object-contain"
+            className="max-h-64 w-auto rounded-md border border-neutral-800 object-contain bg-neutral-950"
           />
         ) : (
           <p className="text-[11px] text-neutral-500">
@@ -877,9 +972,7 @@ function QuestionRow({
           max={q.max}
           value={value ?? ""}
           onChange={(e) =>
-            onChange(
-              e.target.value === "" ? "" : Number(e.target.value)
-            )
+            onChange(e.target.value === "" ? "" : Number(e.target.value))
           }
         />
       )}
@@ -919,9 +1012,7 @@ function QuestionRow({
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value)}
         >
-          <option value="">
-            {q.placeholder || "Please select"}
-          </option>
+          <option value="">{q.placeholder || "Please select"}</option>
           {(q.options || []).map((opt) => (
             <option key={opt.value} value={opt.value}>
               {opt.label}
@@ -1000,15 +1091,59 @@ function QuestionRow({
         />
       )}
 
-      {/* FILE (read-only) */}
+      {/* FILE (read-only, with preview/links) */}
       {q.type === "file" && (
-        <div className="text-[11px] text-neutral-400">
-          File uploads are not editable from this view. Existing answer:
-          <pre className="mt-1 rounded bg-neutral-950/80 px-2 py-1 text-[10px] text-neutral-300 overflow-x-auto">
-            {value
-              ? JSON.stringify(value, null, 2)
-              : "No file uploaded"}
-          </pre>
+        <div className="text-[11px] text-neutral-400 space-y-1">
+          <p>File uploads are not editable from this view.</p>
+          {(() => {
+            const files = normalizeFilesValue(value);
+            if (!files.length) {
+              return (
+                <p className="text-[11px] text-neutral-500">
+                  No file uploaded.
+                </p>
+              );
+            }
+
+            return (
+              <div className="mt-1 flex flex-wrap gap-2">
+                {files.map((file, i) => {
+                  const url = resolveFileUrl(file.url);
+                  if (!url) return null;
+
+                  const isImage =
+                    file.type?.startsWith("image/") ||
+                    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(
+                      file.name || file.url
+                    );
+
+                  if (isImage) {
+                    return (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={i}
+                        src={url}
+                        alt={file.name || `Attachment ${i + 1}`}
+                        className="max-h-32 max-w-[180px] rounded border border-neutral-800 bg-neutral-950 object-contain"
+                      />
+                    );
+                  }
+
+                  return (
+                    <a
+                      key={i}
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-950 px-2 py-0.5 text-[10px] text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
+                    >
+                      {file.name || `Attachment ${i + 1}`}
+                    </a>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

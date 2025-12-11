@@ -7,6 +7,7 @@ import {
   updateOrderStatusApi,
   getUserByIdApi,
   updateUserApi,
+  getBackendBase, // ⬅️ added
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
@@ -140,6 +141,99 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
 
   return "Unknown";
 }
+
+/* --------------------- RAF file/image helpers --------------------- */
+
+const resolveImageUrl = (imagePath?: string | null): string => {
+  if (!imagePath) return "";
+
+  if (/^https?:\/\//i.test(imagePath)) {
+    return imagePath;
+  }
+
+  const normalizedPath = imagePath.startsWith("/")
+    ? imagePath
+    : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase();
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+
+  return `${cleanBase}${normalizedPath}`;
+};
+
+// Render RAF answer including file uploads with images
+function renderRafAnswer(qa: any) {
+  const raw = qa?.raw;
+
+  // File upload: raw is array of file objects with url/name/type
+  if (Array.isArray(raw) && raw.length && typeof raw[0] === "object") {
+    return (
+      <div className="mt-1 flex flex-wrap gap-3">
+        {raw.map((file: any, i: number) => {
+          const url = resolveImageUrl(file.url);
+          const isImage = (file.type || "").startsWith("image/");
+
+          if (!url) {
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1"
+              >
+                <span className="text-[11px] font-medium text-neutral-100">
+                  {file.name || "File"}
+                </span>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={i}
+              className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1"
+            >
+              {isImage && (
+                <button
+                  type="button"
+                  onClick={() => window.open(url, "_blank")}
+                  className="relative h-10 w-10 overflow-hidden rounded-md border border-neutral-800 bg-neutral-900"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt={file.name || "uploaded image"}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              )}
+
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => window.open(url, "_blank")}
+                  className="text-left text-[11px] font-medium text-emerald-300 hover:underline"
+                >
+                  {file.name || "View file"}
+                </button>
+                <span className="text-[10px] text-neutral-500">
+                  {file.type || "file"}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Normal answers (text, radios, multi-select already stringified)
+  return (
+    <p className="mt-0.5 text-[11px] text-neutral-100">
+      {qa?.answer ?? "—"}
+    </p>
+  );
+}
+
+/* ----------------------------- Page ----------------------------- */
 
 export default function Page() {
   // list state
@@ -1067,7 +1161,7 @@ export default function Page() {
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
-                          <span className="font-semibold text-white">
+                        <span className="font-semibold text-white">
                           {formatMoney(selectedOrder.meta?.totalMinor)}
                         </span>
                       </p>
@@ -1108,25 +1202,25 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* RAF preview */}
+                  {/* RAF preview with file/image rendering */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-                      <p className="text-xs font-semibold text-neutral-200 mb-2">
+                      <p className="mb-2 text-xs font-semibold text-neutral-200">
                         RAF Answers (preview)
                       </p>
-                      <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
                         {selectedOrder.meta.formsQA.raf.qa.map(
                           (qa: any, idx: number) => (
                             <div
                               key={idx}
-                              className="text-[11px] border-b border-neutral-800/60 pb-1 last:border-none"
+                              className="border-b border-neutral-800/60 pb-2 last:border-none"
                             >
-                              <p className="text-neutral-400">
+                              <p className="text-[11px] font-medium text-neutral-300">
                                 {qa.question || qa.key}
                               </p>
-                              <p className="text-neutral-100">
-                                {qa.answer ?? "—"}
-                              </p>
+
+                              {/* Handles text, multi-choice and file uploads */}
+                              {renderRafAnswer(qa)}
                             </div>
                           )
                         )}

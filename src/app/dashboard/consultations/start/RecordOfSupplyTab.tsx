@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
   getClinicFormsApi,
   type ClinicForm,
-} from "../../../../api"; // adjust path if needed
+} from "../../../../api";
 import { Loader2 } from "lucide-react";
 
 type FieldsState = {
@@ -21,6 +21,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
   const [fields, setFields] = useState<FieldsState>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false); // 👈 for safe LS writes
 
   const storageKey = `consultation_${orderId}_record`;
 
@@ -32,6 +33,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
       if (!serviceId) {
         setError("Missing service id for clinic notes form");
         setLoading(false);
+        setHydrated(true);
         return;
       }
 
@@ -69,7 +71,6 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
             try {
               const parsed = JSON.parse(raw);
               if (parsed && typeof parsed === "object") {
-                // parsed.fields is already { label: value }
                 initialFields = parsed.fields || {};
               }
             } catch {
@@ -87,7 +88,10 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
           setError(e?.message || "Failed to load clinic notes form");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setHydrated(true); // ✅ done hydrating
+        }
       }
     }
 
@@ -100,10 +104,10 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
 
   // Persist to LS as { label: value } pairs
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !hydrated) return;
     const payload = { fields }; // fields is already { label: value }
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
-  }, [fields, storageKey]);
+  }, [fields, storageKey, hydrated]);
 
   function handleFieldChange(key: string, value: string) {
     setFields((prev) => ({ ...prev, [key]: value }));
@@ -129,9 +133,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
   const editableTypes = ["text", "textarea", "date", "number"];
 
   const fieldsToRender =
-    (form.schema || []).filter((f) =>
-      editableTypes.includes(f.type)
-    ) || [];
+    (form.schema || []).filter((f) => editableTypes.includes(f.type)) || [];
 
   if (!fieldsToRender.length) {
     return (
@@ -156,7 +158,7 @@ export default function RecordOfSupplyTab({ orderId, serviceId }: Props) {
         const reactKey =
           field.data?.key || field.data?.label || `field_${idx}`;
 
-        // 🔑 Storage key: prefer LABEL so localStorage is { label: value }
+        // Storage key: prefer LABEL so localStorage is { label: value }
         const storageFieldKey =
           field.data?.label || field.data?.key || `field_${idx}`;
 

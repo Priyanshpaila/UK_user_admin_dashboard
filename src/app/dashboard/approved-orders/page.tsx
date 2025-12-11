@@ -7,6 +7,7 @@ import {
   updateOrderStatusApi,
   getUserByIdApi,
   updateUserApi,
+  getBackendBase,
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
@@ -153,6 +154,28 @@ function getUserInitials(user: UserDto | null): string {
   const parts = String(name).trim().split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
   return initials.join("") || "PT";
+}
+
+/**
+ * Normalises relative /upload/... URLs to full backend URLs,
+ * consistent with other screens.
+ */
+function resolveImageUrl(imagePath?: string | null): string {
+  if (!imagePath) return "";
+
+  // Already absolute
+  if (/^https?:\/\//i.test(imagePath)) {
+    return imagePath;
+  }
+
+  const normalizedPath = imagePath.startsWith("/")
+    ? imagePath
+    : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase();
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+
+  return `${cleanBase}${normalizedPath}`;
 }
 
 function PatientProfileCard({
@@ -739,7 +762,7 @@ export default function Page() {
                     </div>
                     <p className="mt-1 text-xs text-neutral-400">
                       {order.service_name} • Ref:{" "}
-                      <span className="font-mono">{order.reference}</span>
+                        <span className="font-mono">{order.reference}</span>
                     </p>
                   </div>
 
@@ -1028,29 +1051,103 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* RAF Answers (full questions + answers) */}
+                  {/* RAF Answers (full questions + answers, with file support) */}
                   {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
                       <p className="text-xs font-semibold text-neutral-200 mb-2">
                         RAF Questions &amp; Answers
                       </p>
-                      <div className="space-y-2">
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                         {selectedOrder.meta.formsQA.raf.qa.map(
-                          (qa: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="text-[11px] border-b border-neutral-800/60 pb-2 last:border-none"
-                            >
-                              <p className="text-neutral-400 font-medium">
-                                {qa.question || qa.key}
-                              </p>
-                              <p className="text-neutral-100 whitespace-pre-wrap mt-0.5">
-                                {Array.isArray(qa.raw)
-                                  ? qa.raw.join(", ")
-                                  : qa.answer ?? qa.raw ?? "—"}
-                              </p>
-                            </div>
-                          )
+                          (qa: any, idx: number) => {
+                            const raw = qa.raw;
+                            const isFileArray =
+                              Array.isArray(raw) &&
+                              raw.length > 0 &&
+                              typeof raw[0] === "object" &&
+                              (raw[0].url || raw[0].name);
+
+                            let displayAnswer: string | null = null;
+                            if (!isFileArray) {
+                              if (Array.isArray(raw)) {
+                                displayAnswer = raw.join(", ");
+                              } else {
+                                displayAnswer =
+                                  qa.answer ?? raw ?? "—";
+                              }
+                            } else {
+                              displayAnswer =
+                                qa.answer &&
+                                qa.answer !== "[object Object]"
+                                  ? qa.answer
+                                  : "File attachment";
+                            }
+
+                            const files = isFileArray
+                              ? (raw as any[]).filter(
+                                  (f) => f && (f.url || f.name)
+                                )
+                              : [];
+
+                            return (
+                              <div
+                                key={idx}
+                                className="text-[11px] border-b border-neutral-800/60 pb-2 last:border-none"
+                              >
+                                <p className="text-neutral-400 font-medium">
+                                  {qa.question || qa.key}
+                                </p>
+                                {displayAnswer && (
+                                  <p className="text-neutral-100 whitespace-pre-wrap mt-0.5">
+                                    {displayAnswer}
+                                  </p>
+                                )}
+                                {files.length > 0 && (
+                                  <div className="mt-1 flex flex-wrap gap-2">
+                                    {files.map((file: any, i: number) => {
+                                      const fileUrl = resolveImageUrl(
+                                        file.url || ""
+                                      );
+                                      if (!fileUrl) return null;
+
+                                      const isImage =
+                                        file.type?.startsWith("image/") ||
+                                        /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(
+                                          file.name || file.url || ""
+                                        );
+
+                                      if (isImage) {
+                                        return (
+                                          <img
+                                            key={i}
+                                            src={fileUrl}
+                                            alt={
+                                              file.name ||
+                                              `Attachment ${i + 1}`
+                                            }
+                                            className="max-h-24 max-w-[180px] rounded border border-neutral-800 bg-neutral-900 object-contain"
+                                          />
+                                        );
+                                      }
+
+                                      return (
+                                        <a
+                                          key={i}
+                                          href={fileUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
+                                        >
+                                          {file.name ||
+                                            `Attachment ${i + 1}`}
+                                        </a>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
                         )}
                       </div>
                     </div>

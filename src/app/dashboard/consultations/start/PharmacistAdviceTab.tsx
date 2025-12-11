@@ -26,11 +26,7 @@ type OrderNotes = {
 /** 👉 Helper to derive the "answer" string for an option.
  * Priority: option.help → field.help → option.label → option.value
  */
-function getOptionAnswer(
-  field: any,
-  opt: any,
-  index: number
-): string {
+function getOptionAnswer(field: any, opt: any, index: number): string {
   const optHelp = opt?.help;
   const fieldHelp = field?.data?.help;
   const label = opt?.label;
@@ -59,6 +55,8 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   });
   const [orderNotesLoading, setOrderNotesLoading] = useState(true);
 
+  const [hydrated, setHydrated] = useState(false); // 👈 for safe LS writes
+
   const storageKey = `consultation_${orderId}_advice`;
 
   /* ------------ Load Pharmacist Advice form + LS ------------ */
@@ -69,6 +67,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
       if (!serviceId) {
         setError("Missing service id for advice form");
         setLoading(false);
+        setHydrated(true);
         return;
       }
 
@@ -148,7 +147,10 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
           setError(e?.message || "Failed to load advice form");
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setHydrated(true); // ✅ done hydrating
+        }
       }
     }
 
@@ -207,7 +209,6 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
         }
       } catch (e) {
         if (!cancelled) {
-          // Fail silently – just no notes
           setOrderNotes({ admin: [], consultation: [] });
         }
       } finally {
@@ -224,10 +225,10 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
 
   // Persist advice selections (answers) to localStorage
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || !hydrated) return;
     const payload = { selectAll, adviceState };
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
-  }, [adviceState, selectAll, storageKey]);
+  }, [adviceState, selectAll, storageKey, hydrated]);
 
   /** 🔁 Toggle a single option: store its help text as the answer */
   function toggleOption(fieldKey: string, answer: string) {
@@ -296,7 +297,6 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   if (!checkboxFields.length) {
     return (
       <div className="space-y-3 text-xs text-neutral-400">
-        {/* Notes at top even if no checkbox fields */}
         {(orderNotes.admin.length > 0 ||
           orderNotes.consultation.length > 0 ||
           orderNotesLoading) && (
@@ -342,7 +342,6 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* 🔹 Admin / Consultant notes banner at the top (if present) */}
       {(hasAnyNotes || orderNotesLoading) && (
         <OrderNotesBanner notes={orderNotes} loading={orderNotesLoading} />
       )}
@@ -360,8 +359,8 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
             </p>
           )}
           <p className="text-[11px] text-neutral-500">
-            Tick the options that apply. Use “Select all” for a quick blanket
-            selection. Help text is stored as the answer for each ticked option.
+            Tick the options that apply. Help text is stored as the answer
+            for each ticked option.
           </p>
         </div>
         <label className="inline-flex items-center gap-2 text-xs text-neutral-100">
@@ -489,10 +488,7 @@ function OrderNotesBanner({
             {hasAdmin ? (
               <ul className="space-y-1">
                 {notes.admin.map((n, i) => (
-                  <li
-                    key={i}
-                    className="text-neutral-200 leading-snug"
-                  >
+                  <li key={i} className="text-neutral-200 leading-snug">
                     • {n}
                   </li>
                 ))}
@@ -509,10 +505,7 @@ function OrderNotesBanner({
             {hasConsult ? (
               <ul className="space-y-1">
                 {notes.consultation.map((n, i) => (
-                  <li
-                    key={i}
-                    className="text-neutral-200 leading-snug"
-                  >
+                  <li key={i} className="text-neutral-200 leading-snug">
                     • {n}
                   </li>
                 ))}

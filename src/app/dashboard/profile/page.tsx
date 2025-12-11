@@ -99,9 +99,7 @@ export default function ProfilePage() {
 
   // scale-aware coordinate helper (fixes "mouse is far from stroke" bug)
   const getPointFromEvent = (
-    e:
-      | React.MouseEvent<HTMLCanvasElement>
-      | React.TouchEvent<HTMLCanvasElement>
+    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
   ) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -135,9 +133,11 @@ export default function ProfilePage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.fillStyle = "#050507";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#f97316";
+    // clear to transparent (so CSS background shows in the UI)
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // draw in BLACK
+    ctx.strokeStyle = "#000000";
     ctx.lineWidth = 2;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
@@ -148,9 +148,7 @@ export default function ProfilePage() {
   }, []);
 
   const handleSignatureStart = (
-    e:
-      | React.MouseEvent<HTMLCanvasElement>
-      | React.TouchEvent<HTMLCanvasElement>
+    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
   ) => {
     e.preventDefault();
     const canvas = canvasRef.current;
@@ -169,9 +167,7 @@ export default function ProfilePage() {
   };
 
   const handleSignatureMove = (
-    e:
-      | React.MouseEvent<HTMLCanvasElement>
-      | React.TouchEvent<HTMLCanvasElement>
+    e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
   ) => {
     if (!isDrawing) return;
     e.preventDefault();
@@ -272,15 +268,31 @@ export default function ProfilePage() {
       let signatureFile: File | null = null;
       const canvas = canvasRef.current;
 
-      // ⬅️ Only try to export if user actually drew something
+      // ✅ Only export if user actually drew something
       if (canvas && hasDrawn) {
-        const blob: Blob | null = await new Promise((resolve) =>
-          canvas.toBlob((b) => resolve(b), "image/png")
-        );
-        if (blob) {
-          signatureFile = new File([blob], "signature.png", {
-            type: "image/png",
-          });
+        // Create an offscreen canvas with white background
+        const exportCanvas = document.createElement("canvas");
+        exportCanvas.width = canvas.width;
+        exportCanvas.height = canvas.height;
+        const exportCtx = exportCanvas.getContext("2d");
+
+        if (exportCtx) {
+          // white background
+          exportCtx.fillStyle = "#ffffff";
+          exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+          // draw the original (transparent bg, black ink) on top
+          exportCtx.drawImage(canvas, 0, 0);
+
+          const blob: Blob | null = await new Promise((resolve) =>
+            exportCanvas.toBlob((b) => resolve(b), "image/png")
+          );
+
+          if (blob) {
+            signatureFile = new File([blob], "signature.png", {
+              type: "image/png",
+            });
+          }
         }
       }
 
