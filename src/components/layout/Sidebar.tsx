@@ -151,7 +151,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
   const logout = () => {
     localStorage.removeItem("session_token");
     localStorage.removeItem("user");
-    router.push("/login");
+    router.push("/");
   };
 
   // 🔐 Hide Tenant group if user is not admin
