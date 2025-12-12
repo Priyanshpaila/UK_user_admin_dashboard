@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getAppointmentsApi,
   updateAppointmentApi,
@@ -20,6 +20,11 @@ import {
   X,
   RefreshCw,
   Link2,
+  Filter,
+  CheckCircle2,
+  XCircle,
+  BadgeCheck,
+  CalendarX2,
 } from "lucide-react";
 
 /* ----------------- helpers ----------------- */
@@ -51,11 +56,7 @@ function truncateUrl(url?: string, max = 40) {
   return url.slice(0, max - 3) + "...";
 }
 
-// Derive display name using appointment + user info
-function getDisplayPatientName(
-  appt: AppointmentDto,
-  user?: UserDto | null
-): string {
+function getDisplayPatientName(appt: AppointmentDto, user?: UserDto | null): string {
   if (appt.patient_name) return appt.patient_name;
 
   if (user) {
@@ -70,14 +71,11 @@ function getDisplayPatientName(
   return "Patient";
 }
 
-// Combine some extra details (email, phone, etc.)
 function getPatientDetails(user?: UserDto | null): string {
   if (!user) return "";
   const email = user.email;
   const phone =
-    (user as any).phone ||
-    (user as any).mobile ||
-    (user as any).phoneNumber;
+    (user as any).phone || (user as any).mobile || (user as any).phoneNumber;
 
   const parts: string[] = [];
   if (email) parts.push(email);
@@ -86,18 +84,16 @@ function getPatientDetails(user?: UserDto | null): string {
   return parts.join(" • ");
 }
 
-// for <input type="datetime-local">
 function toDateTimeLocal(value?: string | null): string {
   if (!value) return "";
   const d = new Date(value);
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-    d.getDate()
-  )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 
-// status pill colours (appointments)
 function appointmentStatusPillClass(status?: string) {
   const s = (status || "").toLowerCase();
   if (s === "pending")
@@ -121,6 +117,25 @@ function formatMoney(minor?: number | null) {
   return `£${(minor / 100).toFixed(2)}`;
 }
 
+type StatusFilter =
+  | "pending"
+  | "confirmed"
+  | "cancelled"
+  | "completed"
+  | "rescheduled"
+  | "no-show"
+  | "all";
+
+const FILTERS: { key: StatusFilter; label: string; icon: any }[] = [
+  { key: "pending", label: "Pending", icon: Clock },
+  { key: "confirmed", label: "Confirmed", icon: BadgeCheck },
+  { key: "completed", label: "Completed", icon: CheckCircle2 },
+  { key: "cancelled", label: "Cancelled", icon: XCircle },
+  { key: "rescheduled", label: "Rescheduled", icon: CalendarX2 },
+  { key: "no-show", label: "No-show", icon: CalendarX2 },
+  { key: "all", label: "All", icon: Filter },
+];
+
 /* ----------------- page ----------------- */
 
 export default function Page() {
@@ -128,44 +143,53 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ filters (pending default)
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
+
   const [editing, setEditing] = useState<AppointmentDto | null>(null);
   const [editStatus, setEditStatus] = useState<string>("pending");
-  const [editStart, setEditStart] = useState<string>(""); // datetime-local value
-  const [editEnd, setEditEnd] = useState<string>(""); // datetime-local value
+  const [editStart, setEditStart] = useState<string>("");
+  const [editEnd, setEditEnd] = useState<string>("");
   const [joinUrl, setJoinUrl] = useState<string>("");
   const [hostUrl, setHostUrl] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // user cache: user_id -> user
-  const [appointmentUsers, setAppointmentUsers] = useState<
-    Record<string, UserDto | null>
-  >({});
+  const [appointmentUsers, setAppointmentUsers] = useState<Record<string, UserDto | null>>(
+    {}
+  );
 
-  // current order for editing drawer
   const [editingOrder, setEditingOrder] = useState<OrderDto | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
 
-  async function loadAppointments() {
+  async function loadAppointments(filter: StatusFilter = statusFilter) {
     setLoading(true);
     setError(null);
+
     try {
-      const res = await getAppointmentsApi();
+      // ✅ call backend with status when not "all"
+      const res =
+        filter === "all"
+          ? await getAppointmentsApi()
+          : await getAppointmentsApi({ status: filter });
+
       const list: AppointmentDto[] = Array.isArray((res as any).data)
         ? (res as any).data
         : Array.isArray(res)
         ? (res as any)
         : [];
-      setAppointments(list);
 
-      // 🔹 Fetch user details for all unique user_ids
+      // ✅ UI safety filter (in case backend ignores query)
+      const filtered =
+        filter === "all"
+          ? list
+          : list.filter((a) => (a.status || "").toLowerCase() === filter);
+
+      setAppointments(filtered);
+
       const uniqueUserIds = Array.from(
-        new Set(
-          list
-            .map((a) => a.user_id as string | undefined)
-            .filter(Boolean)
-        )
+        new Set(filtered.map((a) => a.user_id as string | undefined).filter(Boolean))
       ) as string[];
 
       if (uniqueUserIds.length) {
@@ -182,9 +206,7 @@ export default function Page() {
         );
 
         const map: Record<string, UserDto | null> = {};
-        for (const [id, user] of results) {
-          map[id] = user;
-        }
+        for (const [id, user] of results) map[id] = user;
         setAppointmentUsers(map);
       } else {
         setAppointmentUsers({});
@@ -196,9 +218,11 @@ export default function Page() {
     }
   }
 
+  // initial + when filter changes
   useEffect(() => {
-    void loadAppointments();
-  }, []);
+    void loadAppointments(statusFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   function openEdit(appt: AppointmentDto) {
     setEditing(appt);
@@ -209,7 +233,6 @@ export default function Page() {
     setHostUrl(appt.host_url || "");
     setSaveError(null);
 
-    // reset order state and fetch order details
     setEditingOrder(null);
     setOrderError(null);
 
@@ -241,38 +264,37 @@ export default function Page() {
   const originalStartInput = editing ? toDateTimeLocal(editing.start_at) : "";
   const originalEndInput = editing ? toDateTimeLocal(editing.end_at) : "";
   const hasTimeChanged =
-    !!editing &&
-    (editStart !== originalStartInput || editEnd !== originalEndInput);
+    !!editing && (editStart !== originalStartInput || editEnd !== originalEndInput);
 
   async function handleSave() {
     if (!editing) return;
     setSaving(true);
     setSaveError(null);
+
     try {
       const payload: any = {
         join_url: joinUrl || undefined,
         host_url: hostUrl || undefined,
       };
 
-      if (editStart) {
-        payload.start_at = new Date(editStart).toISOString();
-      }
-      if (editEnd) {
-        payload.end_at = new Date(editEnd).toISOString();
-      }
+      if (editStart) payload.start_at = new Date(editStart).toISOString();
+      if (editEnd) payload.end_at = new Date(editEnd).toISOString();
 
       // If time changed → status must be rescheduled
-      if (hasTimeChanged) {
-        payload.status = "rescheduled";
-      } else {
-        payload.status = editStatus;
-      }
+      if (hasTimeChanged) payload.status = "rescheduled";
+      else payload.status = editStatus;
 
       const updated = await updateAppointmentApi(editing._id, payload);
 
-      setAppointments((prev) =>
-        prev.map((a) => (a._id === updated._id ? updated : a))
-      );
+      // update local list
+      setAppointments((prev) => prev.map((a) => (a._id === updated._id ? updated : a)));
+
+      // ✅ if we are in a filtered view, drop the card if it no longer matches
+      const f = statusFilter;
+      if (f !== "all" && (updated.status || "").toLowerCase() !== f) {
+        setAppointments((prev) => prev.filter((a) => a._id !== updated._id));
+      }
+
       setEditing(null);
       setEditingOrder(null);
     } catch (e: any) {
@@ -282,11 +304,13 @@ export default function Page() {
     }
   }
 
-  const editingUser =
-    editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
-  const editingPatientName =
-    editing && getDisplayPatientName(editing, editingUser);
+  const editingUser = editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
+  const editingPatientName = editing && getDisplayPatientName(editing, editingUser);
   const editingPatientDetails = getPatientDetails(editingUser);
+
+  const activeFilterLabel = useMemo(() => {
+    return FILTERS.find((f) => f.key === statusFilter)?.label || "Pending";
+  }, [statusFilter]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-4">
@@ -295,23 +319,42 @@ export default function Page() {
         <div>
           <h1 className="text-2xl font-semibold text-white">Appointments</h1>
           <p className="text-xs text-neutral-400">
-            Review and manage upcoming appointments, including meeting links,
-            reschedules and order details.
+            Filter: <span className="text-neutral-200 font-semibold">{activeFilterLabel}</span>
           </p>
         </div>
+
         <button
           type="button"
-          onClick={loadAppointments}
+          onClick={() => loadAppointments(statusFilter)}
           disabled={loading}
           className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-60"
         >
-          {loading ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3 w-3" />
-          )}
+          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
           Refresh
         </button>
+      </div>
+
+      {/* ✅ Filter pills */}
+      <div className="flex flex-wrap items-center gap-2">
+        {FILTERS.map((f) => {
+          const Icon = f.icon;
+          const active = statusFilter === f.key;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setStatusFilter(f.key)}
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                active
+                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
+                  : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500 hover:text-white"
+              }`}
+            >
+              <Icon className={`h-3.5 w-3.5 ${active ? "text-emerald-300" : "text-neutral-400"}`} />
+              {f.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Error */}
@@ -393,17 +436,13 @@ export default function Page() {
                     <div className="flex items-center gap-2">
                       <CalendarClock className="h-3.5 w-3.5 text-neutral-500" />
                       <span className="text-neutral-400">Start:</span>
-                      <span className="text-neutral-100">
-                        {formatDateTime(start)}
-                      </span>
+                      <span className="text-neutral-100">{formatDateTime(start)}</span>
                     </div>
                     {end && (
                       <div className="flex items-center gap-2">
                         <Clock className="h-3.5 w-3.5 text-neutral-500" />
                         <span className="text-neutral-400">End:</span>
-                        <span className="text-neutral-100">
-                          {formatDateTime(end)}
-                        </span>
+                        <span className="text-neutral-100">{formatDateTime(end)}</span>
                       </div>
                     )}
                   </div>
@@ -444,8 +483,7 @@ export default function Page() {
 
                 <div className="mt-3 flex items-center justify-between text-[11px] text-neutral-500">
                   <span>
-                    Created:{" "}
-                    {appt.createdAt ? formatDateTime(appt.createdAt) : "—"}
+                    Created: {appt.createdAt ? formatDateTime(appt.createdAt) : "—"}
                   </span>
                   <button
                     type="button"
@@ -507,9 +545,7 @@ export default function Page() {
               </p>
               <div className="grid grid-cols-1 gap-3">
                 <div>
-                  <label className="text-[11px] text-neutral-400">
-                    Start (local)
-                  </label>
+                  <label className="text-[11px] text-neutral-400">Start (local)</label>
                   <input
                     type="datetime-local"
                     value={editStart}
@@ -518,9 +554,7 @@ export default function Page() {
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-neutral-400">
-                    End (local)
-                  </label>
+                  <label className="text-[11px] text-neutral-400">End (local)</label>
                   <input
                     type="datetime-local"
                     value={editEnd}
@@ -616,9 +650,7 @@ export default function Page() {
                 </p>
               )}
 
-              {orderError && (
-                <p className="text-[11px] text-rose-300">{orderError}</p>
-              )}
+              {orderError && <p className="text-[11px] text-rose-300">{orderError}</p>}
 
               {!orderLoading && !orderError && !editingOrder && (
                 <p className="text-[11px] text-neutral-500">
@@ -653,17 +685,13 @@ export default function Page() {
                           className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-800 last:border-none"
                         >
                           <div className="flex flex-col">
-                            <span className="font-medium text-neutral-100">
-                              {it.name}
-                            </span>
+                            <span className="font-medium text-neutral-100">{it.name}</span>
                             <span className="text-[10px] text-neutral-400">
                               {it.variation || it.variations || "Standard"}
                             </span>
                           </div>
                           <div className="text-right">
-                            <span className="block text-[10px] text-neutral-400">
-                              Qty: {it.qty}
-                            </span>
+                            <span className="block text-[10px] text-neutral-400">Qty: {it.qty}</span>
                             <span className="block text-[10px] text-neutral-300">
                               {formatMoney(it.totalMinor)}
                             </span>
@@ -687,9 +715,7 @@ export default function Page() {
               )}
             </div>
 
-            {saveError && (
-              <div className="text-[11px] text-rose-300">{saveError}</div>
-            )}
+            {saveError && <div className="text-[11px] text-rose-300">{saveError}</div>}
 
             {/* footer */}
             <div className="mt-auto flex items-center justify-end gap-2 pt-3 border-t border-neutral-800">

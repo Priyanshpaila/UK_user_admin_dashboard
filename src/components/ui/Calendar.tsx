@@ -1,11 +1,12 @@
 "use client";
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Calendar as RBC,
   dateFnsLocalizer,
   Views,
   type View,
   type ToolbarProps,
+  type SlotInfo,
 } from "react-big-calendar";
 import format from "date-fns/format";
 import parse from "date-fns/parse";
@@ -29,6 +30,7 @@ import {
   Hash,
   Clock,
   Link2,
+  ChevronRight as ArrowRight,
 } from "lucide-react";
 import useEventStore, { Appointment } from "../../stores/events";
 import { Dialog } from "../ui/Dialog";
@@ -81,64 +83,36 @@ function formatMoney(minor?: number | null) {
   return `£${(minor / 100).toFixed(2)}`;
 }
 
-/** Status → base color (for events / legend / tags) */
+/** Status → base color (for dots/badges) */
 function getStatusColorHex(status: string): string {
-  const s = status.toLowerCase();
+  const s = (status || "").toLowerCase();
   switch (s) {
     case "pending":
-      return "#fbbf24"; // amber
+      return "#fbbf24";
     case "confirmed":
-      return "#3b82f6"; // blue
+      return "#3b82f6";
     case "cancelled":
-      return "#ef4444"; // red
+      return "#ef4444";
     case "completed":
-      return "#22c55e"; // green
+      return "#22c55e";
     case "no-show":
     case "no_show":
     case "noshow":
-      return "#f97316"; // orange
+      return "#f97316";
     case "rescheduled":
-      return "#a855f7"; // purple
-    // order statuses fallbacks
+      return "#a855f7";
     case "approved":
       return "#22c55e";
     case "rejected":
       return "#ef4444";
     default:
-      return "#6b7280"; // neutral
-  }
-}
-
-/** Status → subtle background tint for day tiles */
-function getStatusBgTint(status: string): string {
-  const s = status.toLowerCase();
-  switch (s) {
-    case "pending":
-      return "rgba(251,191,36,0.14)";
-    case "confirmed":
-      return "rgba(59,130,246,0.14)";
-    case "cancelled":
-      return "rgba(239,68,68,0.14)";
-    case "completed":
-      return "rgba(34,197,94,0.14)";
-    case "no-show":
-    case "no_show":
-    case "noshow":
-      return "rgba(249,115,22,0.14)";
-    case "rescheduled":
-      return "rgba(168,85,247,0.14)";
-    case "approved":
-      return "rgba(34,197,94,0.14)";
-    case "rejected":
-      return "rgba(239,68,68,0.14)";
-    default:
-      return "transparent";
+      return "#6b7280";
   }
 }
 
 /** Pills (status chips) */
 function statusPillClass(status: string) {
-  const s = status.toLowerCase();
+  const s = (status || "").toLowerCase();
 
   if (s === "pending")
     return "bg-amber-500/15 text-amber-300 border-amber-500/40";
@@ -182,7 +156,7 @@ function getUserInitials(user: UserDto | null): string {
   return initials.join("") || "PT";
 }
 
-/* ------------------- Custom Toolbar ------------------- */
+/* ------------------- Custom Toolbar (unchanged) ------------------- */
 
 const CustomToolbar: React.FC<
   ToolbarProps<Appointment, object> & {
@@ -241,7 +215,7 @@ const CustomToolbar: React.FC<
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 p-3 sm:p-4 bg-neutral-900/70 backdrop-blur-md rounded-xl border border-neutral-800 shadow-md">
-      {/* Left: navigation + label */}
+      {/* Left */}
       <div className="flex items-center gap-2">
         <button
           onClick={goPrev}
@@ -250,14 +224,11 @@ const CustomToolbar: React.FC<
           <ChevronLeft size={16} />
         </button>
 
-        {/* Center label / today button */}
         <button
           onClick={goToday}
           className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs sm:text-sm text-neutral-100 rounded-md transition font-medium"
         >
-          {isAgendaView
-            ? format(current, "dd MMM yyyy")
-            : monthLabel}
+          {isAgendaView ? format(current, "dd MMM yyyy") : monthLabel}
         </button>
 
         <button
@@ -268,7 +239,7 @@ const CustomToolbar: React.FC<
         </button>
       </div>
 
-      {/* Middle: month/year OR day picker for agenda */}
+      {/* Middle */}
       <div className="flex items-center gap-2">
         {isAgendaView ? (
           <input
@@ -314,7 +285,7 @@ const CustomToolbar: React.FC<
         )}
       </div>
 
-      {/* Right: view buttons */}
+      {/* Right */}
       <div className="flex items-center gap-2">
         {views.map((v) => (
           <button
@@ -334,73 +305,67 @@ const CustomToolbar: React.FC<
   );
 };
 
-/* ------------------- Custom Date Header (month view) ------------------- */
+/* ------------------- Month Date Header (LESS MESSY) ------------------- */
 
-type CustomDateHeaderProps = {
+type MonthHeaderProps = {
   label: string;
   date: Date;
   summaryByDate: Record<string, AppointmentsCalendarSummaryDay>;
 };
 
-const CustomDateHeader: React.FC<CustomDateHeaderProps> = ({
+const MonthDateHeaderCompact: React.FC<MonthHeaderProps> = ({
   label,
   date,
   summaryByDate,
 }) => {
   const key = format(date, "yyyy-MM-dd");
-  const daySummary = summaryByDate[key];
-  const byStatus: Record<string, number> = (daySummary?.byStatus || {}) as any;
+  const day = summaryByDate[key];
+  const total = day?.total || 0;
+  const byStatus = (day?.byStatus || {}) as Record<string, number>;
 
-  const statusEntries = Object.entries(byStatus)
-    .filter(([, count]) => (count as number) > 0)
-    .sort((a, b) => (b[1] as number) - (a[1] as number));
+  const top = Object.entries(byStatus)
+    .filter(([, c]) => (c || 0) > 0)
+    .sort((a, b) => (b[1] as number) - (a[1] as number))
+    .slice(0, 3);
 
   return (
-    <div className="flex flex-col gap-1 pt-1 pl-1">
-      <span className="text-[11px] sm:text-xs font-medium text-neutral-200">
-        {label}
-      </span>
+    <div className="pt-1 px-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] sm:text-xs font-medium text-neutral-200">
+          {label}
+        </span>
 
-      {daySummary && statusEntries.length > 0 && (
-        <div className="flex flex-wrap gap-0.5">
-          {statusEntries.map(([status, count]) => (
+        {total > 0 && (
+          <span className="text-[10px] text-neutral-400">{total}</span>
+        )}
+      </div>
+
+      {total > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {top.map(([st, c]) => (
             <span
-              key={status}
-              className="px-1.5 py-0.5 rounded-full border text-[8px] leading-none"
-              style={{
-                borderColor: getStatusColorHex(status),
-                color: getStatusColorHex(status),
-              }}
-              title={`${status} · ${count}`}
+              key={st}
+              title={`${st.replace(/[-_]/g, " ")}: ${c}`}
+              className="inline-flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/30 px-1.5 py-0.5 text-[9px] text-neutral-300"
             >
-              {status.replace(/[-_]/g, " ")} · {count as number}
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: getStatusColorHex(st) }}
+              />
+              {c}
             </span>
           ))}
+
+          {Object.entries(byStatus).filter(([, c]) => (c || 0) > 0).length >
+            3 && <span className="text-[9px] text-neutral-500">…</span>}
         </div>
       )}
-    </div>
-  );
-};
 
-/* ------------------- Custom Event (pill content) ------------------- */
-
-type AppointmentEventProps = {
-  event: Appointment;
-};
-
-const AppointmentEvent: React.FC<AppointmentEventProps> = ({ event }) => {
-  const e: any = event;
-  const status: string = (e.type as string) || "pending";
-  const timeLabel = format(event.start, "HH:mm");
-
-  return (
-    <div className="flex items-center justify-between gap-1">
-      <span className="text-[10px] sm:text-[11px] font-semibold">
-        {timeLabel}
-      </span>
-      <span className="text-[8px] sm:text-[9px] uppercase tracking-wide opacity-80">
-        {status}
-      </span>
+      {total > 0 && (
+        <div className="mt-1 text-[10px] text-neutral-500">
+          Click day to open list
+        </div>
+      )}
     </div>
   );
 };
@@ -418,13 +383,15 @@ export default function CalendarWidget() {
   const [visible, setVisible] = useState(true);
 
   // month summary
-  const [monthSummary, setMonthSummary] = useState<
-    AppointmentsCalendarSummaryDay[]
-  >([]);
+  const [monthSummary, setMonthSummary] = useState<AppointmentsCalendarSummaryDay[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // detail modal state
+  // day list popup (new)
+  const [dayListOpen, setDayListOpen] = useState(false);
+  const [dayListDate, setDayListDate] = useState<Date | null>(null);
+
+  // detail modal state (YOUR OLD MODAL)
   const [selectedEvent, setSelectedEvent] = useState<Appointment | null>(null);
   const [selectedAppointment, setSelectedAppointment] =
     useState<AppointmentDto | null>(null);
@@ -462,33 +429,28 @@ export default function CalendarWidget() {
         const summary = res.data || [];
         setMonthSummary(summary);
 
-        // map to react-big-calendar events
+        // map to react-big-calendar events (for week/day/agenda)
         const mapped: Appointment[] = [];
 
         summary.forEach((day: AppointmentsCalendarSummaryDay) => {
-          const appointmentsForDay =
-            day.appointments ||
-            ([] as AppointmentsCalendarSummaryDay["appointments"]);
+          const appointmentsForDay = day.appointments || [];
+          appointmentsForDay.forEach((appt) => {
+            const start = new Date(appt.start_at);
+            if (isNaN(start.getTime())) return;
 
-          appointmentsForDay.forEach(
-            (appt: AppointmentsCalendarSummaryDay["appointments"][number]) => {
-              const start = new Date(appt.start_at);
-              if (isNaN(start.getTime())) return;
+            const end = new Date(start.getTime() + 15 * 60 * 1000);
 
-              const end = new Date(start.getTime() + 15 * 60 * 1000);
-
-              mapped.push({
-                id: mapped.length + 1,
-                title: `Appointment – ${format(start, "HH:mm")}`,
-                start,
-                end,
-                doctor: undefined,
-                type: appt.status, // enum status
-                notes: undefined,
-                appointmentId: appt._id,
-              } as Appointment & { appointmentId: string });
-            }
-          );
+            mapped.push({
+              id: mapped.length + 1,
+              title: `Appointment – ${format(start, "HH:mm")}`,
+              start,
+              end,
+              doctor: undefined,
+              type: appt.status,
+              notes: undefined,
+              appointmentId: appt._id,
+            } as Appointment & { appointmentId: string });
+          });
         });
 
         setEvents(mapped);
@@ -511,14 +473,16 @@ export default function CalendarWidget() {
   // Small animation
   useEffect(() => {
     setVisible(false);
-    const t = setTimeout(() => setVisible(true), 150);
+    const t = setTimeout(() => setVisible(true), 120);
     return () => clearTimeout(t);
   }, [currentDate, currentView]);
 
   const onDateChange = (d: Date) => setCurrentDate(new Date(d));
   const onViewChange = (v: View) => setCurrentView(v);
 
-  // On event click: fetch appointment + user + order
+  const isMonth = currentView === Views.MONTH;
+
+  // On event click: fetch appointment + user + order (unchanged)
   const handleSelectEvent = (ev: Appointment) => {
     setSelectedEvent(ev);
     setSelectedAppointment(null);
@@ -553,68 +517,52 @@ export default function CalendarWidget() {
     })();
   };
 
-  // 💅 Style events by status
+  // Month: clicking a day opens the list dialog (instead of showing pills)
+  const onSelectSlot = (slot: SlotInfo) => {
+    if (!isMonth) return;
+    const d = new Date(slot.start);
+    setDayListDate(d);
+    setDayListOpen(true);
+  };
+
+  const dayKey = dayListDate ? format(dayListDate, "yyyy-MM-dd") : "";
+  const daySummary = dayKey ? summaryByDate[dayKey] : undefined;
+  const dayAppointments = daySummary?.appointments || [];
+
+  // 💅 Style events by status (ONLY for week/day/agenda; month has no events)
   const eventStyleGetter = (event: Appointment) => {
     const e: any = event;
     const status: string = (e.type as string) || "pending";
-    const bg = getStatusColorHex(status);
+    const accent = getStatusColorHex(status);
 
     return {
       style: {
-        borderRadius: 999,
+        borderRadius: 10,
         padding: "4px 8px",
         color: "#e5e7eb",
-        backgroundColor: bg,
-        border: "none",
+        backgroundColor: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderLeft: `3px solid ${accent}`,
         fontSize: "12px",
-        fontWeight: 500,
+        fontWeight: 600,
       },
     };
   };
 
-  // 🎨 Day background color by dominant status for that day
-  const dayPropGetter = (date: Date) => {
-    const key = format(date, "yyyy-MM-dd");
-    const daySummary = summaryByDate[key];
-    if (!daySummary || !daySummary.byStatus) return {};
-
-    const byStatus = daySummary.byStatus as Record<string, number>;
-    let topStatus: string | null = null;
-    let topCount = -1;
-
-    for (const [status, count] of Object.entries(byStatus)) {
-      const c = typeof count === "number" ? count : 0;
-      if (c > topCount) {
-        topCount = c;
-        topStatus = status;
-      }
-    }
-
-    if (!topStatus) return {};
-    const bgTint = getStatusBgTint(topStatus);
-    if (!bgTint || bgTint === "transparent") return {};
-
-    return {
-      style: {
-        backgroundColor: bgTint,
-      },
-    };
-  };
+  // Month view shows summary-only, so hide events
+  const visibleEvents = isMonth ? [] : events;
 
   // 📊 header summary
   const { totalAppointments, statusTotals } = useMemo(() => {
     let total = 0;
     const statusMap: Record<string, number> = {};
 
-    monthSummary.forEach((day: AppointmentsCalendarSummaryDay) => {
+    monthSummary.forEach((day) => {
       total += typeof day.total === "number" ? day.total : 0;
 
-      const by: Record<string, number> = day.byStatus || {};
-
+      const by = (day.byStatus || {}) as Record<string, number>;
       Object.entries(by).forEach(([status, count]) => {
-        const prev = statusMap[status] ?? 0;
-        const safeCount = typeof count === "number" ? count : 0;
-        statusMap[status] = prev + safeCount;
+        statusMap[status] = (statusMap[status] ?? 0) + (count || 0);
       });
     });
 
@@ -630,7 +578,6 @@ export default function CalendarWidget() {
     { label: "Rescheduled", color: getStatusColorHex("rescheduled") },
   ];
 
-  // ---------- UI ----------
   return (
     <div className="w-full">
       <div className="rounded-2xl border border-neutral-800 bg-gradient-to-b from-[#111113] to-[#050507] p-4 sm:p-6 lg:p-7 shadow-[0_0_25px_rgba(0,0,0,0.4)] backdrop-blur-sm">
@@ -665,7 +612,6 @@ export default function CalendarWidget() {
           </div>
         </div>
 
-        {/* Error / Loading strip */}
         {fetchError && (
           <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-950/50 px-3 py-2 text-[11px] sm:text-xs text-rose-100">
             <AlertTriangle className="h-4 w-4" />
@@ -688,7 +634,7 @@ export default function CalendarWidget() {
           >
             <RBC<Appointment>
               localizer={localizer}
-              events={events}
+              events={visibleEvents}
               startAccessor="start"
               endAccessor="end"
               date={currentDate}
@@ -696,10 +642,11 @@ export default function CalendarWidget() {
               onNavigate={(d) => setCurrentDate(new Date(d))}
               onView={(v) => setCurrentView(v)}
               onSelectEvent={handleSelectEvent}
-              popup
-              length={1} // agenda shows 1 day (controlled by date picker)
+              selectable={isMonth}
+              onSelectSlot={onSelectSlot}
+              popup={!isMonth} // ✅ no +more in month
+              length={1}
               eventPropGetter={(evt) => eventStyleGetter(evt as Appointment)}
-              dayPropGetter={dayPropGetter}
               components={{
                 toolbar: (props) => (
                   <CustomToolbar
@@ -710,13 +657,12 @@ export default function CalendarWidget() {
                 ),
                 month: {
                   dateHeader: (props: any) => (
-                    <CustomDateHeader
+                    <MonthDateHeaderCompact
                       {...props}
                       summaryByDate={summaryByDate}
                     />
                   ),
                 },
-                event: (props: any) => <AppointmentEvent {...props} />,
               }}
               style={{ height: 640 }}
               views={[Views.MONTH, Views.WEEK, Views.DAY, Views.AGENDA]}
@@ -728,7 +674,8 @@ export default function CalendarWidget() {
                 [&_.rbc-today]:bg-blue-500/10
                 [&_.rbc-off-range-bg]:bg-neutral-800/40
                 [&_.rbc-date-cell]:text-neutral-300
-                [&_.rbc-month-row]:min-h-[80px]
+                [&_.rbc-month-row]:min-h-[92px]
+                [&_.rbc-show-more]:hidden
               "
             />
           </div>
@@ -746,9 +693,143 @@ export default function CalendarWidget() {
             </div>
           ))}
         </div>
+
+        {isMonth && (
+          <div className="mt-2 text-[11px] text-neutral-500">
+            Month view is summary-only. Click any day to open the day list.
+          </div>
+        )}
       </div>
 
-      {/* --------- BIG DETAIL MODAL (centered) --------- */}
+      {/* ---------------- Day List Popup (NEW, simple) ---------------- */}
+      <Dialog
+        open={dayListOpen}
+        onOpenChange={(open: boolean) => {
+          if (!open) {
+            setDayListOpen(false);
+            setDayListDate(null);
+          }
+        }}
+      >
+        {dayListOpen && dayListDate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-3 sm:px-4">
+            <div className="relative w-full max-w-3xl bg-gradient-to-b from-[#141417] to-[#050507] border border-neutral-800/80 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.65)] p-4 sm:p-6 text-white max-h-[85vh] overflow-y-auto">
+              <button
+                onClick={() => {
+                  setDayListOpen(false);
+                  setDayListDate(null);
+                }}
+                className="absolute top-3 right-3 p-1.5 rounded-md hover:bg-neutral-800/60 transition"
+              >
+                <X size={18} className="text-neutral-400 hover:text-neutral-200" />
+              </button>
+
+              <div className="flex items-start justify-between gap-3 pr-8">
+                <div>
+                  <p className="text-white text-lg font-semibold">
+                    {format(dayListDate, "dd MMM yyyy")}
+                  </p>
+                  <p className="text-[11px] text-neutral-400 mt-1">
+                    {(daySummary?.total || 0)} appointments
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-[11px]">
+                  {Object.entries((daySummary?.byStatus || {}) as any)
+                    .filter(([, c]) => (c as number) > 0)
+                    .sort((a, b) => (b[1] as number) - (a[1] as number))
+                    .map(([st, c]) => (
+                      <span
+                        key={st}
+                        className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${statusPillClass(
+                          st
+                        )}`}
+                      >
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: getStatusColorHex(st) }}
+                        />
+                        {st.replace(/[-_]/g, " ")} · {c as number}
+                      </span>
+                    ))}
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {dayAppointments.length === 0 ? (
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-400">
+                    No appointments on this day.
+                  </div>
+                ) : (
+                  dayAppointments
+                    .slice()
+                    .sort(
+                      (a, b) =>
+                        new Date(a.start_at).getTime() -
+                        new Date(b.start_at).getTime()
+                    )
+                    .map((appt) => {
+                      const st = appt.status || "pending";
+                      const start = new Date(appt.start_at);
+                      const end = new Date(start.getTime() + 15 * 60 * 1000);
+
+                      return (
+                        <button
+                          key={appt._id}
+                          type="button"
+                          onClick={() => {
+                            // close day list and open your existing modal
+                            setDayListOpen(false);
+                            setDayListDate(null);
+
+                            const ev = {
+                              id: 999999,
+                              title: `Appointment – ${format(start, "HH:mm")}`,
+                              start,
+                              end,
+                              type: st,
+                              appointmentId: appt._id,
+                            } as any as Appointment;
+
+                            handleSelectEvent(ev);
+                          }}
+                          className="w-full text-left rounded-xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900/80 transition p-3 flex items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="h-2.5 w-2.5 rounded-full"
+                                style={{ backgroundColor: getStatusColorHex(st) }}
+                              />
+                              <span className="text-white font-semibold text-sm">
+                                {formatTime(appt.start_at)}
+                              </span>
+                            </div>
+                          </div>
+                          <ArrowRight className="h-4 w-4 text-neutral-500" />
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+
+              <div className="mt-5 flex justify-end">
+                <Button
+                  onClick={() => {
+                    setDayListOpen(false);
+                    setDayListDate(null);
+                  }}
+                  className="px-4 py-2 bg-neutral-800 text-neutral-300 hover:bg-neutral-700 rounded-md transition"
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Dialog>
+
+      {/* --------- BIG DETAIL MODAL (YOUR OLD MODAL - UNCHANGED) --------- */}
       <Dialog
         open={!!selectedEvent}
         onOpenChange={(open: boolean) => {
@@ -946,7 +1027,7 @@ export default function CalendarWidget() {
                           <div>
                             <dt className="text-neutral-500">Address line 1</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.address_line1 ||
+                              {(selectedUser as any).address_line1 ||
                                 (selectedUser as any).addressLine1 ||
                                 "—"}
                             </dd>
@@ -954,7 +1035,7 @@ export default function CalendarWidget() {
                           <div>
                             <dt className="text-neutral-500">Address line 2</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.address_line2 ||
+                              {(selectedUser as any).address_line2 ||
                                 (selectedUser as any).addressLine2 ||
                                 "—"}
                             </dd>
@@ -962,25 +1043,25 @@ export default function CalendarWidget() {
                           <div>
                             <dt className="text-neutral-500">City</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.city || "—"}
+                             { (selectedUser as any).city || "—"}
                             </dd>
                           </div>
                           <div>
                             <dt className="text-neutral-500">County</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.county || "—"}
+                              {(selectedUser as any).county || "—"}
                             </dd>
                           </div>
                           <div>
                             <dt className="text-neutral-500">Postcode</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.postalcode || "—"}
+                              {(selectedUser as any).postalcode || "—"}
                             </dd>
                           </div>
                           <div>
                             <dt className="text-neutral-500">Country</dt>
                             <dd className="text-neutral-100">
-                              {selectedUser.country || "—"}
+                              {(selectedUser as any).country || "—"}
                             </dd>
                           </div>
                         </dl>
@@ -1053,14 +1134,11 @@ export default function CalendarWidget() {
                     {(selectedAppointment?.join_url ||
                       selectedAppointment?.host_url) && (
                       <div className="pt-3 flex flex-wrap gap-2">
-                        {selectedAppointment.join_url && (
+                        {selectedAppointment?.join_url && (
                           <Button
                             type="button"
                             onClick={() =>
-                              window.open(
-                                selectedAppointment.join_url!,
-                                "_blank"
-                              )
+                              window.open(selectedAppointment.join_url!, "_blank")
                             }
                             className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-[10px] sm:text-[11px] rounded-full inline-flex items-center gap-1"
                           >
@@ -1068,14 +1146,11 @@ export default function CalendarWidget() {
                             Patient join link
                           </Button>
                         )}
-                        {selectedAppointment.host_url && (
+                        {selectedAppointment?.host_url && (
                           <Button
                             type="button"
                             onClick={() =>
-                              window.open(
-                                selectedAppointment.host_url!,
-                                "_blank"
-                              )
+                              window.open(selectedAppointment.host_url!, "_blank")
                             }
                             className="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-[10px] sm:text-[11px] rounded-full inline-flex items-center gap-1"
                           >
@@ -1130,30 +1205,33 @@ export default function CalendarWidget() {
                         <span>
                           Service{" "}
                           <span className="font-semibold text-neutral-100">
-                            {selectedOrder.service_name}
+                            {(selectedOrder as any).service_name}
                           </span>
                         </span>
-                        {selectedOrder.service_slug && (
+                        {(selectedOrder as any).service_slug && (
                           <span className="text-neutral-400">
-                            ({selectedOrder.service_slug})
+                            ({(selectedOrder as any).service_slug})
                           </span>
                         )}
-                        {selectedOrder.status && (
+                        {(selectedOrder as any).status && (
                           <span
                             className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${statusPillClass(
-                              selectedOrder.status
+                              (selectedOrder as any).status
                             )}`}
                           >
                             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                            {selectedOrder.status.replace(/[-_]/g, " ")}
+                            {String((selectedOrder as any).status).replace(
+                              /[-_]/g,
+                              " "
+                            )}
                           </span>
                         )}
                       </div>
 
                       <div className="mt-3">
-                        {selectedOrder.meta?.items?.length ? (
+                        {(selectedOrder as any).meta?.items?.length ? (
                           <div className="space-y-1">
-                            {selectedOrder.meta.items.map(
+                            {(selectedOrder as any).meta.items.map(
                               (it: any, idx: number) => (
                                 <div
                                   key={idx}
@@ -1193,7 +1271,7 @@ export default function CalendarWidget() {
                           Total amount (incl. appointment):
                         </span>
                         <span className="font-semibold text-white">
-                          {formatMoney(selectedOrder.meta?.totalMinor)}
+                          {formatMoney((selectedOrder as any).meta?.totalMinor)}
                         </span>
                       </div>
                     </>

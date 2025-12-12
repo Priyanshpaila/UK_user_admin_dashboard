@@ -17,12 +17,12 @@ import {
   LucideIcon,
   LogOut,
   Atom,
-  ShieldCheck ,
+  ShieldCheck,
   PackageX,
   PackageCheck,
   User,
   UserCheck,
-  LayoutTemplate, // 👈 NEW icon for landing page builder
+  LayoutTemplate,
 } from "lucide-react";
 import { useOrdersStats } from "../../app/dashboard/orders-badge-context";
 
@@ -52,10 +52,10 @@ const menu: SidebarEntry[] = [
     label: "Approved Orders",
     icon: Check,
   },
-   {
+  {
     key: "/dashboard/nhs/approval-list",
     label: "NHS Approval",
-    icon: ShieldCheck ,
+    icon: ShieldCheck,
   },
   {
     group: "Notifications",
@@ -72,12 +72,25 @@ const menu: SidebarEntry[] = [
   },
   {
     group: "Tenant",
-    items: [{ key: "/dashboard/tenant", label: "Tenant", icon: Atom }],
+    items: [
+      { key: "/dashboard/tenant", label: "Tenant", icon: Atom },
+      // ✅ Added: Create Pharmacist page (no RBAC logic here)
+    ],
   },
   {
     group: "People",
-    items: [{ key: "/dashboard/patients", label: "Patients", icon: Users },
-      { key: "/dashboard/nhs/nhs-patients", label: "NHS Patients", icon: UserCheck  }
+    items: [
+      { key: "/dashboard/patients", label: "Patients", icon: Users },
+      {
+        key: "/dashboard/nhs/nhs-patients",
+        label: "NHS Patients",
+        icon: UserCheck,
+      },
+      {
+        key: "/dashboard/pharmacists/create",
+        label: "Create Pharmacist",
+        icon: UserCheck,
+      },
     ],
   },
   {
@@ -85,9 +98,9 @@ const menu: SidebarEntry[] = [
     items: [
       { key: "/dashboard/pages", label: "Pages", icon: FileText },
       {
-        key: "/dashboard/landing",          // 👈 NEW route for landing page creation
-        label: "Landing Page Builder",      // text in sidebar
-        icon: LayoutTemplate,               // uses new icon
+        key: "/dashboard/landing",
+        label: "Landing Page Builder",
+        icon: LayoutTemplate,
       },
     ],
   },
@@ -111,16 +124,8 @@ const menu: SidebarEntry[] = [
         label: "Completed",
         icon: PackageCheck,
       },
-      {
-        key: "/dashboard/orders/rejected",
-        label: "Rejected",
-        icon: PackageX,
-      },
-      {
-        key: "/dashboard/orders/unpaid",
-        label: "Unpaid",
-        icon: ClipboardList,
-      },
+      { key: "/dashboard/orders/rejected", label: "Rejected", icon: PackageX },
+      { key: "/dashboard/orders/unpaid", label: "Unpaid", icon: ClipboardList },
     ],
   },
   {
@@ -154,7 +159,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
     router.push("/");
   };
 
-  // 🔐 Hide Tenant group if user is not admin
+  // 🔐 Hide Tenant group if user is not admin (kept as-is)
   const filteredMenu = menu.filter((m) => {
     if ("group" in m && m.group === "Tenant" && !isAdmin) {
       return false;
@@ -201,12 +206,15 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
             );
           }
 
-          // top-level items (Dashboard, Pending, Approved)
+          // top-level items
           const isPending = m.key === "/dashboard/pending-approval";
           const isApproved = m.key === "/dashboard/approved-orders";
 
-          const badge =
-            isPending ? stats.pending : isApproved ? stats.approved : m.badge;
+          const badge = isPending
+            ? stats.pending
+            : isApproved
+            ? stats.approved
+            : m.badge;
 
           const active = path === m.key;
 
@@ -259,7 +267,7 @@ export default function Sidebar({ onClose }: { onClose?: () => void }) {
         })}
       </div>
 
-      {/* Bottom fixed area: Profile + Logout */}
+      {/* Bottom fixed area */}
       <div className="p-5 border-t border-neutral-800 space-y-2">
         <Link
           href="/dashboard/profile"
