@@ -215,9 +215,8 @@ function getRecordOfSupplyValues(order: OrderDto): RecordOfSupplyValues {
     fieldMap["Qty A"];
 
   // --- Fallbacks if ROS not present yet: use meta.items / selectedProduct ---
-  const firstItem = Array.isArray(meta.items) && meta.items.length > 0
-    ? meta.items[0]
-    : null;
+  const firstItem =
+    Array.isArray(meta.items) && meta.items.length > 0 ? meta.items[0] : null;
 
   const selected = meta.selectedProduct || firstItem || {};
 
@@ -231,19 +230,12 @@ function getRecordOfSupplyValues(order: OrderDto): RecordOfSupplyValues {
     new Date().toISOString();
 
   const dateProvided = formatDateOnly(
-    rawDateProvided ||
-      record?.saved_at ||
-      record?.created_at ||
-      dateFromOrder
+    rawDateProvided || record?.saved_at || record?.created_at || dateFromOrder
   );
 
   const itemA =
-    String(
-      rawItemA ||
-        selected.name ||
-        (firstItem && firstItem.name) ||
-        ""
-    ) || "—";
+    String(rawItemA || selected.name || (firstItem && firstItem.name) || "") ||
+    "—";
 
   const itemVariationA =
     String(
@@ -255,10 +247,7 @@ function getRecordOfSupplyValues(order: OrderDto): RecordOfSupplyValues {
 
   const quantityA =
     String(
-      rawQuantityA ??
-        selected.qty ??
-        (firstItem && firstItem.qty) ??
-        ""
+      rawQuantityA ?? selected.qty ?? (firstItem && firstItem.qty) ?? ""
     ) || "—";
 
   return {
@@ -268,7 +257,6 @@ function getRecordOfSupplyValues(order: OrderDto): RecordOfSupplyValues {
     quantityA,
   };
 }
-
 
 function formatDobWithAge(value?: string | null) {
   if (!value) return null;
@@ -2001,7 +1989,6 @@ async function exportPrivatePrescriptionPdf(
   return finalisePdf(doc, filename, mode);
 }
 
-
 /* ----- All Clinical docs in one PDF (Full consultation record) ----- */
 
 async function exportAllClinicalPdf(
@@ -2306,9 +2293,7 @@ export default function Page() {
   // list filters / pagination
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<
-    "all" | "pending" | "approved" | "completed" | "cancelled"
-  >("all");
+
 
   const pageSize = DEFAULT_PAGE_SIZE;
 
@@ -2339,7 +2324,7 @@ export default function Page() {
         const res = await getOrdersApi({
           page,
           pageSize,
-          status: statusFilter === "all" ? undefined : statusFilter,
+          status: "completed",
           search: search || undefined,
         } as any);
 
@@ -2371,7 +2356,7 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, [page, pageSize, statusFilter, search]);
+  }, [page, pageSize, search]);
 
   useEffect(() => {
     async function fetchUsersForOrders() {
@@ -2935,41 +2920,6 @@ export default function Page() {
               View patient orders, generate invoices, and export clinical
               documentation PDFs.
             </p>
-          </div>
-          <div className="flex flex-wrap gap-2 text-[11px]">
-            {(
-              [
-                ["all", "All"],
-                ["pending", "Pending"],
-                ["approved", "Approved"],
-                ["completed", "Completed"],
-                ["cancelled", "Cancelled"],
-              ] as const
-            ).map(([key, label]) => {
-              const active = statusFilter === key;
-              const count = statusCounts[key] ?? 0;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => {
-                    setStatusFilter(key);
-                    setPage(1);
-                  }}
-                  className={[
-                    "inline-flex items-center gap-1 rounded-full border px-3 py-1 transition",
-                    active
-                      ? "border-emerald-500/70 bg-emerald-500/15 text-emerald-100"
-                      : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:border-neutral-500",
-                  ].join(" ")}
-                >
-                  <span>{label}</span>
-                  <span className="rounded-full bg-black/30 px-1.5 py-[1px] text-[10px] text-neutral-400">
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
           </div>
         </div>
 
