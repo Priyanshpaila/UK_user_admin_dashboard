@@ -1,10 +1,11 @@
+// app/dashboard/orders/page.tsx (or your current file path)
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
-  updateOrderStatusApi,
   getUserByIdApi,
   getBackendBase,
   sendEmailApi,
@@ -18,15 +19,12 @@ import {
   Clock,
   XCircle,
   CreditCard,
-  CalendarDays,
-  User,
   ArrowRight,
   Filter,
   X,
   ClipboardList,
   Mail,
   Phone,
-  Printer,
   Download,
   Send,
 } from "lucide-react";
@@ -46,12 +44,527 @@ function formatDateTime(value?: string | null) {
     minute: "2-digit",
   });
 }
-function getLoginUrl() {
-  if (typeof window === "undefined") {
-    // Fallback if needed during SSR – adjust to your real URL
-    return "https://pharmacy-express.co.uk/account";
+
+type PdfHeaderState = {
+  title: string;
+  subtitle?: string;
+  logoDataUrl?: string | null;
+};
+
+function drawPdfHeader(doc: jsPDF, header: PdfHeaderState) {
+  const pageWidth = getPageWidth(doc);
+  const headerY = 18;
+
+  // white background
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, pageWidth, getPageHeight(doc), "F");
+
+  if (header.logoDataUrl) {
+    try {
+      doc.addImage(
+        header.logoDataUrl,
+        guessImageFormat(header.logoDataUrl),
+        MARGIN_X,
+        headerY - 6,
+        26,
+        12
+      );
+    } catch {
+      // ignore logo errors
+    }
   }
-  // Adjust path if your login/account route is different
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+  doc.text(PHARMACY_INFO.name, MARGIN_X + 32, headerY - 2);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(16);
+  doc.setTextColor(PDF_BRAND_GREEN.r, PDF_BRAND_GREEN.g, PDF_BRAND_GREEN.b);
+  doc.text(String(header.title || "").toUpperCase(), MARGIN_X, headerY + 8);
+
+  if (header.subtitle) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
+    doc.text(header.subtitle, MARGIN_X, headerY + 14);
+  }
+
+  doc.setDrawColor(PDF_BRAND_GREEN.r, PDF_BRAND_GREEN.g, PDF_BRAND_GREEN.b);
+  doc.setLineWidth(0.6);
+  doc.line(MARGIN_X, headerY + 18, pageWidth - MARGIN_X, headerY + 18);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+}
+
+function addPageWithHeader(doc: jsPDF, cursor: PdfCursor) {
+  doc.addPage();
+  const hdr = (doc as any).__pe_header as PdfHeaderState | undefined;
+  if (hdr) drawPdfHeader(doc, hdr);
+  cursor.y = TOP_CONTENT_Y;
+}
+
+/* ----------------- NEW: Ordered items normalisation (for PDFs) ----------------- */
+
+type PdfOrderedItem = {
+  name: string;
+  variation?: string;
+  qty: string;
+};
+
+function coerceQty(v: any): string {
+  if (v == null) return "1";
+  if (typeof v === "number") return String(v);
+  const s = String(v).trim();
+  return s || "1";
+}
+
+function getOrderedItemsForPdf(order: OrderDto): PdfOrderedItem[] {
+  const anyOrder: any = order as any;
+  const meta: any = anyOrder?.meta || {};
+
+  const candidates: any[] = [
+    ...(Array.isArray(meta.items) ? meta.items : []),
+    ...(Array.isArray(meta.lines) ? meta.lines : []),
+    ...(Array.isArray(meta.orderItems) ? meta.orderItems : []),
+    ...(Array.isArray(anyOrder.items) ? anyOrder.items : []),
+    ...(Array.isArray(anyOrder.lines) ? anyOrder.lines : []),
+  ];
+
+  const out: PdfOrderedItem[] = [];
+
+  for (const it of candidates) {
+    if (!it) continue;
+
+    const name =
+      it.name ||
+      it.title ||
+      it.product_name ||
+      it.productName ||
+      it.medicine_name ||
+      it.medicineName ||
+      it.label ||
+      it.item ||
+      "";
+
+    const variation =
+      it.variation ||
+      it.variations ||
+      it.strength ||
+      it.dose ||
+      it.option ||
+      it.variant ||
+      it.packSize ||
+      it.pack_size ||
+      "";
+
+    const qty = coerceQty(
+      it.qty ?? it.quantity ?? it.count ?? it.units ?? it.unitQty ?? 1
+    );
+
+    const cleanName = String(name || "").trim();
+    const cleanVar = String(variation || "").trim();
+
+    // Only keep rows that actually represent an item
+    if (!cleanName && !cleanVar) continue;
+
+    out.push({
+      name: cleanName || "Item",
+      variation: cleanVar || undefined,
+      qty,
+    });
+  }
+
+  // Deduplicate by name+variation+qty
+  const seen = new Set<string>();
+  return out.filter((x) => {
+    const k = `${x.name}__${x.variation || ""}__${x.qty}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+type AdvicePoint = string;
+
+const ADVICE_LIST_STYLE: "bullets" | "numbered" = "bullets"; // or "numbered"
+
+function extractAdvicePoints(order: OrderDto): AdvicePoint[] {
+  const meta: any = (order as any).meta || {};
+  const advice = meta.pharmacistAdvice;
+  const adviceState: Record<string, any[]> = advice?.adviceState || {};
+
+  const points: string[] = [];
+
+  const isCheckboxLine = (line: string) => /^checkbox\b/i.test(line.trim()); // "Checkbox 4vh4ypm", "Checkbox: ..."
+
+  const stripPrefix = (line: string) =>
+    line
+      .replace(/^[•\u2022-]\s*/g, "") // bullets
+      .replace(/^\(?\d+[\).\]]\s*/g, "") // "1." "1)" etc
+      .trim();
+
+  for (const arr of Object.values(adviceState || {})) {
+    for (const raw of arr || []) {
+      const s = String(raw ?? "")
+        .replace(/\r/g, "")
+        .trim();
+      if (!s) continue;
+
+      const lines = s
+        .split(/\n+/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .filter((x) => !isCheckboxLine(x)) // ✅ remove "Checkbox xxxx"
+        .map(stripPrefix)
+        .filter(Boolean);
+
+      points.push(...lines);
+    }
+  }
+
+  // Deduplicate while preserving order
+  const seen = new Set<string>();
+  return points.filter((p) => {
+    const k = p.trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function drawItemsSuppliedTable(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  items: PdfOrderedItem[]
+) {
+  const pageWidth = getPageWidth(doc);
+  const x = MARGIN_X;
+  const w = pageWidth - 2 * MARGIN_X;
+
+  const colItemW = w * 0.52;
+  const colVarW = w * 0.33;
+  const colQtyW = w - colItemW - colVarW;
+
+  const headerH = 8;
+  const lineH = 4.2;
+  const padY = 2.5;
+  const padX = 2.2;
+
+  const drawHeader = () => {
+    ensureSpace(doc, cursor, headerH);
+
+    doc.setDrawColor(PDF_BORDER.r, PDF_BORDER.g, PDF_BORDER.b);
+    doc.setFillColor(PDF_CARD_BG.r, PDF_CARD_BG.g, PDF_CARD_BG.b);
+    doc.rect(x, cursor.y, w, headerH, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+
+    const ty = cursor.y + 5.4;
+    doc.text("Item", x + padX, ty);
+    doc.text("Variation / Strength", x + colItemW + padX, ty);
+    doc.text("Qty", x + colItemW + colVarW + padX, ty);
+
+    // vertical lines
+    doc.setLineWidth(0.3);
+    doc.line(x + colItemW, cursor.y, x + colItemW, cursor.y + headerH);
+    doc.line(
+      x + colItemW + colVarW,
+      cursor.y,
+      x + colItemW + colVarW,
+      cursor.y + headerH
+    );
+
+    cursor.y += headerH;
+  };
+
+  if (!items.length) {
+    ensureSpace(doc, cursor, 8);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("No items were recorded for this supply.", x, cursor.y);
+    cursor.y += 6;
+    return;
+  }
+
+  drawHeader();
+
+  items.forEach((it, idx) => {
+    const itemText = `${String.fromCharCode(65 + (idx % 26))}. ${
+      it.name || "—"
+    }`;
+    const varText = it.variation || "—";
+    const qtyText = it.qty || "—";
+
+    const itemLines = doc.splitTextToSize(itemText, colItemW - padX * 2);
+    const varLines = doc.splitTextToSize(varText, colVarW - padX * 2);
+    const qtyLines = doc.splitTextToSize(qtyText, colQtyW - padX * 2);
+
+    const maxLines = Math.max(
+      itemLines.length,
+      varLines.length,
+      qtyLines.length
+    );
+    const rowH = padY + maxLines * lineH + padY;
+
+    // page break + header repeat for table itself
+    const pageHeight = getPageHeight(doc);
+    if (cursor.y + rowH > pageHeight - 18) {
+      addPageWithHeader(doc, cursor);
+      drawHeader();
+    }
+
+    // zebra background
+    doc.setDrawColor(PDF_BORDER.r, PDF_BORDER.g, PDF_BORDER.b);
+    if (idx % 2 === 0) {
+      doc.setFillColor(255, 255, 255);
+    } else {
+      doc.setFillColor(248, 250, 252);
+    }
+    doc.rect(x, cursor.y, w, rowH, "FD");
+
+    // grid lines
+    doc.setLineWidth(0.3);
+    doc.line(x + colItemW, cursor.y, x + colItemW, cursor.y + rowH);
+    doc.line(
+      x + colItemW + colVarW,
+      cursor.y,
+      x + colItemW + colVarW,
+      cursor.y + rowH
+    );
+
+    // text
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+
+    const textTop = cursor.y + padY + 3.2;
+
+    itemLines.forEach((ln: string, i: number) => {
+      doc.text(ln, x + padX, textTop + i * lineH);
+    });
+
+    varLines.forEach((ln: string, i: number) => {
+      doc.text(ln, x + colItemW + padX, textTop + i * lineH);
+    });
+
+    qtyLines.forEach((ln: string, i: number) => {
+      doc.text(ln, x + colItemW + colVarW + padX, textTop + i * lineH);
+    });
+
+    cursor.y += rowH;
+  });
+
+  cursor.y += 6;
+}
+
+type AdviceGroup = { title: string; lines: AdviceLine[] };
+
+function titleCaseKey(key: string) {
+  const s = String(key || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return "Advice";
+  return s
+    .split(" ")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function extractAdviceGroups(order: OrderDto): AdviceGroup[] {
+  const meta: any = (order as any).meta || {};
+  const advice = meta.pharmacistAdvice;
+  const adviceState: Record<string, any[]> = advice?.adviceState || {};
+
+  const groups: AdviceGroup[] = [];
+
+  for (const [key, arr] of Object.entries(adviceState || {})) {
+    const lines: AdviceLine[] = [];
+    for (const raw of arr || []) lines.push(...parseAdviceLines(raw));
+    if (lines.length) groups.push({ title: titleCaseKey(key), lines });
+  }
+
+  return groups;
+}
+
+type AdviceLine = { kind: "bullet" | "text"; text: string };
+
+function parseAdviceLines(raw: any): AdviceLine[] {
+  const s = String(raw ?? "").replace(/\r/g, "");
+  if (!s.trim()) return [];
+
+  const parts = s
+    .split(/\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  return parts.map((p) => {
+    const m = /^[•\u2022-]\s*(.*)$/.exec(p);
+    if (m) return { kind: "bullet", text: (m[1] || "").trim() };
+    return { kind: "text", text: p };
+  });
+}
+
+function extractAdviceLines(order: OrderDto): AdviceLine[] {
+  const meta: any = (order as any).meta || {};
+  const advice = meta.pharmacistAdvice;
+  const adviceState: Record<string, any[]> = advice?.adviceState || {};
+
+  const out: AdviceLine[] = [];
+
+  // ✅ Ignore keys like "Checkbox 4vh4ypm" completely
+  for (const arr of Object.values(adviceState || {})) {
+    for (const raw of arr || []) out.push(...parseAdviceLines(raw));
+  }
+
+  // (Optional) Deduplicate exact repeats while keeping order
+  const seen = new Set<string>();
+  return out.filter((x) => {
+    const k = `${x.kind}::${x.text}`.trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function writeAdviceSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
+  const points = extractAdvicePoints(order);
+
+  writeSectionTitle(doc, cursor, "Pharmacist Advice");
+
+  if (!points.length) {
+    ensureSpace(doc, cursor, 6);
+    doc.text(
+      "No Pharmacist Advice has been recorded for this order.",
+      MARGIN_X,
+      cursor.y
+    );
+    cursor.y += 6;
+    return;
+  }
+
+  const pageWidth = getPageWidth(doc);
+  const maxW = pageWidth - 2 * MARGIN_X;
+  const lineH = 4.3;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+
+  const intro = doc.splitTextToSize(
+    "The following advice points were selected during the consultation:",
+    maxW
+  );
+  intro.forEach((l: string) => {
+    ensureSpace(doc, cursor, lineH);
+    doc.text(l, MARGIN_X, cursor.y);
+    cursor.y += lineH;
+  });
+  cursor.y += 3;
+
+  const drawPoint = (label: string, text: string) => {
+    const labelW = doc.getTextWidth(label);
+    const labelX = MARGIN_X;
+    const textX = MARGIN_X + labelW + 2;
+    const wrapW = maxW - (textX - MARGIN_X);
+
+    const lines = doc.splitTextToSize(text, wrapW);
+
+    ensureSpace(doc, cursor, lineH);
+    doc.text(label, labelX, cursor.y);
+    doc.text(lines[0] || "", textX, cursor.y);
+    cursor.y += lineH;
+
+    for (let i = 1; i < lines.length; i++) {
+      ensureSpace(doc, cursor, lineH);
+      doc.text(lines[i], textX, cursor.y);
+      cursor.y += lineH;
+    }
+
+    cursor.y += 1.2;
+  };
+
+  points.forEach((p, idx) => {
+    const label = ADVICE_LIST_STYLE === "numbered" ? `${idx + 1}.` : "•";
+    drawPoint(label, p);
+  });
+
+  cursor.y += 2;
+}
+
+function extractItemsFromRecordFieldsForPdf(
+  recordFields: Record<string, any>
+): PdfOrderedItem[] {
+  if (!recordFields || typeof recordFields !== "object") return [];
+
+  const keyMap = new Map<string, string>();
+  for (const k of Object.keys(recordFields)) {
+    keyMap.set(String(k).toLowerCase().trim(), k);
+  }
+
+  const pick = (...cands: string[]) => {
+    for (const c of cands) {
+      const realKey = keyMap.get(c.toLowerCase().trim());
+      if (!realKey) continue;
+      const v = recordFields[realKey];
+      if (v == null) continue;
+      const s = String(v).trim();
+      if (s) return s;
+    }
+    return "";
+  };
+
+  const items: PdfOrderedItem[] = [];
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+  for (const L of letters) {
+    const name = pick(
+      `Item ${L}`,
+      `Item ${L.toLowerCase()}`,
+      `Item name ${L}`,
+      `Item name ${L.toLowerCase()}`,
+      `Medicine ${L}`,
+      `Medicine ${L.toLowerCase()}`
+    );
+
+    const variation = pick(
+      `Item variation ${L}`,
+      `Item Variation ${L}`,
+      `Item variation ${L.toLowerCase()}`,
+      `Strength ${L}`,
+      `Strength ${L.toLowerCase()}`,
+      `Dose ${L}`,
+      `Dose ${L.toLowerCase()}`
+    );
+
+    const qty = pick(
+      `Quantity ${L}`,
+      `Quantity ${L.toLowerCase()}`,
+      `Qty ${L}`,
+      `Qty ${L.toLowerCase()}`
+    );
+
+    if (!name && !variation && !qty) continue;
+
+    items.push({
+      name: name || "Item",
+      variation: variation || undefined,
+      qty: coerceQty(qty || "1"),
+    });
+  }
+
+  return items;
+}
+
+function getLoginUrl() {
+  if (typeof window === "undefined")
+    return "https://pharmacy-express.co.uk/account";
   return `${window.location.origin}/account`;
 }
 
@@ -97,11 +610,9 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   const anyOrder: any = order;
   const meta: any = anyOrder.meta || {};
 
-  // 1) Explicit patient_name on order or meta
   if (anyOrder.patient_name) return anyOrder.patient_name;
   if (meta.patient_name) return meta.patient_name;
 
-  // 2) Patient object inside meta (common for clinic services)
   const patient =
     meta.patient ||
     meta.patientDetails ||
@@ -120,13 +631,11 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
     if (fromPatientStruct) return fromPatientStruct;
   }
 
-  // 3) First/last name directly on order
   const fromOrder = `${anyOrder.first_name || ""} ${
     anyOrder.last_name || ""
   }`.trim();
   if (fromOrder) return fromOrder;
 
-  // 4) Fallback to linked user
   if (user) {
     const u: any = user;
     const fromUser =
@@ -137,9 +646,9 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
     if (fromUser) return fromUser;
   }
 
-  // 5) Hard fallback
   return "Unknown";
 }
+
 function formatDateOnly(value?: string | null) {
   if (!value) return "—";
   const d = new Date(value);
@@ -149,113 +658,6 @@ function formatDateOnly(value?: string | null) {
     month: "short",
     year: "numeric",
   });
-}
-type RecordOfSupplyValues = {
-  dateProvided: string;
-  itemA: string;
-  itemVariationA: string;
-  quantityA: string;
-};
-
-/**
- * Extracts "clinical notes" / record-of-supply data for:
- * Date provided, Item A, Item variation A, Quantity A
- * Used by both Record of Supply PDF and Private Prescription PDF.
- */
-function getRecordOfSupplyValues(order: OrderDto): RecordOfSupplyValues {
-  const meta: any = order.meta || {};
-
-  const record =
-    meta.recordOfSupply ||
-    meta.record_of_supply ||
-    meta.recordOfSupplyDoc ||
-    null;
-
-  let fieldMap: Record<string, any> = {};
-
-  // If your record-of-supply is stored as { fields: { label: value } }
-  if (record && record.fields && typeof record.fields === "object") {
-    fieldMap = { ...(record.fields as Record<string, any>) };
-  }
-
-  // Sometimes it's an array of {label, value}
-  if (Array.isArray(record?.fields)) {
-    for (const row of record.fields as any[]) {
-      const label =
-        row?.label || row?.name || row?.fieldLabel || row?.key || "";
-      if (!label) continue;
-      fieldMap[label] = row?.value ?? row?.answer ?? row?.data ?? "";
-    }
-  }
-
-  // --- Values from record of supply / clinical notes ---
-  const rawDateProvided =
-    fieldMap["Date provided"] ??
-    fieldMap["Date Provided"] ??
-    fieldMap["Date provided A"] ??
-    fieldMap["Date provided (A)"];
-
-  const rawItemA =
-    fieldMap["Item A"] ??
-    fieldMap["Item a"] ??
-    fieldMap["Item name A"] ??
-    fieldMap["Item name"] ??
-    fieldMap["Medicine A"];
-
-  const rawItemVariationA =
-    fieldMap["Item variation A"] ??
-    fieldMap["Item Variation A"] ??
-    fieldMap["Strength A"] ??
-    fieldMap["Dose A"];
-
-  const rawQuantityA =
-    fieldMap["Quantity A"] ??
-    fieldMap["Quantity a"] ??
-    fieldMap["Quantity"] ??
-    fieldMap["Qty A"];
-
-  // --- Fallbacks if ROS not present yet: use meta.items / selectedProduct ---
-  const firstItem =
-    Array.isArray(meta.items) && meta.items.length > 0 ? meta.items[0] : null;
-
-  const selected = meta.selectedProduct || firstItem || {};
-
-  const dateFromOrder =
-    (order as any).completed_at ||
-    (order as any).completedAt ||
-    (order as any).createdAt ||
-    (order as any).created_at ||
-    order.start_at ||
-    order.meta?.appointment_start_at ||
-    new Date().toISOString();
-
-  const dateProvided = formatDateOnly(
-    rawDateProvided || record?.saved_at || record?.created_at || dateFromOrder
-  );
-
-  const itemA =
-    String(rawItemA || selected.name || (firstItem && firstItem.name) || "") ||
-    "—";
-
-  const itemVariationA =
-    String(
-      rawItemVariationA ||
-        selected.strength ||
-        (firstItem && firstItem.strength) ||
-        ""
-    ) || "—";
-
-  const quantityA =
-    String(
-      rawQuantityA ?? selected.qty ?? (firstItem && firstItem.qty) ?? ""
-    ) || "—";
-
-  return {
-    dateProvided,
-    itemA,
-    itemVariationA,
-    quantityA,
-  };
 }
 
 function formatDobWithAge(value?: string | null) {
@@ -313,56 +715,120 @@ type RafFileRef = {
   mimeType?: string | null;
 };
 
-function normaliseRafAnswer(qa: any): { text: string; files: RafFileRef[] } {
+function formatFieldValue(value: any): string {
+  if (value == null) return "—";
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  )
+    return String(value);
+  if (Array.isArray(value)) {
+    const txt = value
+      .map((v) =>
+        typeof v === "string" || typeof v === "number" ? String(v) : ""
+      )
+      .filter(Boolean)
+      .join(", ");
+    return txt || "—";
+  }
+  return "—";
+}
+
+function resolveImageUrl(imagePath?: string | null): string {
+  if (!imagePath) return "";
+
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
+
+  const normalizedPath = imagePath.startsWith("/")
+    ? imagePath
+    : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase(); // often ends with /api
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+  return `${cleanBase}${normalizedPath}`;
+}
+
+/* ----------------- Risk Assessment helpers (USE meta.riskAssessment) ----------------- */
+
+type RiskAssessmentItem = {
+  key?: string;
+  question?: string;
+  value?: any;
+};
+
+function getRiskAssessmentItems(order: OrderDto): RiskAssessmentItem[] {
+  const meta: any = (order as any)?.meta || {};
+  const ra = meta?.riskAssessment;
+  if (Array.isArray(ra)) return ra as RiskAssessmentItem[];
+  return [];
+}
+
+function uniqueJoin(parts: string[]): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parts) {
+    const s = String(p ?? "").trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out.join(", ");
+}
+
+function normaliseRiskValue(value: any): { text: string; files: RafFileRef[] } {
   const files: RafFileRef[] = [];
   const textParts: string[] = [];
 
-  function collect(value: any) {
-    if (value == null) return;
+  function collect(v: any) {
+    if (v == null) return;
 
-    if (Array.isArray(value)) {
-      value.forEach(collect);
+    if (Array.isArray(v)) {
+      v.forEach(collect);
       return;
     }
 
-    const t = typeof value;
+    const t = typeof v;
 
     if (t === "string" || t === "number" || t === "boolean") {
-      const s = String(value);
+      const s = String(v).trim();
       if (s && s !== "[object Object]") textParts.push(s);
       return;
     }
 
     if (t === "object") {
-      const v: any = value;
-
-      // Treat this as a file object if it has a URL-ish property
-      const url: string | undefined = v.url || v.href || v.path;
+      const obj: any = v;
+      const url: string | undefined = obj.url || obj.href || obj.path;
       const name: string | undefined =
-        v.name || v.filename || (url ? url.split("/").pop() : undefined);
-      const mimeType: string | undefined = v.type || v.mimetype || v.mimeType;
+        obj.name ||
+        obj.filename ||
+        (url ? String(url).split("/").pop() : undefined);
+      const mimeType: string | undefined =
+        obj.type || obj.mimetype || obj.mimeType;
 
       if (url) {
         files.push({ url, name, mimeType });
+      } else {
+        // ignore generic objects to avoid [object Object]
       }
-      // Do NOT stringify generic objects → avoids [object Object]
     }
   }
 
-  collect(qa.raw);
-  collect(qa.answer);
+  collect(value);
 
-  let text = textParts.join(", ").trim();
+  // IMPORTANT: avoid duplication by deduping textParts
+  let text = uniqueJoin(textParts).trim();
 
   if (!text && files.length) {
     const names = files
       .map((f) => f.name || f.url)
       .filter(Boolean)
-      .join(", ");
+      .map(String);
     text =
       files.length === 1
-        ? `Attached file: ${names}`
-        : `Attached file(s): ${names}`;
+        ? `Attached file: ${uniqueJoin(names)}`
+        : `Attached file(s): ${uniqueJoin(names)}`;
   }
 
   if (!text) text = "—";
@@ -370,34 +836,44 @@ function normaliseRafAnswer(qa: any): { text: string; files: RafFileRef[] } {
   return { text, files };
 }
 
-function formatFieldValue(value: any): string {
-  if (value == null) return "—";
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return String(value);
-  }
-  // Avoid [object Object] for unexpected objects
-  return "—";
+function rafFileLooksLikeImage(file: RafFileRef): boolean {
+  const mt = (file.mimeType || "").toLowerCase();
+  if (mt && mt.startsWith("image/")) return true;
+  const url = file.url || "";
+  return /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url);
 }
 
-function resolveImageUrl(imagePath?: string | null): string {
-  if (!imagePath) return "";
+function guessImageFormat(dataUrlOrUrl: string): "PNG" | "JPEG" | "WEBP" {
+  const s = dataUrlOrUrl || "";
+  if (s.startsWith("data:image/png")) return "PNG";
+  if (s.startsWith("data:image/jpeg") || s.startsWith("data:image/jpg"))
+    return "JPEG";
+  if (s.startsWith("data:image/webp")) return "WEBP";
+  if (/\.(jpe?g)(\?|$)/i.test(s)) return "JPEG";
+  if (/\.(webp)(\?|$)/i.test(s)) return "WEBP";
+  return "PNG";
+}
 
-  if (/^https?:\/\//i.test(imagePath)) {
-    return imagePath;
+async function fetchImageDataUrl(url: string): Promise<string | null> {
+  try {
+    const full = resolveImageUrl(url);
+    if (!full) return null;
+
+    if (full.startsWith("data:image")) return full;
+
+    const res = await fetch(full, { mode: "cors" });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
   }
-
-  const normalizedPath = imagePath.startsWith("/")
-    ? imagePath
-    : `/${imagePath}`;
-
-  const baseWithApi = getBackendBase();
-  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
-
-  return `${cleanBase}${normalizedPath}`;
 }
 
 /* ----------------- PDF Helpers ----------------- */
@@ -405,27 +881,20 @@ function resolveImageUrl(imagePath?: string | null): string {
 type PdfCursor = { y: number };
 type PdfExportMode = "download" | "file";
 
-// Layout
 const MARGIN_X = 18;
 const TOP_CONTENT_Y = 48;
 
-// Brand colours / tokens (approx Tailwind green + slate)
 const PDF_BRAND_GREEN = { r: 34, g: 197, b: 94 };
 const PDF_TEXT_DARK = { r: 31, g: 41, b: 55 };
 const PDF_TEXT_MUTED = { r: 100, g: 116, b: 139 };
 const PDF_BORDER = { r: 209, g: 213, b: 219 };
 const PDF_CARD_BG = { r: 248, g: 250, b: 252 };
 
-// Optional logo for the header (can be overridden via env)
 const PDF_LOGO_SRC =
   process.env.NEXT_PUBLIC_PDF_LOGO_URL || "/images/pharmacy-express-logo.png";
 
 let cachedPdfLogoDataUrl: string | null | undefined;
 
-/**
- * Load the Pharmacy Express logo once and cache it as a data URL.
- * Safe no-op on the server.
- */
 async function getPdfLogoDataUrl(): Promise<string | null> {
   if (cachedPdfLogoDataUrl !== undefined) return cachedPdfLogoDataUrl;
 
@@ -441,9 +910,7 @@ async function getPdfLogoDataUrl(): Promise<string | null> {
 
   try {
     let url = PDF_LOGO_SRC;
-    if (url.startsWith("/")) {
-      url = `${window.location.origin}${url}`;
-    }
+    if (url.startsWith("/")) url = `${window.location.origin}${url}`;
     const res = await fetch(url, { mode: "cors" });
     if (!res.ok) throw new Error("Logo fetch failed");
 
@@ -474,29 +941,10 @@ function getPageHeight(doc: jsPDF) {
   return (
     (doc.internal as any).pageSize?.getHeight?.() ??
     (doc.internal as any).pageSize?.height ??
-    297 // A4
+    297
   );
 }
 
-/** Light diagonal watermark, e.g. DO NOT DISPENSE */
-function drawDiagonalWatermark(doc: jsPDF, text: string) {
-  const pageWidth = getPageWidth(doc);
-  const pageHeight = getPageHeight(doc);
-  const centerX = pageWidth / 2;
-  const centerY = pageHeight / 2;
-
-  (doc as any).setFont("helvetica", "bold");
-  doc.setFontSize(52);
-  // very light grey
-  doc.setTextColor(226, 232, 240);
-
-  (doc as any).text(text, centerX, centerY, {
-    align: "center",
-    angle: 45,
-  });
-}
-
-/** Simple 2-column table used for Medicine Prescribed */
 function drawTwoColumnTable(
   doc: jsPDF,
   startX: number,
@@ -508,18 +956,15 @@ function drawTwoColumnTable(
   const col1Width = tableWidth * 0.35;
   const totalHeight = rows.length * rowHeight;
 
-  // outer border
   doc.setDrawColor(209, 213, 219);
   doc.setLineWidth(0.3);
   doc.rect(startX, startY, tableWidth, totalHeight);
 
-  // horizontal lines
   for (let i = 1; i < rows.length; i++) {
     const y = startY + i * rowHeight;
     doc.line(startX, y, startX + tableWidth, y);
   }
 
-  // vertical separator
   doc.line(
     startX + col1Width,
     startY,
@@ -545,81 +990,27 @@ function drawTwoColumnTable(
 }
 
 function ensureSpace(doc: jsPDF, cursor: PdfCursor, extra = 6) {
-  const pageHeight =
-    (doc.internal as any).pageSize?.getHeight?.() ??
-    (doc.internal as any).pageSize?.height ??
-    297; // A4 height in mm
+  const pageHeight = getPageHeight(doc);
   const bottomMargin = 18;
+
   if (cursor.y + extra > pageHeight - bottomMargin) {
-    doc.addPage();
-    cursor.y = TOP_CONTENT_Y;
+    addPageWithHeader(doc, cursor);
   }
 }
 
-/**
- * Standard Pharmacy Express header for all PDFs:
- * - Logo + "Pharmacy Express" brand
- * - Big green title (INVOICE, RECORD OF SUPPLY, etc.)
- * - Optional subtitle (reference, dates, VAT, etc.)
- */
 function createPdfBaseDoc(
   title: string,
   subtitle?: string,
   logoDataUrl?: string | null
 ) {
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const pageWidth = getPageWidth(doc);
-  const headerY = 18;
 
-  // Background
-  doc.setFillColor(255, 255, 255);
-  doc.rect(0, 0, pageWidth, 297, "F");
+  // store header state so we can re-draw on page breaks
+  (doc as any).__pe_header = { title, subtitle, logoDataUrl } as PdfHeaderState;
 
-  // Logo (optional)
-  if (logoDataUrl) {
-    try {
-      doc.addImage(logoDataUrl, "PNG", MARGIN_X, headerY - 6, 26, 12);
-    } catch {
-      // ignore logo failure, continue with text
-    }
-  }
-
-  // Brand name
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-  doc.text(PHARMACY_INFO.name, MARGIN_X + 32, headerY - 2);
-
-  // Document title
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(PDF_BRAND_GREEN.r, PDF_BRAND_GREEN.g, PDF_BRAND_GREEN.b);
-  doc.text(title.toUpperCase(), MARGIN_X, headerY + 8);
-
-  // Subtitle (e.g. reference / date / VAT line)
-  if (subtitle) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
-    doc.text(subtitle, MARGIN_X, headerY + 14);
-  }
-
-  // Green divider
-  doc.setDrawColor(PDF_BRAND_GREEN.r, PDF_BRAND_GREEN.g, PDF_BRAND_GREEN.b);
-  doc.setLineWidth(0.6);
-  doc.line(MARGIN_X, headerY + 18, pageWidth - MARGIN_X, headerY + 18);
-
-  // Default body style
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-
+  drawPdfHeader(doc, { title, subtitle, logoDataUrl });
   return doc;
 }
-
-/**
- * Section title (e.g. "Invoice Details", "Clinical Notes") with green underline.
- */
 function writeSectionTitle(doc: jsPDF, cursor: PdfCursor, title: string) {
   ensureSpace(doc, cursor, 10);
   const pageWidth = getPageWidth(doc);
@@ -639,12 +1030,6 @@ function writeSectionTitle(doc: jsPDF, cursor: PdfCursor, title: string) {
   doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
 }
 
-/**
- * Generic "card" like the ones in the examples:
- * used for "Pharmacy Details" / "Patient Information" / "From" / "Bill To".
- *
- * Returns the bottom Y coordinate of the card.
- */
 function drawInfoCard(
   doc: jsPDF,
   x: number,
@@ -657,7 +1042,6 @@ function drawInfoCard(
   const contentWidth = width - labelWidth - 10;
   const lineHeight = 4;
 
-  // Pre-measure to determine height
   const prepared = rows.map((row) => {
     const value = row.value || "—";
     const lines = doc.splitTextToSize(value, contentWidth);
@@ -672,14 +1056,12 @@ function drawInfoCard(
 
   const cardHeight = 10 + innerHeight + 6;
 
-  // Card background + border
   doc.setDrawColor(PDF_BORDER.r, PDF_BORDER.g, PDF_BORDER.b);
   doc.setFillColor(PDF_CARD_BG.r, PDF_CARD_BG.g, PDF_CARD_BG.b);
   doc.roundedRect(x, y, width, cardHeight, 2, 2, "FD");
 
   let cy = y + 7;
 
-  // Card title
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
   doc.setTextColor(PDF_BRAND_GREEN.r, PDF_BRAND_GREEN.g, PDF_BRAND_GREEN.b);
@@ -691,7 +1073,6 @@ function drawInfoCard(
   doc.line(x + 4, cy + 1, x + width - 4, cy + 1);
   cy += 4;
 
-  // Rows
   prepared.forEach((row) => {
     doc.setFontSize(9);
     doc.setFont("helvetica", "bold");
@@ -712,10 +1093,30 @@ function drawInfoCard(
   return y + cardHeight;
 }
 
-/**
- * Two-column Patient / Order summary used for the clinical PDFs (RAF, Advice,
- * Declaration, Full bundle).
- */
+function writeLabelValueRow(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  label: string,
+  value: string,
+  x: number
+) {
+  ensureSpace(doc, cursor, 7);
+  doc.setFontSize(8.5);
+  doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
+  doc.text(label.toUpperCase(), x, cursor.y);
+  cursor.y += 3.5;
+
+  doc.setFontSize(10);
+  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+
+  const lines = doc.splitTextToSize(value || "—", 80);
+  lines.forEach((line: string) => {
+    ensureSpace(doc, cursor);
+    doc.text(line, x, cursor.y);
+    cursor.y += 4.2;
+  });
+}
+
 function writePatientOrderBlock(
   doc: jsPDF,
   cursor: PdfCursor,
@@ -748,7 +1149,6 @@ function writePatientOrderBlock(
   const country = u.country;
   const addrParts = [addr1, city, county, postcode, country].filter(Boolean);
 
-  // Left column: Patient
   doc.setFontSize(9);
   doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
   doc.setFont("helvetica", "bold");
@@ -759,11 +1159,9 @@ function writePatientOrderBlock(
   writeLabelValueRow(doc, leftCursor, "Name", patientName, leftX);
   if (dob) writeLabelValueRow(doc, leftCursor, "Date of birth", dob, leftX);
   if (gender) writeLabelValueRow(doc, leftCursor, "Gender", gender, leftX);
-  if (addrParts.length) {
+  if (addrParts.length)
     writeLabelValueRow(doc, leftCursor, "Address", addrParts.join(", "), leftX);
-  }
 
-  // Right column: Order
   doc.setFontSize(9);
   doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
   doc.setFont("helvetica", "bold");
@@ -775,20 +1173,24 @@ function writePatientOrderBlock(
     doc,
     rightCursor,
     "Reference",
-    order.reference || order._id,
+    order.reference || (order as any)._id,
     rightX
   );
   writeLabelValueRow(
     doc,
     rightCursor,
     "Service",
-    `${order.service_name} (${order.service_slug || "N/A"})`,
+    `${(order as any).service_name || "Service"} (${
+      (order as any).service_slug || "N/A"
+    })`,
     rightX
   );
 
   const appointmentAt =
-    order.meta?.appointment_start_at || (order as any).start_at || null;
-  if (appointmentAt) {
+    (order as any)?.meta?.appointment_start_at ||
+    (order as any)?.start_at ||
+    null;
+  if (appointmentAt)
     writeLabelValueRow(
       doc,
       rightCursor,
@@ -796,16 +1198,15 @@ function writePatientOrderBlock(
       formatDateTime(appointmentAt),
       rightX
     );
-  }
 
-  if (order.status || order.payment_status) {
+  if ((order as any)?.status || (order as any)?.payment_status) {
     writeLabelValueRow(
       doc,
       rightCursor,
       "Status",
-      `${order.status?.toUpperCase()} / ${
-        order.payment_status?.toUpperCase() || "N/A"
-      }`,
+      `${String((order as any).status || "").toUpperCase()} / ${String(
+        (order as any).payment_status || "N/A"
+      ).toUpperCase()}`,
       rightX
     );
   }
@@ -814,87 +1215,36 @@ function writePatientOrderBlock(
   cursor.y = blockBottom + 6;
 }
 
-function writeLabelValueRow(
+/* ----------------- Risk Assessment PDF section (FIXED: uses meta.riskAssessment) ----------------- */
+
+async function writeRiskAssessmentSection(
   doc: jsPDF,
   cursor: PdfCursor,
-  label: string,
-  value: string,
-  x: number
+  order: OrderDto
 ) {
-  ensureSpace(doc, cursor, 7);
-  doc.setFontSize(8.5);
-  doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
-  doc.text(label.toUpperCase(), x, cursor.y);
-  cursor.y += 3.5;
-
-  doc.setFontSize(10);
-  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-
-  const lines = doc.splitTextToSize(value || "—", 80);
-  lines.forEach((line: string) => {
-    ensureSpace(doc, cursor);
-    doc.text(line, x, cursor.y);
-    cursor.y += 4.2;
-  });
-}
-
-/* ----- RAF answer helpers (avoid [object Object], handle files) ----- */
-
-function rafFileLooksLikeImage(file: RafFileRef): boolean {
-  const mt = (file.mimeType || "").toLowerCase();
-  if (mt && mt.startsWith("image/")) return true;
-
-  const url = file.url || "";
-  return /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(url);
-}
-
-async function fetchImageDataUrl(url: string): Promise<string | null> {
-  try {
-    const full = resolveImageUrl(url);
-    if (!full) return null;
-
-    if (full.startsWith("data:image")) return full;
-
-    const res = await fetch(full, { mode: "cors" });
-    if (!res.ok) return null;
-    const blob = await res.blob();
-
-    return await new Promise<string | null>((resolve) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-}
-
-/* ----- RAF section ----- */
-
-async function writeRafSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
-  const meta: any = order.meta || {};
-  const raf = meta.formsQA?.raf;
-  const hasRaf = !!raf?.qa?.length;
+  const items = getRiskAssessmentItems(order);
 
   writeSectionTitle(doc, cursor, "Risk Assessment Form (RAF)");
 
-  if (!hasRaf) {
+  if (!items.length) {
     ensureSpace(doc, cursor);
-    doc.text("No RAF data captured for this order.", MARGIN_X, cursor.y);
+    doc.text(
+      "No Risk Assessment data captured for this order.",
+      MARGIN_X,
+      cursor.y
+    );
     cursor.y += 6;
     return;
   }
 
-  doc.setFontSize(10);
-
-  for (let idx = 0; idx < raf.qa.length; idx++) {
-    const qa = raf.qa[idx];
-    const q = qa.question || qa.key || `Question ${idx + 1}`;
-    const { text: ans, files } = normaliseRafAnswer(qa);
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx] || {};
+    const q = String(it.question || it.key || `Question ${idx + 1}`);
+    const { text: ans, files } = normaliseRiskValue(it.value);
 
     // Question
     doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
     const qLines = doc.splitTextToSize(
       `${idx + 1}. ${q}`,
       getPageWidth(doc) - 2 * MARGIN_X
@@ -902,11 +1252,12 @@ async function writeRafSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
     qLines.forEach((line: string) => {
       ensureSpace(doc, cursor);
       doc.text(line, MARGIN_X, cursor.y);
-      cursor.y += 4.5;
+      cursor.y += 4.6;
     });
 
-    // Answer text
+    // Answer
     doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
     const aLines = doc.splitTextToSize(
       `Answer: ${ans}`,
       getPageWidth(doc) - 2 * MARGIN_X - 4
@@ -914,36 +1265,66 @@ async function writeRafSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
     aLines.forEach((line: string) => {
       ensureSpace(doc, cursor);
       doc.text(line, MARGIN_X + 4, cursor.y);
-      cursor.y += 4.2;
+      cursor.y += 4.3;
     });
 
-    // Inline images (e.g. vaccination record)
+    // Attach images inline
     const imageFiles = files.filter(rafFileLooksLikeImage);
     for (const file of imageFiles) {
       const dataUrl = await fetchImageDataUrl(file.url);
       if (!dataUrl) continue;
 
-      const maxWidth = getPageWidth(doc) - 2 * MARGIN_X;
-      const imgWidth = Math.min(80, maxWidth);
+      const pageW = getPageWidth(doc);
+      const maxWidth = pageW - 2 * MARGIN_X;
+      const imgWidth = Math.min(90, maxWidth);
       const imgHeight = imgWidth * 0.75;
 
-      ensureSpace(doc, cursor, imgHeight + 6);
+      ensureSpace(doc, cursor, imgHeight + 8);
       try {
-        doc.addImage(dataUrl, "PNG", MARGIN_X, cursor.y, imgWidth, imgHeight);
+        doc.addImage(
+          dataUrl,
+          guessImageFormat(dataUrl || file.url),
+          MARGIN_X,
+          cursor.y,
+          imgWidth,
+          imgHeight
+        );
         cursor.y += imgHeight + 4;
       } catch {
-        // ignore bad image
+        // ignore
       }
+    }
+
+    // Non-image attachments list
+    const nonImage = files.filter((f) => !rafFileLooksLikeImage(f));
+    if (nonImage.length) {
+      const names = nonImage
+        .map((f) => f.name || f.url)
+        .filter(Boolean)
+        .map(String);
+      const line = `Attachment(s): ${uniqueJoin(names) || "—"}`;
+      const lns = doc.splitTextToSize(
+        line,
+        getPageWidth(doc) - 2 * MARGIN_X - 4
+      );
+      lns.forEach((l: string) => {
+        ensureSpace(doc, cursor);
+        doc.setFontSize(9);
+        doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
+        doc.text(l, MARGIN_X + 4, cursor.y);
+        doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+        cursor.y += 4.0;
+      });
     }
 
     cursor.y += 3;
   }
 }
 
-/* ----- Advice section ----- */
+/* ----------------- Advice / Declaration / Record sections ----------------- */
 
 function extractAdviceTexts(order: OrderDto): string[] {
-  const meta: any = order.meta || {};
+  const meta: any = (order as any).meta || {};
   const advice = meta.pharmacistAdvice;
   const adviceState: Record<string, string[]> = advice?.adviceState || {};
   return Object.values(adviceState)
@@ -952,51 +1333,9 @@ function extractAdviceTexts(order: OrderDto): string[] {
     .map((s) => String(s));
 }
 
-function writeAdviceSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
-  const adviceTexts = extractAdviceTexts(order);
-  const hasAdvice = adviceTexts.length > 0;
-
-  writeSectionTitle(doc, cursor, "Pharmacist Advice");
-
-  if (!hasAdvice) {
-    ensureSpace(doc, cursor);
-    doc.text(
-      "No Pharmacist Advice has been recorded for this order.",
-      MARGIN_X,
-      cursor.y
-    );
-    cursor.y += 6;
-    return;
-  }
-
-  const intro = doc.splitTextToSize(
-    "The following advice text snippets were selected during the consultation:",
-    getPageWidth(doc) - 2 * MARGIN_X
-  );
-  intro.forEach((line: string) => {
-    ensureSpace(doc, cursor);
-    doc.text(line, MARGIN_X, cursor.y);
-    cursor.y += 4.2;
-  });
-  cursor.y += 2;
-
-  adviceTexts.forEach((txt, idx) => {
-    const bullet = `• ${txt}`;
-    const lines = doc.splitTextToSize(bullet, getPageWidth(doc) - 2 * MARGIN_X);
-    lines.forEach((line: string) => {
-      ensureSpace(doc, cursor);
-      doc.text(line, MARGIN_X, cursor.y);
-      cursor.y += 4.2;
-    });
-    cursor.y += 1;
-  });
-}
-
-/* ----- Signature loader ----- */
-
 async function getSignatureDataUrl(order: OrderDto): Promise<string | null> {
   try {
-    const meta: any = order.meta || {};
+    const meta: any = (order as any).meta || {};
     const declaration = meta.pharmacistDeclaration;
     const url: string | undefined = declaration?.signatureUrl;
     if (!url) return null;
@@ -1006,21 +1345,18 @@ async function getSignatureDataUrl(order: OrderDto): Promise<string | null> {
   }
 }
 
-/* ----- Declaration section ----- */
-
 function writeDeclarationSection(
   doc: jsPDF,
   cursor: PdfCursor,
   order: OrderDto,
   signatureDataUrl?: string | null
 ) {
-  const meta: any = order.meta || {};
+  const meta: any = (order as any).meta || {};
   const declaration = meta.pharmacistDeclaration;
-  const hasDeclaration = !!declaration;
 
   writeSectionTitle(doc, cursor, "Pharmacist Declaration");
 
-  if (!hasDeclaration) {
+  if (!declaration) {
     ensureSpace(doc, cursor);
     doc.text(
       "No Pharmacist Declaration has been recorded.",
@@ -1073,7 +1409,6 @@ function writeDeclarationSection(
 
   cursor.y += 4;
 
-  // Signature image
   if (signatureDataUrl) {
     ensureSpace(doc, cursor, 30);
     doc.setFontSize(9);
@@ -1086,7 +1421,7 @@ function writeDeclarationSection(
       const imgHeight = 18;
       doc.addImage(
         signatureDataUrl,
-        "PNG",
+        guessImageFormat(signatureDataUrl),
         MARGIN_X,
         cursor.y,
         imgWidth,
@@ -1118,16 +1453,13 @@ function writeDeclarationSection(
   }
 }
 
-/* ----- Record of supply (clinical bundle simple dump) ----- */
-
 function writeRecordSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
-  const meta: any = order.meta || {};
+  const meta: any = (order as any).meta || {};
   const record = meta.recordOfSupply;
-  const hasRecord = !!record;
 
   writeSectionTitle(doc, cursor, "Record of Supply");
 
-  if (!hasRecord) {
+  if (!record) {
     ensureSpace(doc, cursor);
     doc.text("No Record of Supply has been captured.", MARGIN_X, cursor.y);
     cursor.y += 6;
@@ -1172,7 +1504,6 @@ function writeRecordSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
   });
 }
 
-/* Small helper to finalise a PDF */
 function finalisePdf(
   doc: jsPDF,
   filename: string,
@@ -1186,14 +1517,14 @@ function finalisePdf(
   return;
 }
 
-/* ----- Invoice PDF (styled like screenshot) ----- */
+/* ----------------- Invoice PDF ----------------- */
 
 async function exportInvoicePdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const invoiceNo = `#INV-${order.reference || order._id}`;
+) {
+  const invoiceNo = `#INV-${(order as any).reference || (order as any)._id}`;
   const invoiceDate = formatDateOnly(
     (order as any).completed_at ||
       (order as any).completedAt ||
@@ -1208,7 +1539,6 @@ async function exportInvoicePdf(
   const pageWidth = getPageWidth(doc);
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
-  // Patient info
   const patientName = getDisplayPatientName(order, user || undefined);
   const u: any = user || {};
   const dobLabel = u.dob ? formatDateOnly(u.dob) : null;
@@ -1230,16 +1560,12 @@ async function exportInvoicePdf(
   if (phone) contactParts.push(phone);
   const contact = contactParts.join(" | ");
 
-  // Two cards (From / Bill To)
   const cardGap = 6;
   const cardWidth = (pageWidth - 2 * MARGIN_X - cardGap) / 2;
 
   const leftBottom = drawInfoCard(doc, MARGIN_X, cursor.y, cardWidth, "From", [
     { label: "Name:", value: PHARMACY_INFO.name },
-    {
-      label: "Address:",
-      value: PHARMACY_INFO.addressLines.join(", "),
-    },
+    { label: "Address:", value: PHARMACY_INFO.addressLines.join(", ") },
     { label: "Tel:", value: PHARMACY_INFO.tel },
     { label: "Email:", value: PHARMACY_INFO.email },
   ]);
@@ -1260,10 +1586,9 @@ async function exportInvoicePdf(
 
   cursor.y = Math.max(leftBottom, rightBottom) + 10;
 
-  /* ---- Invoice Details ---- */
   writeSectionTitle(doc, cursor, "Invoice Details");
 
-  const items = (order.meta?.items || []) as any[];
+  const items = ((order as any).meta?.items || []) as any[];
 
   if (!items.length) {
     ensureSpace(doc, cursor);
@@ -1277,7 +1602,6 @@ async function exportInvoicePdf(
     const colUnitX = tableX + tableWidth * 0.78;
     const colNetX = tableX + tableWidth * 0.9;
 
-    // Header row
     ensureSpace(doc, cursor, 8);
     const headerY = cursor.y;
     doc.setFont("helvetica", "bold");
@@ -1289,7 +1613,6 @@ async function exportInvoicePdf(
     doc.text("Net", colNetX, headerY);
     cursor.y += 5;
 
-    // Rows
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
     items.forEach((it) => {
@@ -1320,24 +1643,22 @@ async function exportInvoicePdf(
     });
   }
 
-  // Total incl. VAT
   cursor.y += 4;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.5);
-  const total = order.meta?.totalMinor ?? null;
+  const total = (order as any).meta?.totalMinor ?? null;
   const totalText = `Total incl. VAT ${formatMoney(total)}`;
   ensureSpace(doc, cursor);
   doc.text(totalText, MARGIN_X, cursor.y);
   cursor.y += 8;
 
-  /* ---- Payment Information ---- */
   writeSectionTitle(doc, cursor, "Payment Information");
 
-  const paymentStatus = (order.payment_status || "").toUpperCase() || "N/A";
-
+  const paymentStatus =
+    String((order as any).payment_status || "").toUpperCase() || "N/A";
   const paidAtSource =
     (order as any).paid_at ||
-    (order.meta as any)?.paid_at ||
+    (order as any).meta?.paid_at ||
     (order as any).completed_at ||
     (order as any).completedAt ||
     (order as any).createdAt ||
@@ -1352,20 +1673,22 @@ async function exportInvoicePdf(
   doc.text(paymentLine, MARGIN_X, cursor.y);
   cursor.y += 6;
 
-  const filename = `Invoice_${order.reference || order._id}.pdf`;
+  const filename = `Invoice_${
+    (order as any).reference || (order as any)._id
+  }.pdf`;
   return finalisePdf(doc, filename, mode);
 }
 
-/* ----- RAF PDF ----- */
+/* ----------------- RAF PDF (now uses meta.riskAssessment) ----------------- */
 
 async function exportRafPdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const reference = order.reference || order._id;
-  const serviceName = order.service_name || "Service";
-  const meta: any = order.meta || {};
+) {
+  const reference = (order as any).reference || (order as any)._id;
+  const serviceName = (order as any).service_name || "Service";
+  const meta: any = (order as any).meta || {};
   const dateSource =
     meta.appointment_start_at ||
     (order as any).completed_at ||
@@ -1382,22 +1705,23 @@ async function exportRafPdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   writePatientOrderBlock(doc, cursor, order, user);
-  await writeRafSection(doc, cursor, order);
+  await writeRiskAssessmentSection(doc, cursor, order);
 
-  const filename = `RAF_${order.reference || order._id}.pdf`;
+  const filename = `RAF_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
 
-/* ----- Advice PDF ----- */
+/* ----------------- Advice / Declaration / Record PDFs ----------------- */
 
 async function exportAdvicePdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const reference = order.reference || order._id;
-  const serviceName = order.service_name || "Service";
-  const meta: any = order.meta || {};
+) {
+  const reference = (order as any).reference || (order as any)._id;
+  const serviceName = (order as any).service_name || "Service";
+  const meta: any = (order as any).meta || {};
+
   const dateSource =
     meta.appointment_start_at ||
     (order as any).completed_at ||
@@ -1414,22 +1738,22 @@ async function exportAdvicePdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   writePatientOrderBlock(doc, cursor, order, user);
+
+  // ✅ this must be the improved version below
   writeAdviceSection(doc, cursor, order);
 
-  const filename = `Advice_${order.reference || order._id}.pdf`;
+  const filename = `Advice_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
-
-/* ----- Declaration PDF ----- */
 
 async function exportDeclarationPdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const reference = order.reference || order._id;
-  const serviceName = order.service_name || "Service";
-  const meta: any = order.meta || {};
+) {
+  const reference = (order as any).reference || (order as any)._id;
+  const serviceName = (order as any).service_name || "Service";
+  const meta: any = (order as any).meta || {};
   const dateSource =
     meta.appointment_start_at ||
     (order as any).completed_at ||
@@ -1450,19 +1774,17 @@ async function exportDeclarationPdf(
   writePatientOrderBlock(doc, cursor, order, user);
   writeDeclarationSection(doc, cursor, order, signatureDataUrl);
 
-  const filename = `Declaration_${order.reference || order._id}.pdf`;
+  const filename = `Declaration_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
-
-/* ----- Record of Supply PDF (styled like screenshot) ----- */
 
 async function exportRecordPdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const reference = order.reference || order._id;
-  const meta: any = order.meta || {};
+) {
+  const reference = (order as any).reference || (order as any)._id;
+  const meta: any = (order as any).meta || {};
   const record = meta.recordOfSupply;
   const recordFields: Record<string, any> = (record?.fields as any) || {};
 
@@ -1483,7 +1805,6 @@ async function exportRecordPdf(
   const pageWidth = getPageWidth(doc);
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
-  // Patient info reused from invoice
   const patientName = getDisplayPatientName(order, user || undefined);
   const u: any = user || {};
   const dobLabel = u.dob ? formatDateOnly(u.dob) : null;
@@ -1505,7 +1826,6 @@ async function exportRecordPdf(
   if (phone) contactParts.push(phone);
   const contact = contactParts.join(" | ");
 
-  // Cards: Pharmacy Details / Patient Information
   const cardGap = 6;
   const cardWidth = (pageWidth - 2 * MARGIN_X - cardGap) / 2;
 
@@ -1517,10 +1837,7 @@ async function exportRecordPdf(
     "Pharmacy Details",
     [
       { label: "Name:", value: PHARMACY_INFO.name },
-      {
-        label: "Address:",
-        value: PHARMACY_INFO.addressLines.join(", "),
-      },
+      { label: "Address:", value: PHARMACY_INFO.addressLines.join(", ") },
       { label: "Tel:", value: PHARMACY_INFO.tel },
       { label: "Email:", value: PHARMACY_INFO.email },
     ]
@@ -1542,52 +1859,51 @@ async function exportRecordPdf(
 
   cursor.y = Math.max(leftBottom, rightBottom) + 10;
 
-  /* ---- Clinical Notes ---- */
+  /* ----------------- Clinical Notes ----------------- */
+
   writeSectionTitle(doc, cursor, "Clinical Notes");
 
-  ensureSpace(doc, cursor);
-  doc.text(`Date provided ${recordDateStr}`, MARGIN_X, cursor.y);
+  ensureSpace(doc, cursor, 8);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+  doc.text(`Date provided: ${recordDateStr}`, MARGIN_X, cursor.y);
+  cursor.y += 8;
+
+  // ✅ Items: prefer recordFields; fallback to order/meta
+  const itemsFromRecordFields =
+    extractItemsFromRecordFieldsForPdf(recordFields);
+  const orderedItems = itemsFromRecordFields.length
+    ? itemsFromRecordFields
+    : getOrderedItemsForPdf(order);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text("Items supplied", MARGIN_X, cursor.y);
   cursor.y += 5;
 
-  const items = (order.meta?.items || []) as any[];
-  if (!items.length) {
-    ensureSpace(doc, cursor);
-    doc.text("No item details available for this order.", MARGIN_X, cursor.y);
-    cursor.y += 6;
-  } else {
-    items.forEach((it, idx) => {
-      const letter = String.fromCharCode(65 + idx); // A, B, C...
-      const name = it.name || "Item";
-      const variation = it.variation || it.variations || it.strength || "";
-      const qty = it.qty ?? 1;
+  // ✅ Proper table
+  drawItemsSuppliedTable(doc, cursor, orderedItems);
 
-      ensureSpace(doc, cursor);
-      doc.text(`Item ${letter} ${name}`, MARGIN_X, cursor.y);
-      cursor.y += 4;
+  /* ----------------- Pharmacist Declaration ----------------- */
 
-      if (variation) {
-        ensureSpace(doc, cursor);
-        doc.text(`Item variation ${letter} ${variation}`, MARGIN_X, cursor.y);
-        cursor.y += 4;
-      }
-
-      ensureSpace(doc, cursor);
-      doc.text(`Quantity ${letter} ${qty}`, MARGIN_X, cursor.y);
-      cursor.y += 5;
-    });
-  }
-
-  /* ---- Pharmacist Declaration ---- */
   writeSectionTitle(doc, cursor, "Pharmacist Declaration");
 
   const declaration = meta.pharmacistDeclaration;
+
   const longText =
     "I confirm that the above named patient has been clinically assessed and supplied medication in accordance with the service protocol. The supply is appropriate, counselling has been provided, and relevant records have been completed.";
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(15, 23, 42);
+
   const paraLines = doc.splitTextToSize(longText, pageWidth - 2 * MARGIN_X);
   paraLines.forEach((line: string) => {
-    ensureSpace(doc, cursor);
+    ensureSpace(doc, cursor, 5);
     doc.text(line, MARGIN_X, cursor.y);
-    cursor.y += 4;
+    cursor.y += 4.2;
   });
   cursor.y += 2;
 
@@ -1598,58 +1914,74 @@ async function exportRecordPdf(
       const line = `${key}: ${value || "—"}`;
       const lines = doc.splitTextToSize(line, pageWidth - 2 * MARGIN_X);
       lines.forEach((l: string) => {
-        ensureSpace(doc, cursor);
+        ensureSpace(doc, cursor, 5);
         doc.text(l, MARGIN_X, cursor.y);
-        cursor.y += 4;
+        cursor.y += 4.2;
       });
+      cursor.y += 1;
     });
   }
 
-  // Signature
   const signatureDataUrl = await getSignatureDataUrl(order);
+
+  ensureSpace(doc, cursor, 30);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Signature:", MARGIN_X, cursor.y);
+  doc.setFont("helvetica", "normal");
+
   if (signatureDataUrl) {
-    ensureSpace(doc, cursor, 24);
-    doc.text("Signature:", MARGIN_X, cursor.y);
     cursor.y += 4;
     try {
-      doc.addImage(signatureDataUrl, "PNG", MARGIN_X, cursor.y, 40, 18);
+      doc.addImage(
+        signatureDataUrl,
+        guessImageFormat(signatureDataUrl),
+        MARGIN_X,
+        cursor.y,
+        40,
+        18
+      );
       cursor.y += 22;
     } catch {
       cursor.y += 12;
     }
   } else {
-    ensureSpace(doc, cursor, 14);
-    doc.text("Signature:", MARGIN_X, cursor.y);
     cursor.y += 12;
   }
 
   const declDate =
     declaration?.saved_at ||
     recordFields["Date"] ||
-    recordFields["Date provided"];
+    recordFields["Date provided"] ||
+    recordFields["Date Provided"] ||
+    null;
+
   if (declDate) {
-    ensureSpace(doc, cursor);
+    ensureSpace(doc, cursor, 8);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
     doc.text(`Date: ${formatDateOnly(declDate)}`, MARGIN_X, cursor.y);
-    cursor.y += 5;
+    cursor.y += 6;
   }
 
-  const filename = `RecordOfSupply_${order.reference || order._id}.pdf`;
+  const filename = `RecordOfSupply_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
+
+/* ----------------- Private Prescription PDF (unchanged structure, just safer images) ----------------- */
 
 async function exportPrivatePrescriptionPdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
+) {
   const signatureDataUrl = await getSignatureDataUrl(order);
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const pageWidth = getPageWidth(doc);
   const marginX = MARGIN_X;
 
-  const meta: any = order.meta || {};
+  const meta: any = (order as any).meta || {};
 
-  // ------------ Record of Supply / Clinical Notes ------------
   const record =
     meta.recordOfSupply ||
     meta.record_of_supply ||
@@ -1657,10 +1989,8 @@ async function exportPrivatePrescriptionPdf(
     null;
 
   let recordFields: Record<string, any> = {};
-
   if (record && record.fields) {
     if (Array.isArray(record.fields)) {
-      // fields stored as an array of { label, value }
       for (const f of record.fields as any[]) {
         const label =
           f?.label || f?.name || f?.fieldLabel || f?.key || f?.id || "";
@@ -1668,17 +1998,10 @@ async function exportPrivatePrescriptionPdf(
         recordFields[label] = f?.value ?? f?.answer ?? f?.data ?? "";
       }
     } else if (typeof record.fields === "object") {
-      // fields already stored as an object
       recordFields = { ...(record.fields as Record<string, any>) };
     }
   }
 
-  // First medicine item (fallback if ROS is missing)
-  const firstItem =
-    Array.isArray(meta.items) && meta.items.length > 0 ? meta.items[0] : null;
-  const selectedProduct = meta.selectedProduct || firstItem || {};
-
-  // Fallback date if ROS doesn't provide a date
   const fallbackDateRaw =
     (recordFields["Date provided"] as string) ||
     (recordFields["Date Provided"] as string) ||
@@ -1688,7 +2011,7 @@ async function exportPrivatePrescriptionPdf(
     (order as any).completedAt ||
     (order as any).createdAt ||
     (order as any).created_at ||
-    order.start_at ||
+    (order as any).start_at ||
     meta.appointment_start_at ||
     new Date().toISOString();
 
@@ -1699,70 +2022,44 @@ async function exportPrivatePrescriptionPdf(
     (recordFields["Date Provided"] as string) ||
     fallBackDate;
 
-  const itemARaw =
-    recordFields["Item A"] ||
-    recordFields["Item a"] ||
-    recordFields["Item"] ||
-    recordFields["Item name A"] ||
-    recordFields["Medicine A"] ||
-    selectedProduct.name ||
-    firstItem?.name ||
-    "";
+  const reference = (order as any).reference || (order as any)._id;
 
-  const itemVariationARaw =
-    recordFields["Item variation A"] ||
-    recordFields["Item Variation A"] ||
-    recordFields["Item variation a"] ||
-    recordFields["Strength A"] ||
-    recordFields["Dose A"] ||
-    selectedProduct.strength ||
-    firstItem?.strength ||
-    "";
+  // ✅ FIX: include ALL ordered items (prefer recordFields items; fallback to order/meta)
+  const itemsFromRecordFields =
+    extractItemsFromRecordFieldsForPdf(recordFields);
+  const orderedItems = itemsFromRecordFields.length
+    ? itemsFromRecordFields
+    : getOrderedItemsForPdf(order);
 
-  const quantityARaw =
-    recordFields["Quantity A"] ||
-    recordFields["Quantity a"] ||
-    recordFields["Quantity"] ||
-    selectedProduct.qty ||
-    firstItem?.qty ||
-    "";
-
-  const reference = order.reference || order._id;
-
-  // ----- Header: brand + title -----
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.setTextColor(22, 163, 74); // green
-
-  // Brand name
+  doc.setTextColor(22, 163, 74);
   doc.text("PHARMACY EXPRESS", marginX, 18);
 
-  // Main title
   doc.setFontSize(16);
   doc.text("PRIVATE PRESCRIPTION", marginX, 30);
 
-  // Reference + Date line
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor(55, 65, 81); // slate
-  const refLine = `Reference: ${reference} | Date: ${dateProvided || "—"}`;
-  doc.text(refLine, marginX, 36);
+  doc.setTextColor(55, 65, 81);
+  doc.text(
+    `Reference: ${reference} | Date: ${dateProvided || "—"}`,
+    marginX,
+    36
+  );
 
-  // Green divider
   doc.setDrawColor(22, 163, 74);
   doc.setLineWidth(0.6);
   doc.line(marginX, 38, pageWidth - marginX, 38);
 
-  let cursorY: PdfCursor = { y: 48 };
+  const cursorY: PdfCursor = { y: 48 };
 
-  // ----- Pharmacy + Patient cards -----
   const gap = 8;
   const totalCardWidth = pageWidth - 2 * marginX - gap;
   const cardWidth = totalCardWidth / 2;
   const cardHeight = 56;
   const cardTop = cursorY.y;
 
-  // Outer cards
   doc.setDrawColor(209, 213, 219);
   doc.setLineWidth(0.4);
   doc.roundedRect(marginX, cardTop, cardWidth, cardHeight, 2, 2);
@@ -1775,7 +2072,7 @@ async function exportPrivatePrescriptionPdf(
     2
   );
 
-  // Pharmacy Details header & content
+  // Left: Pharmacy
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(22, 163, 74);
@@ -1821,10 +2118,11 @@ async function exportPrivatePrescriptionPdf(
   doc.setFont("helvetica", "normal");
   doc.text(PHARMACY_INFO.email, leftValueX, y);
 
-  // Patient Information card
+  // Right: Patient
   const u: any = user || {};
   const patientName = getDisplayPatientName(order, user || undefined);
   const dobLabel = u.dob ? formatDateOnly(u.dob) : null;
+
   const addrParts = [
     u.address_line1 || u.addressLine1 || u.address_line_1 || u.address1,
     u.address_line2 || u.addressLine2 || u.address_line_2 || u.address2,
@@ -1834,7 +2132,6 @@ async function exportPrivatePrescriptionPdf(
     u.country,
   ].filter(Boolean);
   const fullAddress = addrParts.join(", ");
-
   const contactStr = [u.email || (order as any).email, u.phone || u.phoneNumber]
     .filter(Boolean)
     .join(" | ");
@@ -1882,7 +2179,7 @@ async function exportPrivatePrescriptionPdf(
 
   cursorY.y = cardTop + cardHeight + 10;
 
-  // ----- Medicine Prescribed -----
+  // Medicines section
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.setTextColor(22, 163, 74);
@@ -1891,33 +2188,68 @@ async function exportPrivatePrescriptionPdf(
   doc.setLineWidth(0.4);
   doc.line(marginX, cursorY.y + 2, pageWidth - marginX, cursorY.y + 2);
 
-  const tableStartY = cursorY.y + 6;
-  const rows = [
+  // ✅ FIX: build rows for ALL items
+  const rows: { label: string; value: string }[] = [
     { label: "Date provided", value: String(dateProvided || "—") },
-    { label: "Item A", value: String(itemARaw || "—") },
-    { label: "Item variation A", value: String(itemVariationARaw || "—") },
-    { label: "Quantity A", value: String(quantityARaw || "—") },
   ];
-  const afterTableY = drawTwoColumnTable(
-    doc,
-    marginX,
-    tableStartY,
-    pageWidth - 2 * marginX,
-    rows
-  );
 
-  cursorY.y = afterTableY + 10;
+  if (!orderedItems.length) {
+    rows.push({ label: "Item", value: "—" });
+    rows.push({ label: "Quantity", value: "—" });
+  } else {
+    orderedItems.forEach((it, idx) => {
+      const letter = String.fromCharCode(65 + idx);
+      rows.push({ label: `Item ${letter}`, value: String(it.name || "—") });
+      rows.push({
+        label: `Item variation ${letter}`,
+        value: String(it.variation || "—"),
+      });
+      rows.push({ label: `Quantity ${letter}`, value: String(it.qty || "—") });
+    });
+  }
 
-  // ----- Pharmacist Declaration -----
+  const rowHeight = 8;
+  const bottomMargin = 18;
+  let yStart = cursorY.y + 6;
+  let remaining = rows.slice();
+
+  // Chunk table across pages if needed
+  while (remaining.length) {
+    const pageHeight = getPageHeight(doc);
+    const maxRowsThisPage = Math.max(
+      1,
+      Math.floor((pageHeight - bottomMargin - yStart) / rowHeight)
+    );
+
+    const chunk = remaining.slice(0, maxRowsThisPage);
+    remaining = remaining.slice(maxRowsThisPage);
+
+    const after = drawTwoColumnTable(
+      doc,
+      marginX,
+      yStart,
+      pageWidth - 2 * marginX,
+      chunk,
+      rowHeight
+    );
+
+    if (remaining.length) {
+      doc.addPage();
+      yStart = TOP_CONTENT_Y;
+    } else {
+      cursorY.y = after + 10;
+    }
+  }
+
+  // Declaration box (unchanged)
   const declaration = meta.pharmacistDeclaration;
   const fields: Record<string, any> = (declaration?.fields as any) || {};
-
-  const pharmacistName =
+  const pharmacistNameField =
     fields["Pharmacist Name"] ||
     fields["Pharmacist name"] ||
     fields["Pharmacist"] ||
     "—";
-  const gphcNumber =
+  const gphcNumberField =
     fields["GPhC Number"] || fields["GPhC number"] || fields["GPhC"] || "—";
   const declarationDate =
     fields["Date"] ||
@@ -1952,8 +2284,8 @@ async function exportPrivatePrescriptionPdf(
   textY += 4 * paraLines.length + 4;
 
   const infoRows = [
-    ["Pharmacist Name:", pharmacistName],
-    ["GPhC Number:", gphcNumber],
+    ["Pharmacist Name:", pharmacistNameField],
+    ["GPhC Number:", gphcNumberField],
     ["Date:", formatDateOnly(declarationDate) || "—"],
   ] as [string, string][];
 
@@ -1965,40 +2297,41 @@ async function exportPrivatePrescriptionPdf(
     textY += 5;
   });
 
-  // Signature row
   doc.setFont("helvetica", "bold");
   doc.text("Signature:", marginX + 4, textY);
   if (signatureDataUrl) {
     try {
-      doc.addImage(signatureDataUrl, "PNG", marginX + 40, textY - 6, 30, 14);
+      doc.addImage(
+        signatureDataUrl,
+        guessImageFormat(signatureDataUrl),
+        marginX + 40,
+        textY - 6,
+        30,
+        14
+      );
     } catch {
-      // ignore failures
+      // ignore
     }
   }
 
-  // ----- Watermark: DO NOT DISPENSE -----
   doc.setFont("helvetica", "bold");
   doc.setFontSize(50);
-  doc.setTextColor(229, 231, 235); // light grey
-  (doc as any).text("DO NOT DISPENSE", pageWidth / 2, 170, {
-    angle: -35,
-    align: "center",
-  } as any);
+  doc.setTextColor(229, 231, 235);
 
   const filename = `PrivatePrescription_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
 
-/* ----- All Clinical docs in one PDF (Full consultation record) ----- */
+/* ----------------- Full Clinical PDF (now uses meta.riskAssessment) ----------------- */
 
 async function exportAllClinicalPdf(
   order: OrderDto,
   user: UserDto | null,
   mode: PdfExportMode = "download"
-): Promise<File | void> {
-  const reference = order.reference || order._id;
-  const serviceName = order.service_name || "Service";
-  const meta: any = order.meta || {};
+) {
+  const reference = (order as any).reference || (order as any)._id;
+  const serviceName = (order as any).service_name || "Service";
+  const meta: any = (order as any).meta || {};
   const dateSource =
     meta.appointment_start_at ||
     (order as any).completed_at ||
@@ -2018,13 +2351,13 @@ async function exportAllClinicalPdf(
 
   writePatientOrderBlock(doc, cursor, order, user);
 
-  const raf = meta.formsQA?.raf;
-  const hasRaf = !!raf?.qa?.length;
-  const hasAdvice = extractAdviceTexts(order).length > 0;
+  const hasRiskAssessment = getRiskAssessmentItems(order).length > 0;
+  const hasAdvice = extractAdvicePoints(order).length > 0;
+
   const hasDeclaration = !!meta.pharmacistDeclaration;
   const hasRecord = !!meta.recordOfSupply;
 
-  if (!hasRaf && !hasAdvice && !hasDeclaration && !hasRecord) {
+  if (!hasRiskAssessment && !hasAdvice && !hasDeclaration && !hasRecord) {
     writeSectionTitle(doc, cursor, "Clinical Documentation");
     ensureSpace(doc, cursor);
     doc.text(
@@ -2032,12 +2365,12 @@ async function exportAllClinicalPdf(
       MARGIN_X,
       cursor.y
     );
-    const filename = `FullConsultation_${order.reference || order._id}.pdf`;
+    const filename = `FullConsultation_${reference}.pdf`;
     return finalisePdf(doc, filename, mode);
   }
 
-  if (hasRaf) {
-    await writeRafSection(doc, cursor, order);
+  if (hasRiskAssessment) {
+    await writeRiskAssessmentSection(doc, cursor, order);
     cursor.y += 4;
   }
   if (hasAdvice) {
@@ -2052,46 +2385,8 @@ async function exportAllClinicalPdf(
     writeRecordSection(doc, cursor, order);
   }
 
-  const filename = `FullConsultation_${order.reference || order._id}.pdf`;
+  const filename = `FullConsultation_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
-}
-
-/* ----- RAF answer helper for on-screen display ----- */
-function buildRafAnswerString(qa: any): string {
-  const raw = qa.raw;
-  const answerValRaw = qa.answer;
-  const answerVal =
-    answerValRaw != null && typeof answerValRaw !== "object"
-      ? String(answerValRaw)
-      : "";
-  let ans: string;
-
-  if (Array.isArray(raw)) {
-    const isFileArray =
-      raw.length > 0 &&
-      typeof raw[0] === "object" &&
-      (raw[0].name || raw[0].url);
-    if (isFileArray) {
-      const fileNames = raw
-        .map((f: any) => f?.name || f?.url || "")
-        .filter(Boolean);
-      ans = fileNames.length
-        ? `Attached file(s): ${fileNames.join(", ")}`
-        : "Attached file(s).";
-    } else {
-      ans = raw.map((v: any) => String(v)).join(", ");
-    }
-  } else if (raw && typeof raw === "object") {
-    const name = (raw as any).name || (raw as any).url;
-    ans = name ? `Attached file: ${name}` : "Attached file (stored in system).";
-  } else if (answerVal && answerVal !== "[object Object]") {
-    ans = answerVal;
-  } else if (raw != null) {
-    ans = String(raw);
-  } else {
-    ans = "—";
-  }
-  return ans;
 }
 
 /* ----------------- UI: Patient card ----------------- */
@@ -2247,39 +2542,28 @@ const DEFAULT_PAGE_SIZE = 25;
 /* ----------------- Page ----------------- */
 
 export default function Page() {
-  // list state
   const [orders, setOrders] = useState<OrderDto[]>([]);
   const [meta, setMeta] = useState<OrdersListMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // cache of user info for cards: user_id -> user
   const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
     {}
   );
 
-  // detail modal state
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
-  // approve / reject action state (kept in case you wire status actions later)
-  const [statusAction, setStatusAction] = useState<
-    "approved" | "rejected" | null
-  >(null);
-
-  // clinical section active tab in detail modal
   const [activeSection, setActiveSection] = useState<DetailSection>("raf");
 
-  // header dropdowns / email
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [emailPdfMenuOpen, setEmailPdfMenuOpen] = useState(false);
   const [emailPdfSending, setEmailPdfSending] = useState(false);
   const [emailPdfStatus, setEmailPdfStatus] = useState<string | null>(null);
 
-  // Email People modal state
   const [emailPeopleOpen, setEmailPeopleOpen] = useState(false);
   const [emailTo, setEmailTo] = useState("");
   const [emailCc, setEmailCc] = useState("");
@@ -2290,14 +2574,11 @@ export default function Page() {
   const [emailPeopleSending, setEmailPeopleSending] = useState(false);
   const [emailPeopleError, setEmailPeopleError] = useState<string | null>(null);
 
-  // list filters / pagination
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
 
-
   const pageSize = DEFAULT_PAGE_SIZE;
 
-  // derived: status counts for current page
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {
       all: orders.length,
@@ -2313,7 +2594,6 @@ export default function Page() {
     return counts;
   }, [orders]);
 
-  /* ---- Load orders ---- */
   useEffect(() => {
     let cancelled = false;
 
@@ -2345,14 +2625,11 @@ export default function Page() {
             "Failed to load orders. Please try again or refresh the page."
         );
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
     load();
-
     return () => {
       cancelled = true;
     };
@@ -2362,7 +2639,6 @@ export default function Page() {
     async function fetchUsersForOrders() {
       if (!orders.length) return;
 
-      // Collect all user IDs on this page
       const allIds = Array.from(
         new Set(
           orders
@@ -2371,7 +2647,6 @@ export default function Page() {
         )
       );
 
-      // Only fetch those we don't already have
       const missingIds = allIds.filter((id) => orderUsers[id] === undefined);
       if (!missingIds.length) return;
 
@@ -2393,10 +2668,7 @@ export default function Page() {
         setOrderUsers((prev) => {
           const next = { ...prev };
           for (const { id, user } of results) {
-            // only set if not already set
-            if (next[id] === undefined) {
-              next[id] = user;
-            }
+            if (next[id] === undefined) next[id] = user;
           }
           return next;
         });
@@ -2408,7 +2680,6 @@ export default function Page() {
     fetchUsersForOrders();
   }, [orders, orderUsers]);
 
-  /* ---- Detail: load full order + user ---- */
   const openOrderDetail = async (order: OrderDto) => {
     setShowDetail(true);
     setSelectedOrder(order);
@@ -2426,11 +2697,11 @@ export default function Page() {
         (order as any).userId ||
         (order as any).patient_user_id;
 
-      const promises: Promise<any>[] = [getOrderByIdApi(order._id) as any];
-
-      if (userId && !orderUsers[userId]) {
+      const promises: Promise<any>[] = [
+        getOrderByIdApi((order as any)._id) as any,
+      ];
+      if (userId && !orderUsers[userId])
         promises.push(getUserByIdApi(userId) as any);
-      }
 
       const [orderRes, maybeUserRes] = await Promise.all(promises);
 
@@ -2443,21 +2714,16 @@ export default function Page() {
 
       if (userId) {
         let user: UserDto | null = null;
-        if (maybeUserRes) {
+        if (maybeUserRes)
           user =
             (maybeUserRes as any)?.data ??
             (maybeUserRes as any)?.user ??
             maybeUserRes;
-        } else {
-          user = orderUsers[userId] ?? null;
-        }
+        else user = orderUsers[userId] ?? null;
 
         if (user) {
           setOrderedByUser(user);
-          setOrderUsers((prev) => ({
-            ...prev,
-            [userId]: user,
-          }));
+          setOrderUsers((prev) => ({ ...prev, [userId]: user }));
         }
       }
     } catch (err: any) {
@@ -2478,7 +2744,6 @@ export default function Page() {
     setEmailPdfMenuOpen(false);
   };
 
-  /* ---- PDF handlers ---- */
   const handleDownloadPdf = async (kind: PdfKind) => {
     if (!selectedOrder) return;
     try {
@@ -2542,7 +2807,6 @@ export default function Page() {
     }
   };
 
-  /* ---- Quick Email PDF (to patient) ---- */
   const handleEmailPdf = async (kind: PdfKind) => {
     if (!selectedOrder) return;
 
@@ -2551,7 +2815,6 @@ export default function Page() {
       order,
       orderedByUser ?? undefined
     );
-
     const u: any = orderedByUser || {};
     const email =
       u.email || (order as any).email || (order as any).patient_email || "";
@@ -2566,21 +2829,18 @@ export default function Page() {
 
     try {
       const file = await generatePdfFile(kind);
-      if (!file) {
-        throw new Error("Failed to generate PDF.");
-      }
+      if (!file) throw new Error("Failed to generate PDF.");
 
       const subject = `${getPdfLabel(kind)} - ${
-        order.service_name || "Order"
-      } (${order.reference || order._id})`;
+        (order as any).service_name || "Order"
+      } (${(order as any).reference || (order as any)._id})`;
 
-      // Optional text you might want to also display in the email body
       const message =
         `Dear ${patientName || "Patient"},\n\n` +
         `Please find attached your ${getPdfLabel(
           kind
         ).toLowerCase()} for your recent consultation (${
-          order.service_name || "service"
+          (order as any).service_name || "service"
         }) with ${PHARMACY_INFO.name}.\n\n` +
         `If you have any questions, please contact us on ${PHARMACY_INFO.tel} or reply to this email.\n\n` +
         `Kind regards,\n${PHARMACY_INFO.name}`;
@@ -2590,18 +2850,14 @@ export default function Page() {
       await sendEmailApi({
         to: email,
         subject,
-        template: "welcome", // 👈 hard-coded template name
+        template: "welcome",
         context: {
-          // variables used in your template
           subject,
           name: patientName || "Patient",
           email,
           loginUrl,
           supportEmail: PHARMACY_INFO.email,
           year: new Date().getFullYear(),
-
-          // if you updated the template to show a dynamic message,
-          // you can reference this field there, e.g. {{message}}
           message,
         },
         attachments: [file],
@@ -2618,7 +2874,6 @@ export default function Page() {
     }
   };
 
-  /* ---- Email people modal helpers ---- */
   const openEmailComposer = () => {
     if (!selectedOrder) return;
 
@@ -2636,13 +2891,13 @@ export default function Page() {
     setEmailBcc("");
     setEmailSubject(
       `Your consultation documents - ${
-        order.service_name || "Pharmacy Express"
+        (order as any).service_name || "Pharmacy Express"
       }`
     );
     setEmailMessage(
       `Dear ${patientName || "Patient"},\n\n` +
         `Please find attached your documents for your recent consultation (${
-          order.service_name || "service"
+          (order as any).service_name || "service"
         }) with ${PHARMACY_INFO.name}.\n\n` +
         `If anything does not look correct, or you have questions, please contact us on ${PHARMACY_INFO.tel} or reply to this email.\n\n` +
         `Kind regards,\n${PHARMACY_INFO.name}`
@@ -2675,7 +2930,6 @@ export default function Page() {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setEmailAttachments((prev) => [...prev, ...files]);
-    // reset input so same file can be selected again if needed
     e.target.value = "";
   };
 
@@ -2703,17 +2957,14 @@ export default function Page() {
       const patientName = order
         ? getDisplayPatientName(order, orderedByUser ?? undefined)
         : "";
-
-      // Fallback if we don't have an order/patient name
       const friendlyName =
         patientName || emailTo.trim().split("@")[0] || "Customer";
-
       const loginUrl = getLoginUrl();
 
       await sendEmailApi({
         to: emailTo.trim(),
         subject: emailSubject.trim(),
-        template: "welcome", // 👈 hard-coded template
+        template: "welcome",
         context: {
           subject: emailSubject.trim(),
           name: friendlyName,
@@ -2721,8 +2972,6 @@ export default function Page() {
           loginUrl,
           supportEmail: PHARMACY_INFO.email,
           year: new Date().getFullYear(),
-
-          // let the template show this if you've added a placeholder like {{message}}
           message: emailMessage,
         },
         attachments: emailAttachments,
@@ -2740,30 +2989,31 @@ export default function Page() {
     }
   };
 
-  /* ---- Clinical detail render helper ---- */
+  /* ---- Clinical detail render helper (FIXED: uses meta.riskAssessment + image rendering) ---- */
   const renderClinicalSection = () => {
     if (!selectedOrder) return null;
-    const meta: any = selectedOrder.meta || {};
+    const riskItems = getRiskAssessmentItems(selectedOrder);
 
     if (activeSection === "raf") {
-      const raf = meta.formsQA?.raf;
-      if (!raf?.qa?.length) {
+      if (!riskItems.length) {
         return (
           <p className="text-xs text-neutral-400">
-            No RAF data captured for this order.
+            No Risk Assessment data captured for this order.
           </p>
         );
       }
 
       return (
         <ol className="space-y-3">
-          {raf.qa.map((qa: any, idx: number) => {
-            const q = qa.question || qa.key || `Question ${idx + 1}`;
-            const { text, files } = normaliseRafAnswer(qa);
+          {riskItems.map((it: any, idx: number) => {
+            const q = String(it.question || it.key || `Question ${idx + 1}`);
+            const { text, files } = normaliseRiskValue(it.value);
+            const imageFiles = files.filter(rafFileLooksLikeImage);
+            const otherFiles = files.filter((f) => !rafFileLooksLikeImage(f));
 
             return (
               <li
-                key={idx}
+                key={`${it.key || idx}`}
                 className="rounded-md border border-neutral-800 bg-neutral-900/40 px-3 py-2"
               >
                 <p className="text-xs font-medium text-neutral-100">
@@ -2777,9 +3027,33 @@ export default function Page() {
                   {text}
                 </p>
 
-                {files.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    {files.map((f, i) => (
+                {imageFiles.length > 0 && (
+                  <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {imageFiles.map((f, i) => (
+                      <a
+                        key={i}
+                        href={resolveImageUrl(f.url)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group overflow-hidden rounded-md border border-neutral-800 bg-neutral-950/40"
+                        title={f.name || `Attachment ${i + 1}`}
+                      >
+                        <img
+                          src={resolveImageUrl(f.url)}
+                          alt={f.name || `Attachment ${i + 1}`}
+                          className="h-24 w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                        />
+                        <div className="px-2 py-1 text-[10px] text-neutral-400">
+                          {f.name || `Image ${i + 1}`}
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                {otherFiles.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {otherFiles.map((f, i) => (
                       <a
                         key={i}
                         href={resolveImageUrl(f.url)}
@@ -2800,8 +3074,9 @@ export default function Page() {
     }
 
     if (activeSection === "advice") {
-      const adviceTexts = extractAdviceTexts(selectedOrder);
-      if (!adviceTexts.length) {
+      const points = extractAdvicePoints(selectedOrder);
+
+      if (!points.length) {
         return (
           <p className="text-xs text-neutral-400">
             No Pharmacist Advice has been recorded for this order.
@@ -2809,24 +3084,37 @@ export default function Page() {
         );
       }
 
-      return (
-        <ul className="list-disc space-y-2 pl-5 text-[11px] text-neutral-200">
-          {adviceTexts.map((txt, idx) => (
-            <li key={idx}>{txt}</li>
+      const common =
+        "space-y-2 pl-5 text-[11px] leading-relaxed text-neutral-200";
+
+      return ADVICE_LIST_STYLE === "numbered" ? (
+        <ol className={`list-decimal ${common}`}>
+          {points.map((p, idx) => (
+            <li key={idx} className="break-words">
+              {p}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <ul className={`list-disc ${common}`}>
+          {points.map((p, idx) => (
+            <li key={idx} className="break-words">
+              {p}
+            </li>
           ))}
         </ul>
       );
     }
 
     if (activeSection === "declaration") {
+      const meta: any = (selectedOrder as any).meta || {};
       const declaration = meta.pharmacistDeclaration;
-      if (!declaration) {
+      if (!declaration)
         return (
           <p className="text-xs text-neutral-400">
             No Pharmacist Declaration has been recorded.
           </p>
         );
-      }
 
       const fields: Record<string, any> = declaration.fields || {};
       const entries = Object.entries(fields);
@@ -2849,11 +3137,16 @@ export default function Page() {
           )}
 
           {declaration.signatureUrl && (
-            <p className="text-neutral-400">
-              A pharmacist signature has been captured and stored with this
-              record.
-            </p>
+            <div className="rounded-md border border-neutral-800 bg-neutral-950/40 p-2">
+              <p className="text-[11px] text-neutral-400">Signature:</p>
+              <img
+                src={resolveImageUrl(declaration.signatureUrl)}
+                alt="Pharmacist signature"
+                className="mt-2 h-16 w-auto rounded border border-neutral-800 bg-white"
+              />
+            </div>
           )}
+
           {declaration.saved_at && (
             <p className="text-neutral-400">
               Saved at: {formatDateTime(declaration.saved_at)}
@@ -2864,25 +3157,23 @@ export default function Page() {
     }
 
     if (activeSection === "record") {
+      const meta: any = (selectedOrder as any).meta || {};
       const record = meta.recordOfSupply;
-      if (!record) {
+      if (!record)
         return (
           <p className="text-xs text-neutral-400">
             No Record of Supply has been captured.
           </p>
         );
-      }
 
       const fields: Record<string, any> = record.fields || {};
       const entries = Object.entries(fields);
-
-      if (!entries.length) {
+      if (!entries.length)
         return (
           <p className="text-xs text-neutral-400">
             Record of Supply fields are empty.
           </p>
         );
-      }
 
       return (
         <dl className="space-y-2 text-[11px] text-neutral-200">
@@ -2910,7 +3201,6 @@ export default function Page() {
   return (
     <>
       <div className="px-4 py-4 lg:px-6 lg:py-6">
-        {/* Header */}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-base font-semibold text-white sm:text-lg">
@@ -2923,7 +3213,6 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Global error / status */}
         {error && (
           <div className="mb-3 rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-xs text-rose-100">
             {error}
@@ -2935,7 +3224,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* Search + pagination */}
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:max-w-xs">
             <Filter className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
@@ -2960,10 +3248,7 @@ export default function Page() {
               <button
                 type="button"
                 disabled={!canPrev}
-                onClick={() => {
-                  if (!canPrev) return;
-                  setPage((p) => Math.max(1, p - 1));
-                }}
+                onClick={() => canPrev && setPage((p) => Math.max(1, p - 1))}
                 className={[
                   "inline-flex h-7 items-center justify-center rounded-md border px-2 text-[11px]",
                   canPrev
@@ -2976,10 +3261,7 @@ export default function Page() {
               <button
                 type="button"
                 disabled={!canNext}
-                onClick={() => {
-                  if (!canNext) return;
-                  setPage((p) => p + 1);
-                }}
+                onClick={() => canNext && setPage((p) => p + 1)}
                 className={[
                   "inline-flex h-7 items-center justify-center rounded-md border px-2 text-[11px]",
                   canNext
@@ -2993,7 +3275,6 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Orders table */}
         <div className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950/40">
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
@@ -3037,12 +3318,12 @@ export default function Page() {
                     );
                     const totalMinor =
                       (order as any).total_minor ??
-                      (order.meta as any)?.totalMinor ??
+                      (order as any).meta?.totalMinor ??
                       null;
 
                     return (
                       <tr
-                        key={order._id}
+                        key={(order as any)._id}
                         className="cursor-pointer border-t border-neutral-900/80 bg-neutral-950/40 hover:bg-neutral-900/60"
                         onClick={() => openOrderDetail(order)}
                       >
@@ -3050,7 +3331,7 @@ export default function Page() {
                           <div className="flex items-center gap-1">
                             <ClipboardList className="h-3.5 w-3.5 text-neutral-500" />
                             <span className="font-medium text-neutral-100">
-                              {order.reference || order._id}
+                              {(order as any).reference || (order as any)._id}
                             </span>
                           </div>
                         </td>
@@ -3061,7 +3342,7 @@ export default function Page() {
                         </td>
                         <td className="max-w-xs px-3 py-2 align-middle">
                           <span className="line-clamp-2 text-[11px] text-neutral-200">
-                            {order.service_name || "—"}
+                            {(order as any).service_name || "—"}
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 align-middle text-[11px] text-neutral-300">
@@ -3071,42 +3352,50 @@ export default function Page() {
                           )}
                         </td>
                         <td className="px-3 py-2 align-middle">
-                          {order.status && (
+                          {(order as any).status && (
                             <span
                               className={[
                                 "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                                statusBadgeClasses(order.status),
+                                statusBadgeClasses((order as any).status),
                               ].join(" ")}
                             >
-                              {order.status === "completed" ? (
+                              {(order as any).status === "completed" ? (
                                 <CheckCircle2 className="h-3 w-3" />
-                              ) : order.status === "pending" ? (
+                              ) : (order as any).status === "pending" ? (
                                 <Clock className="h-3 w-3" />
-                              ) : order.status === "approved" ? (
+                              ) : (order as any).status === "approved" ? (
                                 <CheckCircle2 className="h-3 w-3" />
-                              ) : order.status === "cancelled" ||
-                                order.status === "rejected" ? (
+                              ) : (order as any).status === "cancelled" ||
+                                (order as any).status === "rejected" ? (
                                 <XCircle className="h-3 w-3" />
                               ) : (
                                 <ClipboardList className="h-3 w-3" />
                               )}
                               <span className="capitalize">
-                                {order.status.replace(/_/g, " ")}
+                                {String((order as any).status).replace(
+                                  /_/g,
+                                  " "
+                                )}
                               </span>
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-2 align-middle">
-                          {order.payment_status && (
+                          {(order as any).payment_status && (
                             <span
                               className={[
                                 "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                                paymentBadgeClasses(order.payment_status),
+                                paymentBadgeClasses(
+                                  (order as any).payment_status
+                                ),
                               ].join(" ")}
                             >
                               <CreditCard className="h-3 w-3" />
                               <span className="capitalize">
-                                {order.payment_status.replace(/_/g, " ")}
+                                {String((order as any).payment_status).replace(
+                                  /_/g,
+                                  " "
+                                )}
                               </span>
                             </span>
                           )}
@@ -3135,7 +3424,6 @@ export default function Page() {
             </table>
           </div>
 
-          {/* List-level loading indicator */}
           {loading && (
             <div className="flex items-center gap-2 border-t border-neutral-900/80 bg-neutral-950/60 px-3 py-2 text-[11px] text-neutral-400">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -3145,59 +3433,68 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Detail drawer */}
       {showDetail && selectedOrder && (
         <div className="fixed inset-0 z-40 flex items-stretch justify-end">
           <div className="absolute inset-0 bg-black/60" onClick={closeDetail} />
           <div className="relative z-10 flex h-full w-full max-w-3xl flex-col border-l border-neutral-800 bg-neutral-950">
-            {/* Detail header */}
             <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-4 py-3">
               <div className="space-y-1">
                 <p className="text-[11px] uppercase tracking-wide text-neutral-500">
                   Order reference
                 </p>
                 <p className="text-sm font-semibold text-white">
-                  {selectedOrder.reference || selectedOrder._id}
+                  {(selectedOrder as any).reference ||
+                    (selectedOrder as any)._id}
                 </p>
                 <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-400">
                   <ClipboardList className="h-3 w-3" />
-                  <span>{selectedOrder.service_name || "Service"}</span>
+                  <span>
+                    {(selectedOrder as any).service_name || "Service"}
+                  </span>
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {selectedOrder.status && (
+                  {(selectedOrder as any).status && (
                     <span
                       className={[
                         "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                        statusBadgeClasses(selectedOrder.status),
+                        statusBadgeClasses((selectedOrder as any).status),
                       ].join(" ")}
                     >
-                      {selectedOrder.status === "completed" ? (
+                      {(selectedOrder as any).status === "completed" ? (
                         <CheckCircle2 className="h-3 w-3" />
-                      ) : selectedOrder.status === "pending" ? (
+                      ) : (selectedOrder as any).status === "pending" ? (
                         <Clock className="h-3 w-3" />
-                      ) : selectedOrder.status === "approved" ? (
+                      ) : (selectedOrder as any).status === "approved" ? (
                         <CheckCircle2 className="h-3 w-3" />
-                      ) : selectedOrder.status === "cancelled" ||
-                        selectedOrder.status === "rejected" ? (
+                      ) : (selectedOrder as any).status === "cancelled" ||
+                        (selectedOrder as any).status === "rejected" ? (
                         <XCircle className="h-3 w-3" />
                       ) : (
                         <ClipboardList className="h-3 w-3" />
                       )}
                       <span className="capitalize">
-                        {selectedOrder.status.replace(/_/g, " ")}
+                        {String((selectedOrder as any).status).replace(
+                          /_/g,
+                          " "
+                        )}
                       </span>
                     </span>
                   )}
-                  {selectedOrder.payment_status && (
+                  {(selectedOrder as any).payment_status && (
                     <span
                       className={[
                         "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                        paymentBadgeClasses(selectedOrder.payment_status),
+                        paymentBadgeClasses(
+                          (selectedOrder as any).payment_status
+                        ),
                       ].join(" ")}
                     >
                       <CreditCard className="h-3 w-3" />
                       <span className="capitalize">
-                        {selectedOrder.payment_status.replace(/_/g, " ")}
+                        {String((selectedOrder as any).payment_status).replace(
+                          /_/g,
+                          " "
+                        )}
                       </span>
                     </span>
                   )}
@@ -3212,8 +3509,8 @@ export default function Page() {
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
+
                 <div className="flex items-center gap-2">
-                  {/* Download menu */}
                   <div className="relative">
                     <button
                       type="button"
@@ -3259,7 +3556,6 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* Email PDF menu */}
                   <div className="relative">
                     <button
                       type="button"
@@ -3324,12 +3620,9 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Detail body */}
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-              {/* Patient card */}
               <PatientProfileCard user={orderedByUser} />
 
-              {/* Clinical tabs & content */}
               <div className="rounded-xl border border-neutral-800 bg-neutral-900/40">
                 <div className="flex gap-1 border-b border-neutral-800 px-3 pt-2">
                   {(
@@ -3358,6 +3651,7 @@ export default function Page() {
                     );
                   })}
                 </div>
+
                 <div className="px-3 py-3 text-xs text-neutral-200">
                   {detailLoading ? (
                     <div className="flex items-center gap-2 text-[11px] text-neutral-400">
@@ -3372,7 +3666,6 @@ export default function Page() {
                 </div>
               </div>
 
-              {/* Order summary */}
               <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                 <p className="mb-2 text-xs font-semibold text-neutral-200">
                   Order summary
@@ -3381,13 +3674,14 @@ export default function Page() {
                   <div>
                     <dt className="text-neutral-500">Reference</dt>
                     <dd className="text-neutral-100">
-                      {selectedOrder.reference || selectedOrder._id}
+                      {(selectedOrder as any).reference ||
+                        (selectedOrder as any)._id}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-neutral-500">Service</dt>
                     <dd className="text-neutral-100">
-                      {selectedOrder.service_name || "—"}
+                      {(selectedOrder as any).service_name || "—"}
                     </dd>
                   </div>
                   <div>
@@ -3403,18 +3697,16 @@ export default function Page() {
                     <dt className="text-neutral-500">Appointment</dt>
                     <dd className="text-neutral-100">
                       {formatDateTime(
-                        (selectedOrder.meta as any)?.appointment_start_at ||
+                        (selectedOrder as any).meta?.appointment_start_at ||
                           (selectedOrder as any).start_at
                       )}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-neutral-500">
-                      Total incl. VAT (minor)
-                    </dt>
+                    <dt className="text-neutral-500">Total incl. VAT</dt>
                     <dd className="text-neutral-100">
                       {formatMoney(
-                        (selectedOrder.meta as any)?.totalMinor ??
+                        (selectedOrder as any).meta?.totalMinor ??
                           (selectedOrder as any).total_minor ??
                           null
                       )}
@@ -3423,15 +3715,18 @@ export default function Page() {
                   <div>
                     <dt className="text-neutral-500">Status</dt>
                     <dd className="text-neutral-100 capitalize">
-                      {selectedOrder.status?.replace(/_/g, " ") || "—"}
-                      {selectedOrder.payment_status && (
+                      {String((selectedOrder as any).status || "—").replace(
+                        /_/g,
+                        " "
+                      )}
+                      {(selectedOrder as any).payment_status && (
                         <>
                           {" "}
                           •{" "}
                           <span className="text-neutral-300">
                             Payment:{" "}
-                            {selectedOrder.payment_status
-                              ?.replace(/_/g, " ")
+                            {String((selectedOrder as any).payment_status)
+                              .replace(/_/g, " ")
                               .toLowerCase()}
                           </span>
                         </>
@@ -3445,7 +3740,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* Email people modal */}
       {emailPeopleOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
@@ -3582,6 +3876,7 @@ export default function Page() {
                     </label>
                   </div>
                 </div>
+
                 <div className="space-y-1 rounded-md border border-neutral-800 bg-neutral-900/60 px-2 py-2 text-[11px] text-neutral-200">
                   {emailAttachments.length === 0 ? (
                     <p className="text-neutral-500">

@@ -64,6 +64,13 @@ type Question = {
 type RiskAnswer = {
   key: string;
   question: string;
+
+  /**
+   * IMPORTANT:
+   * - For normal fields: value is raw/string/boolean/etc.
+   * - For file fields: value MUST remain the structured raw (array/object with url)
+   *   so we can render images/attachments reliably and avoid "[Object Object]".
+   */
   value: any;
 };
 
@@ -78,7 +85,7 @@ interface Props {
 }
 
 /* ------------------------------------------------------------------ */
-/* Helpers (adapted from RafStep)                                     */
+/* Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
 const slugify = (s: string) =>
@@ -88,7 +95,6 @@ const slugify = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
-/** Normalise backend-relative URLs to absolute, removing trailing `/api`. */
 function resolveFileUrl(pathOrUrl?: string | null): string {
   if (!pathOrUrl) return "";
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -96,24 +102,47 @@ function resolveFileUrl(pathOrUrl?: string | null): string {
   const normalized = pathOrUrl.startsWith("/") ? pathOrUrl : `/${pathOrUrl}`;
   const baseWithApi = getBackendBase(); // e.g. https://tenant.domain.com/api
   const cleanBase = baseWithApi.replace(/\/api\/?$/, ""); // → https://tenant.domain.com
-
   return `${cleanBase}${normalized}`;
+}
+
+function isFileLikeValue(value: any): boolean {
+  if (!value) return false;
+
+  const arr = Array.isArray(value) ? value : [value];
+
+  return arr.some((item) => {
+    if (!item) return false;
+    if (typeof item !== "object") return false;
+    return Boolean(
+      item.url ||
+        item.path ||
+        item.location ||
+        item.href ||
+        item.downloadUrl ||
+        item.src
+    );
+  });
 }
 
 /** Turn any stored value (string/object/array) into a list of file descriptors. */
 function normalizeFilesValue(value: any): NormalizedFile[] {
   if (!value) return [];
-  const arr: any[] = Array.isArray(value) ? value : [value];
+
+  // If someone accidentally stored { raw: [...] } wrap, unwrap it safely
+  const unwrapped =
+    value && typeof value === "object" && Array.isArray((value as any).raw)
+      ? (value as any).raw
+      : value;
+
+  const arr: any[] = Array.isArray(unwrapped) ? unwrapped : [unwrapped];
 
   return arr
     .map((item, idx): NormalizedFile | null => {
       if (!item) return null;
 
       if (typeof item === "string") {
-        return {
-          url: item,
-          name: `File ${idx + 1}`,
-        };
+        // could be "/upload/..." or a full URL
+        return { url: item, name: `File ${idx + 1}` };
       }
 
       if (typeof item === "object") {
@@ -123,6 +152,7 @@ function normalizeFilesValue(value: any): NormalizedFile[] {
           item.location ||
           item.href ||
           item.downloadUrl ||
+          item.src ||
           "";
         const name =
           item.name ||
@@ -366,9 +396,7 @@ function toQuestionArray(input: any): Question[] {
           x.label ?? x.data?.label ?? x.title ?? "Section"
         );
         curSectionTitle = title;
-        curSectionKey = String(
-          x.key ?? x.data?.key ?? slugify(title)
-        );
+        curSectionKey = String(x.key ?? x.data?.key ?? slugify(title));
         return;
       }
 
@@ -406,10 +434,7 @@ function toQuestionArray(input: any): Question[] {
         (mappedType === "static-text" ? "" : `Question ${i + 1}`);
 
       const keyFromData =
-        (x.data?.key ??
-          x.key ??
-          x.id ??
-          slugify(label)) || `q_${i}`;
+        (x.data?.key ?? x.key ?? x.id ?? slugify(label)) || `q_${i}`;
 
       const id = String(keyFromData);
 
@@ -483,11 +508,10 @@ export default function RiskAssessmentTab({ order }: Props) {
   const [qaList, setQaList] = useState<RiskAnswer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false); // 👈 for safe LS writes
+  const [hydrated, setHydrated] = useState(false);
 
   const storageKey = `consultation_${order._id}_risk`;
 
-  // Load RAF QA from order + localStorage overrides + schema
   useEffect(() => {
     let cancelled = false;
 
@@ -502,21 +526,25 @@ export default function RiskAssessmentTab({ order }: Props) {
         const formId =
           rafBlock.form_id || rafBlock.formId || rafBlock.formID || null;
 
-        // 1) Base answers from order.meta.formsQA.raf.qa
-        const baseAnswers: RiskAnswer[] = qaArray.map((qa: any) => {
-          const key = qa.key || qa.field || qa.id;
-          const question = qa.question || key || "";
-          let value: any;
-          if (Array.isArray(qa.raw)) value = qa.raw;
-          else if (qa.raw !== undefined && qa.raw !== null) value = qa.raw;
-          else value = qa.answer ?? "";
+        // 1) Base answers from DB (IMPORTANT: prefer qa.raw always when present)
+        const baseAnswers: RiskAnswer[] = qaArray
+          .map((qa: any) => {
+            const key = qa.key || qa.field || qa.id;
+            if (!key) return null;
 
-          return {
-            key: String(key),
-            question: String(question),
-            value,
-          };
-        });
+            const question = qa.question || String(key) || "";
+
+            // Prefer raw when available; file uploads live here as structured objects.
+            const hasRaw = qa.raw !== undefined && qa.raw !== null;
+            const value = hasRaw ? qa.raw : qa.answer ?? "";
+
+            return {
+              key: String(key),
+              question: String(question),
+              value,
+            } as RiskAnswer;
+          })
+          .filter((x): x is RiskAnswer => !!x);
 
         // 2) Overrides from localStorage (pharmacist edits)
         let stored: RiskAnswer[] | null = null;
@@ -532,14 +560,24 @@ export default function RiskAssessmentTab({ order }: Props) {
           }
         }
 
+        // Merge answers:
+        // - Base answers first
+        // - Stored overrides second, BUT never allow a file answer to be overwritten by a string
         const mergedMap = new Map<string, RiskAnswer>();
-        baseAnswers.forEach((r) => {
-          if (!r.key) return;
-          mergedMap.set(r.key, r);
-        });
+        baseAnswers.forEach((r) => mergedMap.set(r.key, r));
+
         if (stored) {
           stored.forEach((r) => {
             if (!r || !r.key) return;
+
+            const existing = mergedMap.get(r.key);
+
+            // If existing is file-like (raw upload objects), do NOT overwrite it with a string
+            if (existing && isFileLikeValue(existing.value) && !isFileLikeValue(r.value)) {
+              // keep existing structured file data
+              return;
+            }
+
             mergedMap.set(r.key, r);
           });
         }
@@ -555,6 +593,7 @@ export default function RiskAssessmentTab({ order }: Props) {
           try {
             const f = await getClinicFormByIdApi(String(formId));
             if (cancelled) return;
+
             setForm(f);
 
             const schemaSource = (f as any).raf_schema ?? (f as any).schema;
@@ -563,49 +602,52 @@ export default function RiskAssessmentTab({ order }: Props) {
           } catch (err: any) {
             console.error("Failed to fetch RAF clinic form", err);
             if (!cancelled) {
-              setError(
-                err?.message || "Failed to load risk assessment form schema."
-              );
+              setError(err?.message || "Failed to load risk assessment form schema.");
             }
           }
         } else if (!qaArray.length) {
-          if (!cancelled) {
-            setError("No RAF form or answers found for this order.");
-          }
+          if (!cancelled) setError("No RAF form or answers found for this order.");
         }
       } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message || "Failed to load RAF data.");
-        }
+        if (!cancelled) setError(e?.message || "Failed to load RAF data.");
       } finally {
         if (!cancelled) {
           setLoading(false);
-          setHydrated(true); // ✅ now safe to write to LS
+          setHydrated(true);
         }
       }
     }
 
     load();
-
     return () => {
       cancelled = true;
     };
   }, [order._id, order.meta, storageKey]);
 
-  // Persist qaList to localStorage for End Consultation
+  // Persist qaList to localStorage (IMPORTANT: we keep file values structured)
   useEffect(() => {
     if (typeof window === "undefined" || !hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(qaList));
   }, [qaList, storageKey, hydrated]);
 
-  function setValueForKey(key: string, questionLabel: string, value: any) {
+  function setValueForKey(key: string, questionLabel: string, nextValue: any) {
     setQaList((prev) => {
       const idx = prev.findIndex((r) => r.key === key);
-      if (idx === -1) {
-        return [...prev, { key, question: questionLabel || key, value }];
+
+      // If the previous value is file-like, never replace it with a non-file value.
+      if (idx !== -1) {
+        const prevVal = prev[idx]?.value;
+        if (isFileLikeValue(prevVal) && !isFileLikeValue(nextValue)) {
+          return prev; // ignore accidental stringification
+        }
       }
+
+      if (idx === -1) {
+        return [...prev, { key, question: questionLabel || key, value: nextValue }];
+      }
+
       const clone = [...prev];
-      clone[idx] = { ...clone[idx], question: questionLabel || key, value };
+      clone[idx] = { ...clone[idx], question: questionLabel || key, value: nextValue };
       return clone;
     });
   }
@@ -619,10 +661,8 @@ export default function RiskAssessmentTab({ order }: Props) {
     return m;
   }, [qaList]);
 
-  // Determine if we have schema-driven questions
   const hasSchema = questions.length > 0;
 
-  // Visible questions (only if schema exists)
   const visibleQuestions = useMemo(() => {
     if (!hasSchema) return [] as Question[];
 
@@ -641,9 +681,7 @@ export default function RiskAssessmentTab({ order }: Props) {
       const values: any[] = Array.isArray(rawVal) ? rawVal : [rawVal];
 
       if (c.in && c.in.length > 0) {
-        return values.some((v) =>
-          c.in!.some((item) => looseEqual(v, item))
-        );
+        return values.some((v) => c.in!.some((item) => looseEqual(v, item)));
       }
 
       if (c.equals !== undefined) {
@@ -664,34 +702,24 @@ export default function RiskAssessmentTab({ order }: Props) {
       visibleQuestions.some(
         (q) =>
           !q.isLayoutOnly &&
-          [
-            "text",
-            "textarea",
-            "number",
-            "boolean",
-            "select",
-            "multiselect",
-            "radio",
-            "date",
-            "file",
-          ].includes(q.type)
+          ["text", "textarea", "number", "boolean", "select", "multiselect", "radio", "date", "file"].includes(q.type)
       ),
     [visibleQuestions]
   );
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-8 text-neutral-300 text-sm">
+      <div className="flex items-center justify-center py-10 text-neutral-300 text-sm">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         Loading risk assessment…
       </div>
     );
   }
 
-  // 1) Schema mode (full dynamic renderer)
+  // Schema mode (dynamic renderer)
   if (hasSchema && hasSchemaRealQuestions) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-4">
         {error && (
           <div className="rounded-md border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-100">
             {error}
@@ -699,33 +727,51 @@ export default function RiskAssessmentTab({ order }: Props) {
         )}
 
         {form && (
-          <p className="text-xs text-neutral-500">
-            Form:{" "}
-            <span className="font-medium text-neutral-200">{form.name}</span>
+          <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3">
+            <p className="text-sm text-neutral-200 font-medium">{form.name}</p>
             {form.description && (
-              <>
-                {" "}
-                – <span className="text-neutral-400">{form.description}</span>
-              </>
+              <p className="mt-1 text-xs text-neutral-400 leading-relaxed">
+                {form.description}
+              </p>
             )}
-          </p>
+          </div>
         )}
 
-        <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
+        <div className="max-h-[560px] overflow-y-auto pr-2 space-y-3">
           {visibleQuestions.map((q, idx) => {
             const fieldKey = q.key || q.id;
             const ans = fieldKey ? qaByKey.get(fieldKey) : undefined;
             const existingVal = ans?.value;
 
+            // Section header (whenever it changes)
+            const prev = visibleQuestions[idx - 1];
+            const showSection =
+              q.sectionTitle &&
+              (!prev || prev.sectionTitle !== q.sectionTitle);
+
             return (
-              <QuestionRow
-                key={fieldKey || idx}
-                question={q}
-                value={existingVal}
-                onChange={(val) =>
-                  setValueForKey(fieldKey || `q_${idx}`, q.label, val)
-                }
-              />
+              <React.Fragment key={fieldKey || idx}>
+                {showSection && (
+                  <div className="pt-2">
+                    <div className="sticky top-0 z-10 -mx-1 px-1 py-2 bg-neutral-950/60 backdrop-blur">
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                        <h4 className="text-sm font-semibold text-neutral-100">
+                          {q.sectionTitle}
+                        </h4>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <QuestionRow
+                  question={q}
+                  value={existingVal}
+                  onChange={(val) =>
+                    setValueForKey(fieldKey || `q_${idx}`, q.label, val)
+                  }
+                />
+              </React.Fragment>
             );
           })}
         </div>
@@ -733,71 +779,48 @@ export default function RiskAssessmentTab({ order }: Props) {
     );
   }
 
-  // helper for fallback display (avoid [object Object] for file values)
-  const makeDisplayText = (val: any): string => {
-    if (Array.isArray(val)) {
-      if (val.length && typeof val[0] === "object") {
-        const names = val
-          .map(
-            (f: any) =>
-              f?.name ||
-              f?.filename ||
-              f?.originalname ||
-              f?.url ||
-              f?.path
-          )
-          .filter(Boolean);
-        return names.length ? names.join(", ") : "[File attachments]";
-      }
-      return val.join(", ");
-    }
-    if (val && typeof val === "object") {
-      const name =
-        (val as any).name ||
-        (val as any).filename ||
-        (val as any).originalname ||
-        (val as any).url ||
-        (val as any).path;
-      return name ? String(name) : "[File attachment]";
-    }
-    return val ?? "";
-  };
-
-  // 2) Fallback: no schema, but we DO have QA -> simple list with textareas
+  // Fallback: no schema, but QA exists
   if (qaList.length > 0) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-4">
         {error && (
           <div className="rounded-md border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-100">
             {error}
           </div>
         )}
 
-        <p className="text-xs text-neutral-500">
-          Showing saved RAF answers from this order. Schema for this form was
-          not available, so questions are rendered in a simple list.
-        </p>
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3">
+          <p className="text-sm text-neutral-200 font-medium">
+            Saved RAF answers
+          </p>
+          <p className="mt-1 text-xs text-neutral-400 leading-relaxed">
+            Schema for this form wasn’t available, so answers are shown in a simplified view.
+            File uploads are rendered from <span className="text-neutral-200">raw</span> data and are not editable here.
+          </p>
+        </div>
 
-        <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
+        <div className="max-h-[560px] overflow-y-auto pr-2 space-y-3">
           {qaList.map((qa, idx) => {
-            const displayValue = makeDisplayText(qa.value);
-
+            const isFile = isFileLikeValue(qa.value);
             return (
               <div
                 key={qa.key || idx}
-                className="border border-neutral-800 rounded-lg bg-neutral-900/80 px-3 py-2"
+                className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3"
               >
-                <p className="text-xs font-medium text-neutral-200 mb-1">
+                <p className="text-sm font-medium text-neutral-100">
                   {idx + 1}. {qa.question || qa.key}
                 </p>
-                <textarea
-                  value={displayValue}
-                  onChange={(e) =>
-                    setValueForKey(qa.key, qa.question, e.target.value)
-                  }
-                  className="w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 resize-y min-h-[60px]"
-                  placeholder="Answer…"
-                />
+
+                <div className="mt-2">
+                  {isFile ? (
+                    <FileAttachments value={qa.value} />
+                  ) : (
+                    <FallbackEditor
+                      value={qa.value}
+                      onChange={(val) => setValueForKey(qa.key, qa.question, val)}
+                    />
+                  )}
+                </div>
               </div>
             );
           })}
@@ -806,7 +829,7 @@ export default function RiskAssessmentTab({ order }: Props) {
     );
   }
 
-  // 3) No schema and no QA at all
+  // No schema and no QA
   return (
     <div className="space-y-2">
       {error && (
@@ -814,7 +837,7 @@ export default function RiskAssessmentTab({ order }: Props) {
           {error}
         </div>
       )}
-      <div className="text-xs text-neutral-400">
+      <div className="text-sm text-neutral-400">
         No RAF questions/answers found for this order.
       </div>
     </div>
@@ -822,7 +845,170 @@ export default function RiskAssessmentTab({ order }: Props) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Question row renderer (dark UI, like RafStep but read/write)       */
+/* Fallback Editor (keeps types stable where possible)                 */
+/* ------------------------------------------------------------------ */
+
+function FallbackEditor({
+  value,
+  onChange,
+}: {
+  value: any;
+  onChange: (val: any) => void;
+}) {
+  const baseInput =
+    "w-full rounded-md bg-neutral-950 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
+
+  // boolean-ish
+  const toBool = (v: any): boolean | null => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (["yes", "true", "y", "1"].includes(s)) return true;
+      if (["no", "false", "n", "0"].includes(s)) return false;
+    }
+    return null;
+  };
+
+  const boolVal = toBool(value);
+  if (boolVal !== null) {
+    return (
+      <div className="inline-flex gap-2 rounded-full bg-neutral-950/80 p-1 text-sm">
+        <button
+          type="button"
+          onClick={() => onChange(true)}
+          className={`rounded-full px-4 py-1.5 font-medium ${
+            boolVal === true ? "bg-emerald-500 text-black" : "text-neutral-200"
+          }`}
+        >
+          Yes
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(false)}
+          className={`rounded-full px-4 py-1.5 font-medium ${
+            boolVal === false ? "bg-emerald-500 text-black" : "text-neutral-200"
+          }`}
+        >
+          No
+        </button>
+      </div>
+    );
+  }
+
+  // array of primitives -> edit as comma-separated but store array
+  if (Array.isArray(value) && value.every((x) => typeof x !== "object")) {
+    const display = value.join(", ");
+    return (
+      <textarea
+        className={baseInput + " min-h-[80px] resize-y"}
+        value={display}
+        onChange={(e) =>
+          onChange(
+            e.target.value
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          )
+        }
+        placeholder="Enter values separated by commas…"
+      />
+    );
+  }
+
+  // number
+  if (typeof value === "number") {
+    return (
+      <input
+        type="number"
+        className={baseInput}
+        value={Number.isFinite(value) ? String(value) : ""}
+        onChange={(e) =>
+          onChange(e.target.value === "" ? "" : Number(e.target.value))
+        }
+      />
+    );
+  }
+
+  // default text/textarea
+  return (
+    <textarea
+      className={baseInput + " min-h-[90px] resize-y"}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder="Answer…"
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* File Attachments (renders from raw structured data)                 */
+/* ------------------------------------------------------------------ */
+
+function FileAttachments({ value }: { value: any }) {
+  const files = normalizeFilesValue(value);
+
+  if (!files.length) {
+    return <p className="text-sm text-neutral-500">No file uploaded.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-neutral-400">
+        File uploads are shown from saved raw data (not editable here).
+      </p>
+
+      <div className="flex flex-wrap gap-3">
+        {files.map((file, i) => {
+          const url = resolveFileUrl(file.url);
+          if (!url) return null;
+
+          const isImage =
+            file.type?.startsWith("image/") ||
+            /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || file.url);
+
+          if (isImage) {
+            return (
+              <a
+                key={i}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group block"
+                title="Open image"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt={file.name || `Attachment ${i + 1}`}
+                  className="h-32 w-48 rounded-lg border border-neutral-800 bg-neutral-950 object-contain group-hover:border-emerald-500"
+                />
+                <div className="mt-1 max-w-[12rem] truncate text-xs text-neutral-300">
+                  {file.name || `Attachment ${i + 1}`}
+                </div>
+              </a>
+            );
+          }
+
+          return (
+            <a
+              key={i}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-xs text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
+              title="Open file"
+            >
+              {file.name || `Attachment ${i + 1}`}
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Question row renderer (schema mode)                                 */
 /* ------------------------------------------------------------------ */
 
 function QuestionRow({
@@ -836,7 +1022,7 @@ function QuestionRow({
 }) {
   const q = question;
   const baseInput =
-    "w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
+    "w-full rounded-md bg-neutral-950 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
 
   // Layout-only
   if (q.type === "divider") {
@@ -849,19 +1035,19 @@ function QuestionRow({
 
   if (q.type === "static-text") {
     return (
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2">
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-1 text-xs font-semibold text-neutral-100">
+          <p className="mb-2 text-sm font-semibold text-neutral-100">
             {q.label}
           </p>
         )}
         {q.contentHtml ? (
           <div
-            className="text-[11px] leading-relaxed text-neutral-200"
+            className="text-sm leading-relaxed text-neutral-200"
             dangerouslySetInnerHTML={{ __html: q.contentHtml }}
           />
         ) : q.helpText ? (
-          <p className="text-[11px] text-neutral-400">{q.helpText}</p>
+          <p className="text-sm text-neutral-400">{q.helpText}</p>
         ) : null}
       </div>
     );
@@ -870,10 +1056,11 @@ function QuestionRow({
   if (q.type === "image") {
     const rawSrc = q.imageUrl || "";
     const src = resolveFileUrl(rawSrc);
+
     return (
-      <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2">
+      <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-2 text-xs font-semibold text-neutral-100">
+          <p className="mb-2 text-sm font-semibold text-neutral-100">
             {q.label}
           </p>
         )}
@@ -882,15 +1069,15 @@ function QuestionRow({
           <img
             src={src}
             alt={q.label || "Image"}
-            className="max-h-64 w-auto rounded-md border border-neutral-800 object-contain bg-neutral-950"
+            className="max-h-72 w-auto rounded-lg border border-neutral-800 object-contain bg-neutral-950"
           />
         ) : (
-          <p className="text-[11px] text-neutral-500">
+          <p className="text-sm text-neutral-500">
             No image configured for this block.
           </p>
         )}
         {q.helpText && (
-          <p className="mt-1 text-[11px] text-neutral-400">{q.helpText}</p>
+          <p className="mt-2 text-sm text-neutral-400">{q.helpText}</p>
         )}
       </div>
     );
@@ -899,7 +1086,7 @@ function QuestionRow({
   if (q.type === "page-break") {
     return (
       <div className="py-3">
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-neutral-500">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-neutral-500">
           <span className="flex-1 border-t border-dashed border-neutral-700" />
           <span>Page break</span>
           <span className="flex-1 border-t border-dashed border-neutral-700" />
@@ -918,7 +1105,6 @@ function QuestionRow({
     return null;
   };
 
-  // Normalise for multi-select
   const toArray = (v: any): string[] => {
     if (Array.isArray(v)) return v.map((x) => String(x));
     if (typeof v === "string") {
@@ -930,18 +1116,18 @@ function QuestionRow({
     return [];
   };
 
-  // Answerable
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2">
-      <label className="mb-1 block text-xs font-medium text-neutral-100">
+    <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
+      <label className="mb-1 block text-sm font-medium text-neutral-100">
         {q.label}{" "}
         {q.required && <span className="text-rose-400 font-semibold">*</span>}
       </label>
       {q.helpText && (
-        <p className="mb-2 text-[11px] text-neutral-400">{q.helpText}</p>
+        <p className="mb-3 text-sm text-neutral-400 leading-relaxed">
+          {q.helpText}
+        </p>
       )}
 
-      {/* TEXT */}
       {q.type === "text" && (
         <input
           type={q.htmlInputType || "text"}
@@ -952,17 +1138,15 @@ function QuestionRow({
         />
       )}
 
-      {/* TEXTAREA */}
       {q.type === "textarea" && (
         <textarea
-          className={baseInput + " min-h-[60px] resize-y"}
+          className={baseInput + " min-h-[90px] resize-y"}
           placeholder={q.placeholder}
           value={value ?? ""}
           onChange={(e) => onChange(e.target.value)}
         />
       )}
 
-      {/* NUMBER */}
       {q.type === "number" && (
         <input
           type="number"
@@ -977,13 +1161,12 @@ function QuestionRow({
         />
       )}
 
-      {/* BOOLEAN */}
       {q.type === "boolean" && (
-        <div className="inline-flex gap-2 rounded-full bg-neutral-950/80 p-1 text-[11px]">
+        <div className="inline-flex gap-2 rounded-full bg-neutral-950/80 p-1 text-sm">
           <button
             type="button"
             onClick={() => onChange(true)}
-            className={`rounded-full px-3 py-1 font-medium ${
+            className={`rounded-full px-4 py-1.5 font-medium ${
               toBool(value) === true
                 ? "bg-emerald-500 text-black"
                 : "text-neutral-200"
@@ -994,7 +1177,7 @@ function QuestionRow({
           <button
             type="button"
             onClick={() => onChange(false)}
-            className={`rounded-full px-3 py-1 font-medium ${
+            className={`rounded-full px-4 py-1.5 font-medium ${
               toBool(value) === false
                 ? "bg-emerald-500 text-black"
                 : "text-neutral-200"
@@ -1005,7 +1188,6 @@ function QuestionRow({
         </div>
       )}
 
-      {/* SELECT */}
       {q.type === "select" && (
         <select
           className={baseInput}
@@ -1021,7 +1203,6 @@ function QuestionRow({
         </select>
       )}
 
-      {/* RADIO */}
       {q.type === "radio" && (
         <div className="grid gap-2 sm:grid-cols-2">
           {(q.options || []).map((opt) => {
@@ -1029,7 +1210,7 @@ function QuestionRow({
             return (
               <label
                 key={opt.value}
-                className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
                   checked
                     ? "border-emerald-500 bg-emerald-500/10"
                     : "border-neutral-700 bg-neutral-950/60"
@@ -1037,7 +1218,7 @@ function QuestionRow({
               >
                 <input
                   type="radio"
-                  className="h-3 w-3 border-neutral-500 text-emerald-500"
+                  className="h-4 w-4 border-neutral-500 text-emerald-500"
                   checked={checked}
                   onChange={() => onChange(opt.value)}
                 />
@@ -1048,7 +1229,6 @@ function QuestionRow({
         </div>
       )}
 
-      {/* MULTISELECT */}
       {q.type === "multiselect" && (
         <div className="grid gap-2 sm:grid-cols-2">
           {(q.options || []).map((opt) => {
@@ -1057,7 +1237,7 @@ function QuestionRow({
             return (
               <label
                 key={opt.value}
-                className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
                   checked
                     ? "border-emerald-500 bg-emerald-500/10"
                     : "border-neutral-700 bg-neutral-950/60"
@@ -1065,7 +1245,7 @@ function QuestionRow({
               >
                 <input
                   type="checkbox"
-                  className="h-3 w-3 rounded border-neutral-500 text-emerald-500"
+                  className="h-4 w-4 rounded border-neutral-500 text-emerald-500"
                   checked={checked}
                   onChange={(e) => {
                     const next = new Set(arr);
@@ -1081,7 +1261,6 @@ function QuestionRow({
         </div>
       )}
 
-      {/* DATE */}
       {q.type === "date" && (
         <input
           type="date"
@@ -1091,59 +1270,13 @@ function QuestionRow({
         />
       )}
 
-      {/* FILE (read-only, with preview/links) */}
+      {/* FILE (read-only, always render from raw structured value) */}
       {q.type === "file" && (
-        <div className="text-[11px] text-neutral-400 space-y-1">
-          <p>File uploads are not editable from this view.</p>
-          {(() => {
-            const files = normalizeFilesValue(value);
-            if (!files.length) {
-              return (
-                <p className="text-[11px] text-neutral-500">
-                  No file uploaded.
-                </p>
-              );
-            }
-
-            return (
-              <div className="mt-1 flex flex-wrap gap-2">
-                {files.map((file, i) => {
-                  const url = resolveFileUrl(file.url);
-                  if (!url) return null;
-
-                  const isImage =
-                    file.type?.startsWith("image/") ||
-                    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(
-                      file.name || file.url
-                    );
-
-                  if (isImage) {
-                    return (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={i}
-                        src={url}
-                        alt={file.name || `Attachment ${i + 1}`}
-                        className="max-h-32 max-w-[180px] rounded border border-neutral-800 bg-neutral-950 object-contain"
-                      />
-                    );
-                  }
-
-                  return (
-                    <a
-                      key={i}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-950 px-2 py-0.5 text-[10px] text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
-                    >
-                      {file.name || `Attachment ${i + 1}`}
-                    </a>
-                  );
-                })}
-              </div>
-            );
-          })()}
+        <div className="space-y-2">
+          <p className="text-xs text-neutral-400">
+            File uploads are not editable from this view.
+          </p>
+          <FileAttachments value={value} />
         </div>
       )}
     </div>
