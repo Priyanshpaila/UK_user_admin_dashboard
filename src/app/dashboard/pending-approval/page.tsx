@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
   updateOrderStatusApi,
   getUserByIdApi,
   updateUserApi,
-  getBackendBase, // ⬅️ added
+  getBackendBase,
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
@@ -19,7 +19,7 @@ import {
   XCircle,
   CreditCard,
   CalendarDays,
-  User,
+  User as UserIcon,
   ArrowRight,
   Filter,
   X,
@@ -34,6 +34,8 @@ import {
   Hash,
 } from "lucide-react";
 import { useOrdersStats } from "../orders-badge-context";
+
+/* ----------------------------- Helpers ----------------------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -66,9 +68,7 @@ function calculateAgeFromDob(dob?: string | null): number | null {
   const today = new Date();
   let age = today.getFullYear() - d.getFullYear();
   const m = today.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) {
-    age--;
-  }
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
   if (age < 0 || age > 120) return null;
   return age;
 }
@@ -111,16 +111,14 @@ function paymentBadgeClasses(status: string) {
 
 function priorityBadgeClasses(priority?: string | null) {
   const p = (priority || "yellow").toLowerCase();
-  if (p === "red")
-    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "red") return "border-red-500/60 bg-red-500/10 text-red-300";
   if (p === "green")
     return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
-  return "border-amber-500/60 bg-amber-500/10 text-amber-200"; // default yellow
+  return "border-amber-500/60 bg-amber-500/10 text-amber-200";
 }
 
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (!order) return "Unknown";
-
   if ((order as any).patient_name) return (order as any).patient_name;
 
   const fromOrder = `${(order as any).first_name || ""} ${
@@ -142,14 +140,25 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   return "Unknown";
 }
 
+function getUserInitials(user: UserDto | null) {
+  if (!user) return "PT";
+  const u: any = user;
+  const full =
+    u.name ||
+    u.fullName ||
+    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+    u.email ||
+    "";
+  const parts = String(full).trim().split(/\s+/).filter(Boolean);
+  const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
+  return initials.join("") || "PT";
+}
+
 /* --------------------- RAF file/image helpers --------------------- */
 
 const resolveImageUrl = (imagePath?: string | null): string => {
   if (!imagePath) return "";
-
-  if (/^https?:\/\//i.test(imagePath)) {
-    return imagePath;
-  }
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
 
   const normalizedPath = imagePath.startsWith("/")
     ? imagePath
@@ -157,7 +166,6 @@ const resolveImageUrl = (imagePath?: string | null): string => {
 
   const baseWithApi = getBackendBase();
   const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
-
   return `${cleanBase}${normalizedPath}`;
 };
 
@@ -171,7 +179,9 @@ function renderRafAnswer(qa: any) {
       <div className="mt-1 flex flex-wrap gap-3">
         {raw.map((file: any, i: number) => {
           const url = resolveImageUrl(file.url);
-          const isImage = (file.type || "").startsWith("image/");
+          const isImage = (file.type || file.mimeType || "").startsWith(
+            "image/"
+          );
 
           if (!url) {
             return (
@@ -215,7 +225,7 @@ function renderRafAnswer(qa: any) {
                   {file.name || "View file"}
                 </button>
                 <span className="text-[10px] text-neutral-500">
-                  {file.type || "file"}
+                  {file.type || file.mimeType || "file"}
                 </span>
               </div>
             </div>
@@ -225,12 +235,95 @@ function renderRafAnswer(qa: any) {
     );
   }
 
-  // Normal answers (text, radios, multi-select already stringified)
   return (
-    <p className="mt-0.5 text-[11px] text-neutral-100">
-      {qa?.answer ?? "—"}
-    </p>
+    <p className="mt-0.5 text-[11px] text-neutral-100">{qa?.answer ?? "—"}</p>
   );
+}
+
+function unwrapOrder(res: any): OrderDto {
+  return (res?.data ?? res?.order ?? res) as OrderDto;
+}
+
+function unwrapUser(res: any): UserDto | null {
+  if (!res) return null;
+  const u = (res?.data ?? res?.user ?? res) as any;
+  if (!u || typeof u !== "object") return null;
+  return u as UserDto;
+}
+
+function normalizeRafQAs(order: OrderDto) {
+  const meta: any = (order as any)?.meta || {};
+  const ra =
+    meta?.riskAssessment ||
+    meta?.raf ||
+    (order as any)?.riskAssessment ||
+    (order as any)?.raf ||
+    [];
+
+  // Expected formats:
+  // 1) Array: [{ question, answer, raw }, ...] or [{ key/question, value }, ...]
+  // 2) Object map: { "Question": "Answer", ... }
+  if (Array.isArray(ra)) {
+    return ra
+      .map((it: any, idx: number) => {
+        const question = String(
+          it?.question || it?.key || it?.label || `Question ${idx + 1}`
+        );
+
+        const value = it?.value ?? it?.answer ?? it?.raw ?? it?.response ?? it;
+
+        // If file array
+        if (
+          Array.isArray(value) &&
+          value.length &&
+          typeof value[0] === "object"
+        ) {
+          return {
+            question,
+            answer: `${value.length} attachment${value.length === 1 ? "" : "s"}`,
+            raw: value,
+          };
+        }
+
+        // Plain
+        const answer =
+          value == null
+            ? "—"
+            : typeof value === "string" || typeof value === "number"
+            ? String(value)
+            : Array.isArray(value)
+            ? value.map(String).filter(Boolean).join(", ") || "—"
+            : typeof value === "boolean"
+            ? value
+              ? "Yes"
+              : "No"
+            : "—";
+
+        return { question, answer, raw: it?.raw };
+      })
+      .filter((x: any) => x.question);
+  }
+
+  if (ra && typeof ra === "object") {
+    return Object.entries(ra).map(([k, v]) => ({
+      question: String(k),
+      answer:
+        v == null
+          ? "—"
+          : typeof v === "string" || typeof v === "number"
+          ? String(v)
+          : typeof v === "boolean"
+          ? v
+            ? "Yes"
+            : "No"
+          : Array.isArray(v)
+          ? v.map(String).filter(Boolean).join(", ") || "—"
+          : "—",
+      raw: Array.isArray(v) && v.length && typeof v[0] === "object" ? v : null,
+    }));
+  }
+
+  return [];
 }
 
 /* ----------------------------- Page ----------------------------- */
@@ -242,7 +335,7 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // cache of users for cards: user_id -> user
+  // cache of users for list: user_id -> user
   const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
     {}
   );
@@ -319,28 +412,39 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const res = await getOrdersApi({ status: STATUS });
+        const res: any = await getOrdersApi({ status: STATUS });
+
+        const ordersList: OrderDto[] =
+          (res as any)?.data ??
+          (res as any)?.orders ??
+          (Array.isArray(res) ? res : []);
+        const metaRes: OrdersListMeta | null =
+          (res as any)?.meta ?? (res as any)?.pagination ?? null;
+
         if (cancelled) return;
 
-        const ordersList = res.data || [];
-        setOrders(ordersList);
-        setMeta(res.meta || null);
+        setOrders(Array.isArray(ordersList) ? ordersList : []);
+        setMeta(metaRes);
 
         // fetch users for all distinct user_ids in list
         const uniqueUserIds = Array.from(
           new Set(
-            ordersList
-              .map((o) => (o as any).user_id as string | undefined)
+            (ordersList || [])
+              .map((o: any) => (o?.user_id || o?.userId) as string | undefined)
               .filter(Boolean)
           )
         ) as string[];
 
-        if (uniqueUserIds.length) {
+        const missingIds = uniqueUserIds.filter(
+          (id) => orderUsers[id] === undefined
+        );
+
+        if (missingIds.length) {
           const results = await Promise.all(
-            uniqueUserIds.map(async (id) => {
+            missingIds.map(async (id) => {
               try {
-                const user = await getUserByIdApi(id);
-                return [id, user] as const;
+                const uRes = await getUserByIdApi(id);
+                return [id, unwrapUser(uRes)] as const;
               } catch (err) {
                 console.error("Failed to fetch user for order list", id, err);
                 return [id, null] as const;
@@ -349,11 +453,11 @@ export default function Page() {
           );
 
           if (!cancelled) {
-            const map: Record<string, UserDto | null> = {};
-            for (const [id, user] of results) {
-              map[id] = user;
-            }
-            setOrderUsers(map);
+            setOrderUsers((prev) => {
+              const next = { ...prev };
+              for (const [id, user] of results) next[id] = user;
+              return next;
+            });
           }
         }
 
@@ -370,11 +474,12 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refresh]);
 
   // helper to reset notes state when opening a different order
   function hydrateNotes(order: OrderDto) {
-    setAdminNotes(order.admin_notes || []);
+    setAdminNotes(((order as any).admin_notes as string[]) || []);
     setNewAdminNote("");
 
     const existingConsultation =
@@ -404,18 +509,20 @@ export default function Page() {
     setPrioritySaving(false);
 
     try {
-      const order = await getOrderByIdApi(id);
+      const orderRes = await getOrderByIdApi(id);
+      const order = unwrapOrder(orderRes);
       setSelectedOrder(order);
       hydrateNotes(order);
 
-      const userId = (order as any).user_id as string | undefined;
+      const userId =
+        ((order as any).user_id || (order as any).userId) as string | undefined;
       if (userId) {
         if (orderUsers[userId] !== undefined) {
           setOrderedByUser(orderUsers[userId]);
         } else {
           try {
-            const user = await getUserByIdApi(userId);
-            setOrderedByUser(user);
+            const userRes = await getUserByIdApi(userId);
+            setOrderedByUser(unwrapUser(userRes));
           } catch (err) {
             console.error("Failed to fetch user for order (detail)", err);
           }
@@ -426,6 +533,15 @@ export default function Page() {
     } finally {
       setDetailLoading(false);
     }
+  }
+
+  function closeDetail() {
+    setShowDetail(false);
+    setSelectedOrder(null);
+    setOrderedByUser(null);
+    setDetailError(null);
+    setShowRejectDialog(false);
+    setRejectError(null);
   }
 
   // helpers for notes
@@ -466,7 +582,7 @@ export default function Page() {
   async function handleApprove() {
     if (!selectedOrder) return;
 
-    const prevStatus = selectedOrder.status;
+    const prevStatus = (selectedOrder as any).status;
     setStatusAction("approved");
     setDetailError(null);
 
@@ -477,22 +593,28 @@ export default function Page() {
         consultation_notes: consultationNotes,
       };
 
-      if (loggedInUserId) {
-        payload.approved_by = loggedInUserId;
-      }
+      if (loggedInUserId) payload.approved_by = loggedInUserId;
       payload.approved_at = new Date().toISOString();
 
-      const updated = await updateOrderStatusApi(selectedOrder._id, payload);
+      const updatedRes = await updateOrderStatusApi(
+        (selectedOrder as any)._id,
+        payload
+      );
+      const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, updated.status);
-      setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-      setShowDetail(false);
+      applyStatusChange(prevStatus, (updated as any).status);
+      setOrders((prev) => prev.filter((o: any) => (o as any)._id !== idOf(o)));
+      closeDetail();
       setSelectedOrder(updated);
     } catch (e: any) {
       setDetailError(e?.message || "Failed to update order status");
     } finally {
       setStatusAction(null);
     }
+  }
+
+  function idOf(o: any) {
+    return String(o?._id || o?.id || "");
   }
 
   // open reject dialog
@@ -516,7 +638,7 @@ export default function Page() {
       return;
     }
 
-    const prevStatus = selectedOrder.status;
+    const prevStatus = (selectedOrder as any).status;
     setStatusAction("rejected");
     setRejectError(null);
 
@@ -527,17 +649,19 @@ export default function Page() {
         consultation_notes: consultationNotes,
         rejection_notes: finalNotes,
       };
-      if (loggedInUserId) {
-        payload.rejected_by = loggedInUserId;
-      }
+      if (loggedInUserId) payload.rejected_by = loggedInUserId;
       payload.rejected_at = new Date().toISOString();
 
-      const updated = await updateOrderStatusApi(selectedOrder._id, payload);
+      const updatedRes = await updateOrderStatusApi(
+        (selectedOrder as any)._id,
+        payload
+      );
+      const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, updated.status);
-      setOrders((prev) => prev.filter((o) => o._id !== selectedOrder._id));
-      setShowDetail(false);
+      applyStatusChange(prevStatus, (updated as any).status);
+      setOrders((prev) => prev.filter((o: any) => (o as any)._id !== idOf(o)));
       setShowRejectDialog(false);
+      closeDetail();
       setSelectedOrder(updated);
     } catch (e: any) {
       setRejectError(e?.message || "Failed to reject order");
@@ -549,17 +673,21 @@ export default function Page() {
   // user verification buttons (only for weight-management)
   const isWeightManagement =
     selectedOrder &&
-    ((selectedOrder.service_slug &&
-      selectedOrder.service_slug.toLowerCase() === "weight-management") ||
-      (selectedOrder.service_name &&
-        selectedOrder.service_name.toLowerCase() === "weight management"));
+    (((selectedOrder as any).service_slug &&
+      String((selectedOrder as any).service_slug).toLowerCase() ===
+        "weight-management") ||
+      ((selectedOrder as any).service_name &&
+        String((selectedOrder as any).service_name).toLowerCase() ===
+          "weight management"));
 
-  // 🔁 priority change
+  // priority change
   async function handlePriorityChange(newPriority: string) {
     if (!orderedByUser) return;
 
-    const userId = orderedByUser._id;
-    const prevPriority = (orderedByUser as any).user_priority || "yellow";
+    const userId = (orderedByUser as any)._id;
+    const prevPriority = ((orderedByUser as any).user_priority || "yellow") as
+      | string
+      | undefined;
 
     setPrioritySaving(true);
     setPriorityError(null);
@@ -571,15 +699,18 @@ export default function Page() {
         user_priority: newPriority,
       } as any);
 
-      const updatedUser = await updateUserApi(userId, {
+      const updatedUserRes = await updateUserApi(userId, {
         user_priority: newPriority,
       });
+      const updatedUser = unwrapUser(updatedUserRes);
 
       setOrderedByUser(updatedUser);
-      setOrderUsers((prev) => ({
-        ...prev,
-        [updatedUser._id]: updatedUser,
-      }));
+      if (updatedUser) {
+        setOrderUsers((prev) => ({
+          ...prev,
+          [(updatedUser as any)._id]: updatedUser,
+        }));
+      }
     } catch (e: any) {
       console.error("Failed to update priority", e);
       setPriorityError(e?.message || "Failed to update priority status.");
@@ -597,7 +728,7 @@ export default function Page() {
     }
   }
 
-  // 🔁 TOGGLE SCR / ID VERIFIED
+  // toggle SCR / ID verified
   async function handleVerify(field: "scr_verified" | "id_verified") {
     if (!orderedByUser) return;
 
@@ -606,16 +737,18 @@ export default function Page() {
     setVerifyingField(field);
     setVerificationError(null);
     try {
-      const updatedUser = await updateUserApi(orderedByUser._id, {
+      const updatedUserRes = await updateUserApi((orderedByUser as any)._id, {
         [field]: !current,
       });
+      const updatedUser = unwrapUser(updatedUserRes);
 
       setOrderedByUser(updatedUser);
-
-      setOrderUsers((prev) => ({
-        ...prev,
-        [updatedUser._id]: updatedUser,
-      }));
+      if (updatedUser) {
+        setOrderUsers((prev) => ({
+          ...prev,
+          [(updatedUser as any)._id]: updatedUser,
+        }));
+      }
     } catch (e: any) {
       setVerificationError(e?.message || "Failed to update user verification");
     } finally {
@@ -625,800 +758,987 @@ export default function Page() {
 
   const totalPending = meta?.total ?? orders.length;
 
+  const rows = useMemo(() => {
+    return orders.map((order: any) => {
+      const userId = (order?.user_id || order?.userId) as string | undefined;
+      const listUser =
+        userId && orderUsers[userId] !== undefined ? orderUsers[userId] : null;
+
+      const patientName = getDisplayPatientName(order, listUser);
+      const priority =
+        ((listUser as any)?.user_priority as string | undefined) || "yellow";
+
+      const totalMinor =
+        order?.total_minor ?? order?.meta?.totalMinor ?? order?.meta?.total_minor;
+
+      const appointmentAt =
+        order?.meta?.appointment_start_at || order?.start_at || null;
+
+      const productName =
+        order?.meta?.selectedProduct?.name ||
+        order?.meta?.lines?.[0]?.name ||
+        order?.service_name ||
+        "Order";
+
+      const reference = order?.reference || order?._id;
+
+      return {
+        order,
+        reference,
+        patientName,
+        listUser,
+        priority,
+        totalMinor,
+        appointmentAt,
+        productName,
+      };
+    });
+  }, [orders, orderUsers]);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-semibold text-white">
-            Pending Orders
-          </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            Orders waiting for review or action. Open details to inspect the
-            full assessment and booking info.
-          </p>
+    <>
+      <div className="mx-auto max-w-7xl px-4 py-6">
+        {/* Header */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-white md:text-3xl">
+              Pending Orders
+            </h1>
+            <p className="mt-1 text-sm text-neutral-400">
+              Orders waiting for review or action. Open details to inspect the
+              full assessment and booking info.
+            </p>
+          </div>
+
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-xs text-neutral-300">
+              <Filter size={14} />
+              <span>Status:</span>
+              <span className="font-medium text-amber-300">Pending</span>
+            </div>
+            <span className="text-xs text-neutral-500">
+              {totalPending} pending{" "}
+              {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
+            </span>
+          </div>
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-neutral-900/70 border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300">
-            <Filter size={14} />
-            <span>Status:</span>
-            <span className="font-medium text-amber-300">Pending</span>
+        {/* List content (LIST FORM) */}
+        {loading ? (
+          <div className="flex items-center justify-center py-20 text-neutral-300">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            Loading orders…
           </div>
-          <span className="text-xs text-neutral-500">
-            {totalPending} pending{" "}
-            {meta ? `• page ${meta.page} of ${meta.totalPages}` : ""}
-          </span>
-        </div>
+        ) : error ? (
+          <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 px-6 py-10 text-center text-neutral-400">
+            No pending orders found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950/40">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-neutral-900/80 text-[11px] uppercase tracking-wide text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Reference
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">Patient</th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Product / Service
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Appointment
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">
+                      Priority
+                    </th>
+                    <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-left font-medium">Payment</th>
+                    <th className="px-3 py-2 text-right font-medium">
+                      Total
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium"></th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {rows.map(
+                    ({
+                      order,
+                      reference,
+                      patientName,
+                      listUser,
+                      priority,
+                      totalMinor,
+                      appointmentAt,
+                      productName,
+                    }) => {
+                      const status = String(order?.status || "pending");
+                      const payment = String(order?.payment_status || "pending");
+                      const email =
+                        (listUser as any)?.email ||
+                        (order as any)?.email ||
+                        (order as any)?.patient_email ||
+                        "";
+                      return (
+                        <tr
+                          key={String(order?._id)}
+                          className="cursor-pointer border-t border-neutral-900/80 bg-neutral-950/40 hover:bg-neutral-900/60"
+                          onClick={() => handleViewDetails(String(order?._id))}
+                        >
+                          <td className="whitespace-nowrap px-3 py-2 align-middle">
+                            <div className="flex items-center gap-1">
+                              <ClipboardList className="h-3.5 w-3.5 text-neutral-500" />
+                              <span className="font-medium text-neutral-100">
+                                {reference}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="max-w-xs px-3 py-2 align-middle">
+                            <div className="flex items-start gap-2">
+                              <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-[10px] font-semibold text-neutral-100">
+                                {getUserInitials(listUser)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-medium text-neutral-100">
+                                  {patientName}
+                                </p>
+                                <p className="truncate text-[10px] text-neutral-500">
+                                  {email || "—"}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="max-w-xs px-3 py-2 align-middle">
+                            <p className="line-clamp-2 text-[11px] text-neutral-100">
+                              {productName}
+                            </p>
+                            <p className="mt-0.5 line-clamp-1 text-[10px] text-neutral-500">
+                              {order?.service_name || "—"}
+                            </p>
+                          </td>
+
+                          <td className="whitespace-nowrap px-3 py-2 align-middle text-[11px] text-neutral-200">
+                            <span className="inline-flex items-center gap-1">
+                              <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
+                              {formatDateTime(appointmentAt)}
+                            </span>
+                          </td>
+
+                          <td className="px-3 py-2 align-middle">
+                            <span
+                              className={[
+                                "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
+                                priorityBadgeClasses(priority),
+                              ].join(" ")}
+                            >
+                              <span className="h-2 w-2 rounded-full bg-current" />
+                              {String(priority).toLowerCase()}
+                            </span>
+                          </td>
+
+                          <td className="px-3 py-2 align-middle">
+                            <span
+                              className={[
+                                "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
+                                statusBadgeClasses(status),
+                              ].join(" ")}
+                            >
+                              {status === "approved" ? (
+                                <CheckCircle2 className="h-3 w-3" />
+                              ) : status === "pending" ? (
+                                <Clock className="h-3 w-3" />
+                              ) : status === "rejected" ||
+                                status === "cancelled" ? (
+                                <XCircle className="h-3 w-3" />
+                              ) : (
+                                <ClipboardList className="h-3 w-3" />
+                              )}
+                              <span className="capitalize">
+                                {status.replace(/_/g, " ")}
+                              </span>
+                            </span>
+                          </td>
+
+                          <td className="px-3 py-2 align-middle">
+                            <span
+                              className={[
+                                "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
+                                paymentBadgeClasses(payment),
+                              ].join(" ")}
+                            >
+                              <CreditCard className="h-3 w-3" />
+                              <span className="capitalize">
+                                {payment.replace(/_/g, " ")}
+                              </span>
+                            </span>
+                          </td>
+
+                          <td className="whitespace-nowrap px-3 py-2 text-right align-middle text-[11px] text-neutral-100">
+                            {formatMoney(totalMinor ?? null)}
+                          </td>
+
+                          <td className="px-3 py-2 text-right align-middle">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewDetails(String(order?._id));
+                              }}
+                              className="inline-flex h-7 items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100"
+                            >
+                              <span>Open</span>
+                              <ArrowRight className="h-3 w-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* List content */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20 text-neutral-300">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading orders…
-        </div>
-      ) : error ? (
-        <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
-          {error}
-        </div>
-      ) : orders.length === 0 ? (
-        <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 px-6 py-10 text-center text-neutral-400">
-          No pending orders found.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {orders.map((order) => {
-            const totalMinor = order.meta?.totalMinor ?? null;
-            const appointmentAt =
-              order.meta?.appointment_start_at || (order as any).start_at;
-            const productName =
-              order.meta?.selectedProduct?.name ||
-              order.meta?.lines?.[0]?.name ||
-              order.service_name;
+      {/* ----------------------------- Detail Drawer ----------------------------- */}
+      {showDetail && (
+        <div className="fixed inset-0 z-40 flex items-stretch justify-end">
+          <div className="absolute inset-0 bg-black/60" onClick={closeDetail} />
+          <div className="relative z-10 flex h-full w-full max-w-3xl flex-col border-l border-neutral-800 bg-neutral-950">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  Order reference
+                </p>
+                <p className="text-sm font-semibold text-white">
+                  {selectedOrder
+                    ? (selectedOrder as any).reference || (selectedOrder as any)._id
+                    : "—"}
+                </p>
+                <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-400">
+                  <ClipboardList className="h-3 w-3" />
+                  <span>
+                    {selectedOrder
+                      ? (selectedOrder as any).service_name || "Service"
+                      : "—"}
+                  </span>
+                </p>
 
-            const userId = (order as any).user_id as string | undefined;
-            const cardUser =
-              userId && orderUsers[userId] !== undefined
-                ? orderUsers[userId]
-                : null;
-
-            const patientName = getDisplayPatientName(order, cardUser);
-            const priority =
-              ((cardUser as any)?.user_priority as string | undefined) ||
-              "yellow";
-
-            return (
-              <div
-                key={order._id}
-                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/80 p-4 hover:border-emerald-500/50 hover:bg-neutral-900 transition-colors"
-              >
-                {/* Top: title + status */}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-base font-semibold text-white">
-                        {productName}
-                      </h2>
-                      {order.status === "approved" ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      ) : order.status === "pending" ? (
-                        <Clock className="h-4 w-4 text-amber-400" />
-                      ) : order.status === "draft" ? (
-                        <XCircle className="h-4 w-4 text-neutral-400" />
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      {order.service_name} • Ref:{" "}
-                      <span className="font-mono">{order.reference}</span>
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col items-end gap-1">
-                    <span
-                      className={
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                        statusBadgeClasses(order.status)
-                      }
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                      {order.status.toUpperCase()}
-                    </span>
-                    <span
-                      className={
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                        paymentBadgeClasses(order.payment_status)
-                      }
-                    >
-                      <CreditCard className="h-3 w-3" />
-                      {order.payment_status.toUpperCase()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Middle: patient + appointment */}
-                <div className="mt-4 flex flex-col gap-2 text-xs text-neutral-300">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <User className="h-4 w-4 text-neutral-400" />
-                    <span className="font-medium">{patientName}</span>
-                    {(order as any).email && (
-                      <span className="truncate text-neutral-400">
-                        {(order as any).email}
+                {selectedOrder && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(selectedOrder as any).status && (
+                      <span
+                        className={[
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
+                          statusBadgeClasses(String((selectedOrder as any).status)),
+                        ].join(" ")}
+                      >
+                        {String((selectedOrder as any).status) === "approved" ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : String((selectedOrder as any).status) === "pending" ? (
+                          <Clock className="h-3 w-3" />
+                        ) : String((selectedOrder as any).status) === "rejected" ||
+                          String((selectedOrder as any).status) === "cancelled" ? (
+                          <XCircle className="h-3 w-3" />
+                        ) : (
+                          <ClipboardList className="h-3 w-3" />
+                        )}
+                        <span className="capitalize">
+                          {String((selectedOrder as any).status).replace(/_/g, " ")}
+                        </span>
                       </span>
                     )}
 
-                    {/* Priority badge on card */}
-                    <span
-                      className={`ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
-                        priority
-                      )}`}
-                    >
-                      <span className="h-2 w-2 rounded-full bg-current" />
-                      {priority}
-                    </span>
+                    {(selectedOrder as any).payment_status && (
+                      <span
+                        className={[
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
+                          paymentBadgeClasses(
+                            String((selectedOrder as any).payment_status)
+                          ),
+                        ].join(" ")}
+                      >
+                        <CreditCard className="h-3 w-3" />
+                        <span className="capitalize">
+                          {String((selectedOrder as any).payment_status).replace(
+                            /_/g,
+                            " "
+                          )}
+                        </span>
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <CalendarDays className="h-4 w-4 text-neutral-400" />
-                    <span>{formatDateTime(appointmentAt)}</span>
-                  </div>
-                </div>
-
-                {/* Bottom: total + action */}
-                <div className="mt-4 flex items-center justify-between">
-                  <div className="text-sm">
-                    <span className="text-neutral-400">Total:</span>{" "}
-                    <span className="font-semibold text-white">
-                      {formatMoney(totalMinor)}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleViewDetails(order._id)}
-                    className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300 group-hover:border-emerald-500"
-                  >
-                    View details
-                    <ArrowRight className="h-3 w-3" />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Detail modal */}
-      {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
-          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-emerald-400 flex items-center gap-1">
-                  <ClipboardList className="h-4 w-4" />
-                  Order details
-                </span>
-                {selectedOrder && (
-                  <span className="text-[11px] text-neutral-500">
-                    Ref:{" "}
-                    <span className="font-mono text-neutral-300">
-                      {selectedOrder.reference}
-                    </span>
-                  </span>
                 )}
               </div>
 
-              {selectedOrder && (
-                <div className="flex flex-col items-end gap-1">
-                  <span
-                    className={
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                      statusBadgeClasses(selectedOrder.status)
-                    }
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                    {selectedOrder.status.toUpperCase()}
-                  </span>
-                  <span
-                    className={
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                      paymentBadgeClasses(selectedOrder.payment_status)
-                    }
-                  >
-                    <CreditCard className="h-3 w-3" />
-                    {selectedOrder.payment_status.toUpperCase()}
-                  </span>
-                </div>
-              )}
-
               <button
                 type="button"
-                onClick={() => setShowDetail(false)}
-                className="ml-4 rounded-full p-1.5 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                onClick={closeDetail}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:border-neutral-500 hover:text-white"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
 
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
-              {detailLoading && (
-                <div className="flex items-center justify-center py-10 text-neutral-300">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Loading order…
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+              {detailLoading ? (
+                <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Loading full order details…</span>
                 </div>
-              )}
-
-              {detailError && !detailLoading && (
-                <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
+              ) : detailError ? (
+                <div className="rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-xs text-rose-100">
                   {detailError}
                 </div>
-              )}
-
-              {!detailLoading && !detailError && selectedOrder && (
+              ) : selectedOrder ? (
                 <>
-                  {/* Service row */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-                    <p className="text-[11px] text-neutral-400 mb-1">
-                      Service
-                    </p>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-white">
-                          {selectedOrder.service_name}
-                        </p>
-                        <p className="text-[11px] text-neutral-500">
-                          {selectedOrder.service_slug}
-                        </p>
-                      </div>
-                      <p className="text-xs text-neutral-400">
-                        Created:{" "}
-                        <span className="font-mono text-neutral-200">
-                          {formatDateTime(selectedOrder.createdAt)}
+                  {/* Patient card */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800">
+                        <span className="text-xs font-semibold text-neutral-100">
+                          {getUserInitials(orderedByUser)}
                         </span>
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Patient details + appointment */}
-                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.2fr)] gap-4">
-                    {/* Patient details card */}
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-3">
-                          <div className="h-10 w-10 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 text-xs font-semibold text-neutral-200">
-                            {getDisplayPatientName(
-                              selectedOrder,
-                              orderedByUser
-                            )
-                              .split(" ")
-                              .map((s) => s[0])
-                              .join("")
-                              .slice(0, 2)
-                              .toUpperCase() || "PT"}
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-white">
-                              {getDisplayPatientName(
-                                selectedOrder,
-                                orderedByUser
-                              )}
-                            </p>
-                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
-                              {orderedByUser && (
-                                <>
-                                  {(orderedByUser as any).gender && (
-                                    <span className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900/60 px-2 py-0.5 capitalize">
-                                      {(orderedByUser as any).gender}
-                                    </span>
-                                  )}
-                                  {(orderedByUser as any)._id && (
-                                    <span className="inline-flex items-center gap-1">
-                                      <Hash className="h-3 w-3 text-neutral-500" />
-                                      {(orderedByUser as any)._id}
-                                    </span>
-                                  )}
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        {orderedByUser && (
-                          <div className="text-right text-[11px] text-neutral-400 space-y-1">
-                            {(orderedByUser as any).createdAt && (
-                              <p>
-                                Account created:{" "}
-                                <span className="text-neutral-200">
-                                  {formatDateTime(
-                                    (orderedByUser as any).createdAt
-                                  )}
-                                </span>
-                              </p>
-                            )}
-                            {(orderedByUser as any).updatedAt && (
-                              <p>
-                                Last updated:{" "}
-                                <span className="text-neutral-200">
-                                  {formatDateTime(
-                                    (orderedByUser as any).updatedAt
-                                  )}
-                                </span>
-                              </p>
-                            )}
-                            {(orderedByUser as any).__v !== undefined && (
-                              <p>Record version: {(orderedByUser as any).__v}</p>
-                            )}
-                          </div>
-                        )}
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] text-neutral-300">
-                        <div className="space-y-1">
-                          <p className="font-semibold text-neutral-400">
-                            Contact
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <Mail className="h-3 w-3 text-neutral-500" />
-                            <span className="truncate">
-                              {(orderedByUser as any)?.email ||
-                                (selectedOrder as any).email ||
-                                "—"}
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-white">
+                          {getDisplayPatientName(selectedOrder, orderedByUser)}
+                        </p>
+
+                        <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+                          <span className="inline-flex items-center gap-1">
+                            <UserIcon className="h-3.5 w-3.5 text-neutral-500" />
+                            <span>
+                              {orderedByUser
+                                ? (orderedByUser as any).gender
+                                  ? String((orderedByUser as any).gender)
+                                      .charAt(0)
+                                      .toUpperCase() +
+                                    String((orderedByUser as any).gender).slice(1)
+                                  : "Gender: —"
+                                : "Gender: —"}
                             </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Phone className="h-3 w-3 text-neutral-500" />
-                            <span className="truncate">
-                              {(orderedByUser as any)?.phone ||
-                                (orderedByUser as any)?.phoneNumber ||
-                                (selectedOrder as any).phone ||
-                                "—"}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <CalendarDays className="h-3 w-3 text-neutral-500" />
+                          </span>
+
+                          <span className="inline-flex items-center gap-1">
+                            <Hash className="h-3.5 w-3.5 text-neutral-500" />
                             <span>
                               DOB:{" "}
-                              {formatDateOnly((orderedByUser as any)?.dob) ||
-                                "—"}
-                              {(() => {
-                                const age = calculateAgeFromDob(
-                                  (orderedByUser as any)?.dob
-                                );
-                                return age ? ` (${age} yrs)` : "";
-                              })()}
+                              {orderedByUser
+                                ? formatDateOnly((orderedByUser as any).dob)
+                                : "—"}
+                              {orderedByUser &&
+                              (orderedByUser as any).dob &&
+                              calculateAgeFromDob((orderedByUser as any).dob) != null ? (
+                                <span className="text-neutral-400">
+                                  {" "}
+                                  (
+                                  {calculateAgeFromDob(
+                                    (orderedByUser as any).dob
+                                  )}{" "}
+                                  yrs)
+                                </span>
+                              ) : null}
                             </span>
-                          </div>
+                          </span>
                         </div>
 
-                        <div className="space-y-1">
-                          <p className="font-semibold text-neutral-400">
-                            Address
-                          </p>
-                          <div className="flex items-start gap-2">
-                            <MapPin className="h-3 w-3 text-neutral-500 mt-0.5" />
-                            <div className="space-y-0.5">
-                              <p>
-                                {(orderedByUser as any)?.address_line1 || "—"}
-                              </p>
-                              {(orderedByUser as any)?.address_line2 && (
-                                <p>{(orderedByUser as any).address_line2}</p>
-                              )}
-                              <p>
-                                {[
-                                  (orderedByUser as any)?.city,
-                                  (orderedByUser as any)?.county,
-                                ]
-                                  .filter(Boolean)
-                                  .join(", ") || "—"}
-                              </p>
-                              <p>
-                                {[
-                                  (orderedByUser as any)?.postalcode,
-                                  (orderedByUser as any)?.country,
-                                ]
-                                  .filter(Boolean)
-                                  .join(", ") || ""}
-                              </p>
-                            </div>
-                          </div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+                          {(orderedByUser as any)?.email && (
+                            <span className="inline-flex items-center gap-1">
+                              <Mail className="h-3.5 w-3.5 text-neutral-500" />
+                              <span className="break-all">
+                                {(orderedByUser as any).email}
+                              </span>
+                            </span>
+                          )}
+                          {((orderedByUser as any)?.phone ||
+                            (orderedByUser as any)?.phoneNumber) && (
+                            <span className="inline-flex items-center gap-1">
+                              <Phone className="h-3.5 w-3.5 text-neutral-500" />
+                              <span>
+                                {(orderedByUser as any).phone ||
+                                  (orderedByUser as any).phoneNumber}
+                              </span>
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {/* Priority status (editable) */}
-                      {orderedByUser && (
-                        <div className="pt-3 border-t border-neutral-800 mt-1 space-y-2">
-                          <p className="text-[11px] text-neutral-400">
-                            Priority status
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${priorityBadgeClasses(
-                                (orderedByUser as any)?.user_priority
-                              )}`}
-                            >
-                              <span className="h-2 w-2 rounded-full bg-current" />
-                              {(
-                                (orderedByUser as any)?.user_priority ||
+                      {/* Priority */}
+                      <div className="flex flex-col items-end gap-1">
+                        <span
+                          className={[
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
+                            priorityBadgeClasses(
+                              ((orderedByUser as any)?.user_priority as string) ||
                                 "yellow"
-                              ).toString()}
-                            </span>
-                            <select
-                              className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-[11px] text-neutral-100 focus:outline-none focus:border-emerald-500"
-                              disabled={prioritySaving}
-                              value={
-                                ((orderedByUser as any)?.user_priority as
-                                  | string
-                                  | undefined) || "yellow"
-                              }
-                              onChange={(e) =>
-                                handlePriorityChange(e.target.value)
-                              }
-                            >
-                              <option value="red">Red – High risk</option>
-                              <option value="yellow">Yellow – Medium</option>
-                              <option value="green">Green – Low</option>
-                            </select>
-                            {prioritySaving && (
-                              <Loader2 className="h-3 w-3 animate-spin text-neutral-400" />
-                            )}
-                          </div>
-                          {priorityError && (
-                            <p className="text-[11px] text-rose-300">
-                              {priorityError}
-                            </p>
-                          )}
-                        </div>
-                      )}
+                            ),
+                          ].join(" ")}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-current" />
+                          {String(
+                            ((orderedByUser as any)?.user_priority as string) ||
+                              "yellow"
+                          ).toLowerCase()}
+                        </span>
 
-                      {/* Weight management verification inside patient card */}
-                      {isWeightManagement && orderedByUser && (
-                        <div className="pt-3 border-t border-neutral-800 space-y-1 mt-2">
-                          <p className="text-[11px] text-neutral-400">
-                            Verification (Weight Management only)
+                        <select
+                          value={
+                            String(
+                              ((orderedByUser as any)?.user_priority as string) ||
+                                "yellow"
+                            ).toLowerCase()
+                          }
+                          disabled={prioritySaving || !orderedByUser}
+                          onChange={(e) => handlePriorityChange(e.target.value)}
+                          className="mt-1 h-7 rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
+                        >
+                          <option value="yellow">yellow</option>
+                          <option value="green">green</option>
+                          <option value="red">red</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {priorityError && (
+                      <div className="mt-2 rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-100">
+                        {priorityError}
+                      </div>
+                    )}
+
+                    {/* Address */}
+                    <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-[11px] sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <p className="text-neutral-500">Address</p>
+                        <p className="mt-0.5 text-neutral-100">
+                          <span className="inline-flex items-center gap-1">
+                            <MapPin className="h-3.5 w-3.5 text-neutral-500" />
+                            {orderedByUser
+                              ? [
+                                  (orderedByUser as any).address_line1 ||
+                                    (orderedByUser as any).addressLine1 ||
+                                    "",
+                                  (orderedByUser as any).address_line2 ||
+                                    (orderedByUser as any).addressLine2 ||
+                                    "",
+                                  (orderedByUser as any).city || "",
+                                  (orderedByUser as any).county || "",
+                                  (orderedByUser as any).postalcode ||
+                                    (orderedByUser as any).postcode ||
+                                    "",
+                                  (orderedByUser as any).country || "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ") || "—"
+                              : "—"}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Weight management verification */}
+                    {isWeightManagement && (
+                      <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[11px] font-medium text-neutral-200">
+                            Verification (Weight Management)
                           </p>
-                          <div className="flex flex-wrap gap-2">
-                            {/* SCR verified */}
-                            <button
-                              type="button"
-                              disabled={verifyingField === "scr_verified"}
-                              onClick={() => handleVerify("scr_verified")}
-                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
-                                (orderedByUser as any).scr_verified
-                                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
-                                  : "border-neutral-600 bg-neutral-900 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
-                              } disabled:opacity-60 disabled:cursor-not-allowed`}
-                            >
-                              {verifyingField === "scr_verified" && (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              )}
-                              {(orderedByUser as any).scr_verified ? (
-                                <ShieldCheck className="h-3 w-3" />
-                              ) : (
-                                <ShieldAlert className="h-3 w-3" />
-                              )}
-                              SCR verified
-                            </button>
-
-                            {/* ID verified */}
-                            <button
-                              type="button"
-                              disabled={verifyingField === "id_verified"}
-                              onClick={() => handleVerify("id_verified")}
-                              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-medium ${
-                                (orderedByUser as any).id_verified
-                                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
-                                  : "border-neutral-600 bg-neutral-900 text-neutral-200 hover:border-emerald-500 hover:text-emerald-200"
-                              } disabled:opacity-60 disabled:cursor-not-allowed`}
-                            >
-                              {verifyingField === "id_verified" && (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              )}
-                              {(orderedByUser as any).id_verified ? (
-                                <ShieldCheck className="h-3 w-3" />
-                              ) : (
-                                <ShieldAlert className="h-3 w-3" />
-                              )}
-                              ID verified
-                            </button>
-                          </div>
                           {verificationError && (
-                            <p className="text-[11px] text-rose-300">
+                            <p className="text-[11px] text-rose-200">
                               {verificationError}
                             </p>
                           )}
                         </div>
-                      )}
-                    </div>
 
-                    {/* Appointment card */}
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-4 space-y-2">
-                      <p className="text-[11px] text-neutral-400">
-                        Appointment
-                      </p>
-                      <p className="text-sm text-white">
-                        {formatDateTime(
-                          selectedOrder.meta?.appointment_start_at ||
-                            (selectedOrder as any).start_at
-                        )}
-                      </p>
-                      {(selectedOrder as any).end_at && (
-                        <p className="text-xs text-neutral-400">
-                          End:{" "}
-                          {formatDateTime((selectedOrder as any).end_at)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleVerify("scr_verified")}
+                            disabled={verifyingField === "scr_verified" || !orderedByUser}
+                            className={[
+                              "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
+                              (orderedByUser as any)?.scr_verified
+                                ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-200"
+                                : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:border-neutral-500",
+                            ].join(" ")}
+                          >
+                            {(orderedByUser as any)?.scr_verified ? (
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            ) : (
+                              <ShieldAlert className="h-3.5 w-3.5" />
+                            )}
+                            <span>
+                              {verifyingField === "scr_verified"
+                                ? "Updating…"
+                                : (orderedByUser as any)?.scr_verified
+                                ? "SCR verified"
+                                : "SCR not verified"}
+                            </span>
+                          </button>
 
-                  {/* Items */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <ClipboardList className="h-4 w-4 text-neutral-300" />
-                        <p className="text-xs font-semibold text-neutral-200">
-                          Items
-                        </p>
+                          <button
+                            type="button"
+                            onClick={() => handleVerify("id_verified")}
+                            disabled={verifyingField === "id_verified" || !orderedByUser}
+                            className={[
+                              "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
+                              (orderedByUser as any)?.id_verified
+                                ? "border-emerald-600/60 bg-emerald-600/10 text-emerald-200"
+                                : "border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:border-neutral-500",
+                            ].join(" ")}
+                          >
+                            {(orderedByUser as any)?.id_verified ? (
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            ) : (
+                              <ShieldAlert className="h-3.5 w-3.5" />
+                            )}
+                            <span>
+                              {verifyingField === "id_verified"
+                                ? "Updating…"
+                                : (orderedByUser as any)?.id_verified
+                                ? "ID verified"
+                                : "ID not verified"}
+                            </span>
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-xs text-neutral-400">
-                        Total:{" "}
-                        <span className="font-semibold text-white">
-                          {formatMoney(selectedOrder.meta?.totalMinor)}
-                        </span>
-                      </p>
-                    </div>
-
-                    {selectedOrder.meta?.items?.length ? (
-                      <div className="space-y-1">
-                        {selectedOrder.meta.items.map(
-                          (it: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-xs py-1 border-b border-neutral-800/60 last:border-none"
-                            >
-                              <div className="flex flex-col">
-                                <span className="font-medium text-white">
-                                  {it.name}
-                                </span>
-                                <span className="text-[11px] text-neutral-400">
-                                  {it.variation || it.variations || "Standard"}
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="block text-[11px] text-neutral-400">
-                                  Qty: {it.qty}
-                                </span>
-                                <span className="block text-[11px] text-neutral-300">
-                                  {formatMoney(it.totalMinor)}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-neutral-500">
-                        No items found on this order.
-                      </p>
                     )}
                   </div>
 
-                  {/* RAF preview with file/image rendering */}
-                  {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-                      <p className="mb-2 text-xs font-semibold text-neutral-200">
-                        RAF Answers (preview)
-                      </p>
-                      <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-                        {selectedOrder.meta.formsQA.raf.qa.map(
-                          (qa: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="border-b border-neutral-800/60 pb-2 last:border-none"
-                            >
-                              <p className="text-[11px] font-medium text-neutral-300">
-                                {qa.question || qa.key}
-                              </p>
+                  {/* Order summary */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">
+                      Order summary
+                    </p>
 
-                              {/* Handles text, multi-choice and file uploads */}
-                              {renderRafAnswer(qa)}
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[11px] sm:grid-cols-2">
+                      <div>
+                        <dt className="text-neutral-500">Reference</dt>
+                        <dd className="text-neutral-100">
+                          {(selectedOrder as any).reference ||
+                            (selectedOrder as any)._id}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Service</dt>
+                        <dd className="text-neutral-100">
+                          {(selectedOrder as any).service_name || "—"}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Created at</dt>
+                        <dd className="text-neutral-100">
+                          {formatDateTime(
+                            (selectedOrder as any).createdAt ||
+                              (selectedOrder as any).created_at
+                          )}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Appointment</dt>
+                        <dd className="text-neutral-100">
+                          {formatDateTime(
+                            (selectedOrder as any).meta?.appointment_start_at ||
+                              (selectedOrder as any).start_at
+                          )}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Total incl. VAT</dt>
+                        <dd className="text-neutral-100">
+                          {formatMoney(
+                            (selectedOrder as any).meta?.totalMinor ??
+                              (selectedOrder as any).total_minor ??
+                              null
+                          )}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Payment</dt>
+                        <dd className="text-neutral-100 capitalize">
+                          {String((selectedOrder as any).payment_status || "—").replace(
+                            /_/g,
+                            " "
+                          )}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  {/* RAF */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">
+                      Risk Assessment Form (RAF)
+                    </p>
+
+                    {normalizeRafQAs(selectedOrder).length === 0 ? (
+                      <p className="text-[11px] text-neutral-400">
+                        No Risk Assessment data captured for this order.
+                      </p>
+                    ) : (
+                      <ol className="space-y-3">
+                        {normalizeRafQAs(selectedOrder).map((qa: any, idx: number) => (
+                          <li
+                            key={idx}
+                            className="rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2"
+                          >
+                            <p className="text-xs font-medium text-neutral-100">
+                              {idx + 1}. {qa.question}
+                            </p>
+                            <div className="mt-1">
+                              <p className="text-[11px] text-neutral-300">
+                                <span className="font-semibold text-neutral-400">
+                                  Answer:
+                                </span>{" "}
+                                {qa.answer ?? "—"}
+                              </p>
+                              {/* if file uploads exist */}
+                              {qa.raw ? renderRafAnswer(qa) : null}
                             </div>
-                          )
-                        )}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+
+                  {/* Notes */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">
+                      Notes
+                    </p>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {/* Admin notes */}
+                      <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                        <p className="text-[11px] font-semibold text-neutral-200">
+                          Admin notes
+                        </p>
+
+                        <div className="mt-2 space-y-2">
+                          {adminNotes.length === 0 ? (
+                            <p className="text-[11px] text-neutral-500">
+                              No admin notes yet.
+                            </p>
+                          ) : (
+                            adminNotes.map((n, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-start justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950/60 px-2 py-1"
+                              >
+                                <p className="text-[11px] text-neutral-100">
+                                  {n}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveAdminNote(idx)}
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 text-neutral-400 hover:border-rose-500/70 hover:text-rose-200"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={newAdminNote}
+                            onChange={(e) => setNewAdminNote(e.target.value)}
+                            className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
+                            placeholder="Add admin note…"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddAdminNote}
+                            className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-neutral-700 bg-neutral-900/70 px-3 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Consultation notes */}
+                      <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                        <p className="text-[11px] font-semibold text-neutral-200">
+                          Consultation notes
+                        </p>
+
+                        <div className="mt-2 space-y-2">
+                          {consultationNotes.length === 0 ? (
+                            <p className="text-[11px] text-neutral-500">
+                              No consultation notes yet.
+                            </p>
+                          ) : (
+                            consultationNotes.map((n, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-start justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950/60 px-2 py-1"
+                              >
+                                <p className="text-[11px] text-neutral-100">
+                                  {n}
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveConsultationNote(idx)}
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 text-neutral-400 hover:border-rose-500/70 hover:text-rose-200"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+
+                        <div className="mt-2 flex gap-2">
+                          <input
+                            value={newConsultationNote}
+                            onChange={(e) => setNewConsultationNote(e.target.value)}
+                            className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
+                            placeholder="Add consultation note…"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddConsultationNote}
+                            className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-neutral-700 bg-neutral-900/70 px-3 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100"
+                          >
+                            Add
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  ) : null}
 
-                  {/* Notes section */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold text-neutral-200">
-                        Notes
-                      </p>
-                      <p className="text-[11px] text-neutral-500">
-                        Internal notes only visible to staff.
-                      </p>
-                    </div>
-
-                    {/* Admin notes */}
-                    <div className="space-y-2">
-                      <p className="text-[11px] font-medium text-neutral-300">
-                        Admin notes
-                      </p>
-                      {adminNotes.length > 0 && (
-                        <div className="space-y-1">
-                          {adminNotes.map((note, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
-                            >
-                              <span className="flex-1 truncate">{note}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveAdminNote(idx)}
-                                className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
+                    {/* Existing rejection notes (read-only) */}
+                    {existingRejectionNotes.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                        <p className="text-[11px] font-semibold text-neutral-200">
+                          Existing rejection notes
+                        </p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-neutral-200">
+                          {existingRejectionNotes.map((n, idx) => (
+                            <li key={idx} className="break-words">
+                              {n}
+                            </li>
                           ))}
-                        </div>
-                      )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] text-neutral-400">
+                        Approve or reject this order. Rejection requires at least
+                        one note.
+                      </div>
+
                       <div className="flex items-center gap-2">
-                        <input
-                          value={newAdminNote}
-                          onChange={(e) => setNewAdminNote(e.target.value)}
-                          className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
-                          placeholder="Add new admin note"
-                        />
                         <button
                           type="button"
-                          onClick={handleAddAdminNote}
-                          className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-emerald-500 hover:text-emerald-200"
+                          disabled={statusAction === "approved" || statusAction === "rejected"}
+                          onClick={openRejectDialog}
+                          className={[
+                            "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
+                            statusAction
+                              ? "border-neutral-800 bg-neutral-900/40 text-neutral-500"
+                              : "border-rose-700/60 bg-rose-950/30 text-rose-100 hover:border-rose-500/70",
+                          ].join(" ")}
                         >
-                          + Add
+                          {statusAction === "rejected" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ThumbsDown className="h-3.5 w-3.5" />
+                          )}
+                          <span>Reject</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={statusAction === "approved" || statusAction === "rejected"}
+                          onClick={handleApprove}
+                          className={[
+                            "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
+                            statusAction
+                              ? "border-neutral-800 bg-neutral-900/40 text-neutral-500"
+                              : "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500",
+                          ].join(" ")}
+                        >
+                          {statusAction === "approved" ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ThumbsUp className="h-3.5 w-3.5" />
+                          )}
+                          <span>Approve</span>
                         </button>
                       </div>
                     </div>
 
-                    {/* (Consultation notes block left commented as before) */}
-                  </div>
-
-                  {/* Action bar */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
-                    <p className="text-xs text-neutral-500 max-w-md">
-                      Change status for this order. Once approved or rejected,
-                      it will disappear from the pending list. Notes will be
-                      saved with the order.
-                    </p>
-                    <div className="flex flex-wrap gap-2 justify-end">
-                      <button
-                        type="button"
-                        disabled={
-                          statusAction === "rejected" ||
-                          statusAction === "approved"
-                        }
-                        onClick={openRejectDialog}
-                        className="inline-flex items-center gap-1 rounded-full border border-rose-500/60 px-4 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {statusAction === "rejected" && (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        )}
-                        Reject order
-                        <ThumbsDown className="h-3 w-3" />
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={
-                          statusAction === "approved" ||
-                          statusAction === "rejected"
-                        }
-                        onClick={handleApprove}
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-4 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-                      >
-                        {statusAction === "approved" && (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        )}
-                        Approve order
-                        <ThumbsUp className="h-3 w-3" />
-                      </button>
-                    </div>
+                    {detailError && (
+                      <div className="mt-3 rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-100">
+                        {detailError}
+                      </div>
+                    )}
                   </div>
                 </>
+              ) : (
+                <div className="text-[11px] text-neutral-400">No order selected.</div>
               )}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Reject dialog (nested) */}
-          {showRejectDialog && selectedOrder && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-              <div className="w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl px-4 py-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-white">
-                      Reject order
-                    </p>
-                    <p className="text-[11px] text-neutral-500">
-                      Add one or more rejection notes. These will be stored with
-                      this order.
-                    </p>
-                  </div>
+      {/* ----------------------------- Reject Dialog ----------------------------- */}
+      {showRejectDialog && selectedOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setShowRejectDialog(false)}
+          />
+          <div className="relative z-10 w-full max-w-xl rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-white">Reject order</p>
+                <p className="mt-1 text-[11px] text-neutral-400">
+                  Add one or more rejection notes. These will be saved with the
+                  order.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRejectDialog(false)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:border-neutral-500 hover:text-white"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-3 text-xs">
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                  Add note
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={rejectionNoteInput}
+                    onChange={(e) => setRejectionNoteInput(e.target.value)}
+                    className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
+                    placeholder="Reason for rejection…"
+                  />
                   <button
                     type="button"
-                    onClick={() => setShowRejectDialog(false)}
-                    className="rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                    onClick={handleAddRejectionNote}
+                    className="inline-flex h-8 items-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 text-[11px] text-neutral-200 hover:border-neutral-500"
                   >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {newRejectionNotes.length > 0 && (
-                    <div className="space-y-1">
-                      {newRejectionNotes.map((note, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-center gap-2 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px]"
-                        >
-                          <span className="flex-1 truncate">{note}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveNewRejectionNote(idx)}
-                            className="shrink-0 rounded-full p-1 hover:bg-neutral-800 text-neutral-500 hover:text-rose-300"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={rejectionNoteInput}
-                      onChange={(e) => setRejectionNoteInput(e.target.value)}
-                      className="flex-1 rounded-md bg-neutral-950 border border-neutral-800 px-2 py-1 text-[11px] text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-rose-500"
-                      placeholder="Add rejection note (reason, safety concern, etc.)"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddRejectionNote}
-                      className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1 text-[11px] font-semibold text-neutral-100 hover:border-rose-500 hover:text-rose-200"
-                    >
-                      + Add
-                    </button>
-                  </div>
-                </div>
-
-                {rejectError && (
-                  <p className="text-[11px] text-rose-300">{rejectError}</p>
-                )}
-
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setShowRejectDialog(false)}
-                    className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-[11px] font-semibold text-neutral-200 hover:border-neutral-500"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmReject}
-                    disabled={statusAction === "rejected"}
-                    className="inline-flex items-center gap-2 rounded-full border border-rose-500/70 bg-rose-500/10 px-4 py-1.5 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {statusAction === "rejected" && (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    )}
-                    Confirm rejection
+                    Add
                   </button>
                 </div>
               </div>
+
+              <div className="rounded-md border border-neutral-800 bg-neutral-900/60 px-2 py-2">
+                <p className="mb-2 text-[11px] font-medium text-neutral-300">
+                  Notes to be saved
+                </p>
+
+                {existingRejectionNotes.length === 0 &&
+                newRejectionNotes.length === 0 &&
+                !rejectionNoteInput.trim() ? (
+                  <p className="text-[11px] text-neutral-500">
+                    No rejection notes added yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {existingRejectionNotes.map((n, idx) => (
+                      <div
+                        key={`ex-${idx}`}
+                        className="rounded-md border border-neutral-800 bg-neutral-950/40 px-2 py-1 text-[11px] text-neutral-200"
+                      >
+                        {n}
+                      </div>
+                    ))}
+
+                    {newRejectionNotes.map((n, idx) => (
+                      <div
+                        key={`new-${idx}`}
+                        className="flex items-start justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950/60 px-2 py-1"
+                      >
+                        <p className="text-[11px] text-neutral-100">{n}</p>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveNewRejectionNote(idx)}
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 text-neutral-400 hover:border-rose-500/70 hover:text-rose-200"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {rejectionNoteInput.trim() && (
+                      <div className="rounded-md border border-dashed border-neutral-700 bg-neutral-950/30 px-2 py-1 text-[11px] text-neutral-300">
+                        {rejectionNoteInput.trim()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {rejectError && (
+                <div className="rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-100">
+                  {rejectError}
+                </div>
+              )}
+
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRejectDialog(false)}
+                  className="inline-flex h-8 items-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 text-[11px] text-neutral-200 hover:border-neutral-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={statusAction === "rejected"}
+                  onClick={confirmReject}
+                  className={[
+                    "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
+                    statusAction === "rejected"
+                      ? "border-rose-700/70 bg-rose-700/40 text-rose-50"
+                      : "border-rose-600 bg-rose-600 text-white hover:bg-rose-500",
+                  ].join(" ")}
+                >
+                  {statusAction === "rejected" ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Rejecting…</span>
+                    </>
+                  ) : (
+                    <>
+                      <ThumbsDown className="h-3.5 w-3.5" />
+                      <span>Confirm reject</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
