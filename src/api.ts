@@ -17,8 +17,6 @@ export function getBackendBase(): string {
   }
 
   const { protocol, hostname } = window.location;
-
-  // Split hostname to check for subdomain (e.g., xyz.mydomain.com)
   const parts = hostname.split(".");
 
   // Check if there is a subdomain (at least 3 parts: subdomain.domain.tld)
@@ -100,6 +98,8 @@ export async function loginApi(email: string, password: string) {
 }
 
 /* ------------------- Services APIs ------------------- */
+export type AppointmentMedium = "offline" | "online";
+
 
 export type ServicePayload = {
   name: string;
@@ -114,6 +114,7 @@ export type ServicePayload = {
   cta_text: string;
   image: string | null;
   service_type?: "private" | "nhs" | string;
+  appointment_medium?: AppointmentMedium;
 };
 
 export async function createServiceApi(payload: ServicePayload) {
@@ -121,7 +122,8 @@ export async function createServiceApi(payload: ServicePayload) {
 
   const finalPayload = {
     ...payload,
-    service_type: payload.service_type ?? "private", 
+    service_type: payload.service_type ?? "private",
+    appointment_medium: payload.appointment_medium ?? "offline",
   };
 
   return jsonFetch<any>(`${base}/services`, {
@@ -145,7 +147,8 @@ export async function updateServiceApi(
 
   const finalPayload = {
     ...payload,
-    service_type: payload.service_type ?? "private", 
+    service_type: payload.service_type ?? "private",
+    appointment_medium: payload.appointment_medium ?? "offline",
   };
 
   return jsonFetch<any>(`${base}/services/${id}`, {
@@ -383,6 +386,31 @@ export async function createServiceMedicineApi(
   return res.json();
 }
 
+
+// DELETE /service-medicines/:id  -> remove service-medicine mapping by mapping id
+export async function deleteServiceMedicineApi(linkId: string) {
+  const base = getBackendBase();
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const res = await fetch(`${base}/service-medicines/${linkId}`, {
+    method: "DELETE",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(txt || "Failed to unlink medicine from service");
+  }
+
+  return res.json().catch(() => ({}));
+}
+
 /* ------------------- Patients APIs ------------------- */
 
 // GET /users/patients -> List of patients
@@ -404,7 +432,6 @@ export async function getPatientsApi(page: number = 1, limit: number = 10) {
   });
 }
 
-
 /* ------------------- Users APIs ------------------- */
 
 export type UserDto = {
@@ -417,15 +444,57 @@ export type UserDto = {
   phone?: string;
   gender?: string;
   dob?: string;
+
   address_line1?: string;
   address_line2?: string;
   city?: string;
   county?: string;
   postalcode?: string;
   country?: string;
+
+  // ✅ NEW: shipping address support
+  use_shipping_address?: boolean;
+  shipping_address_line1?: string;
+  shipping_address_line2?: string;
+  shipping_city?: string;
+  shipping_postalcode?: string;
+  shipping_country?: string;
+
   user_priority?: string;
-  gphc_number?: string;       // ✅ GPhC number
-  signature_image?: string;   // ✅ stored signature image path/url
+  gphc_number?: string;
+  signature_image?: string;
+  [key: string]: any;
+};
+
+export type CreateUserPayload = {
+  email: string;
+  password: string;
+
+  firstName: string;
+  lastName: string;
+
+  gender?: string;
+  phone?: string;
+  email_verified?: boolean;
+  dob?: string; // "YYYY-MM-DD"
+
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  county?: string;
+  postalcode?: string;
+  country?: string;
+
+  // ✅ NEW: shipping address support
+  use_shipping_address?: boolean;
+  shipping_address_line1?: string;
+  shipping_address_line2?: string;
+  shipping_city?: string;
+  shipping_postalcode?: string;
+  shipping_country?: string;
+
+  is_patient?: boolean;
+
   [key: string]: any;
 };
 
@@ -538,15 +607,12 @@ export async function updateUserWithFormDataApi(
 }
 
 // POST /users -> Create a new user (JSON)
-export async function createUserApi(payload: any) {
+export async function createUserApi(payload: CreateUserPayload) {
   const base = getBackendBase();
   const url = `${base}/users`;
 
   const token = localStorage.getItem("session_token");
-
-  if (!token) {
-    throw new Error("No authentication token found.");
-  }
+  if (!token) throw new Error("No authentication token found.");
 
   return jsonFetch<any>(url, {
     method: "POST",
@@ -557,8 +623,6 @@ export async function createUserApi(payload: any) {
     body: JSON.stringify(payload),
   });
 }
-
-
 
 // Single weekday config
 export type ScheduleWeekDay = {
@@ -982,9 +1046,9 @@ export async function getOrderByIdApi(id: string) {
 }
 
 export type UpdateOrderPayload = {
-  status?: string;          // "approved" | "rejected" | "completed" | etc.
-  admin_notes?: string[];   // our notes array
-  [key: string]: any;       // allow future fields if needed
+  status?: string; // "approved" | "rejected" | "completed" | etc.
+  admin_notes?: string[]; // our notes array
+  [key: string]: any; // allow future fields if needed
 };
 
 export async function updateOrderStatusApi(
@@ -997,8 +1061,6 @@ export async function updateOrderStatusApi(
     body: JSON.stringify(payload),
   });
 }
-
-
 
 /* ------------------- Appointments APIs ------------------- */
 
@@ -1102,11 +1164,12 @@ export async function getAppointmentByIdApi(
       ? localStorage.getItem("session_token")
       : null;
 
-  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: HeadersInit = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
 
   return jsonFetch<AppointmentDto>(url, { headers });
 }
-
 
 /* ------------------- Tenant APIs ------------------- */
 
@@ -1161,7 +1224,7 @@ export type AppointmentsCalendarSummaryDay = {
   appointments: {
     _id: string;
     start_at: string; // ISO
-    status: string;   // "pending" | "approved" | ...
+    status: string; // "pending" | "approved" | ...
   }[];
 };
 
@@ -1172,7 +1235,7 @@ export type AppointmentsCalendarSummaryResponse = {
 // ---------- Helper ----------
 export async function getAppointmentsCalendarSummaryApi(params: {
   from: string; // "YYYY-MM-DD"
-  to: string;   // "YYYY-MM-DD"
+  to: string; // "YYYY-MM-DD"
 }): Promise<AppointmentsCalendarSummaryResponse> {
   const base = getBackendBase(); // e.g. http://tenant.domain:8000/api
   const qs = new URLSearchParams({
@@ -1187,12 +1250,12 @@ export async function getAppointmentsCalendarSummaryApi(params: {
       ? localStorage.getItem("session_token")
       : null;
 
-  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: HeadersInit = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
 
   return jsonFetch<AppointmentsCalendarSummaryResponse>(url, { headers });
 }
-
-
 
 /* ------------------- Dynamic Home Page APIs ------------------- */
 
@@ -1254,7 +1317,9 @@ export async function getDynamicHomePageApi(
       ? localStorage.getItem("session_token")
       : null;
 
-  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: HeadersInit = token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
 
   return jsonFetch<DynamicHomePageContent>(url, { headers });
 }
@@ -1294,34 +1359,38 @@ export async function updateDynamicHomePageApi(
 /* ------------------- Email APIs ------------------- */
 
 export type SendEmailRequest = {
-  to: string;
+  to: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject: string;
   template: string;
   context: Record<string, any>;
-  /**
-   * Optional attachments – e.g. your generated invoice PDF
-   * We send them as multipart/form-data.
-   */
   attachments?: File[];
 };
 
 export async function sendEmailApi(payload: SendEmailRequest) {
-  const base = getBackendBase(); // tenant-aware base, e.g. http://tenant.domain/api
+  const base = getBackendBase();
   const url = `${base}/email/send`;
 
   const formData = new FormData();
-  formData.append("to", payload.to);
+
+  const to = Array.isArray(payload.to) ? payload.to.join(",") : payload.to;
+  const cc = Array.isArray(payload.cc) ? payload.cc.join(",") : payload.cc;
+  const bcc = Array.isArray(payload.bcc) ? payload.bcc.join(",") : payload.bcc;
+
+  formData.append("to", to);
+  if (cc && cc.length) formData.append("cc", cc);
+  if (bcc && bcc.length) formData.append("bcc", bcc);
+
   formData.append("subject", payload.subject);
   formData.append("template", payload.template);
   formData.append("context", JSON.stringify(payload.context || {}));
 
   // Attach files if provided
   (payload.attachments || []).forEach((file, index) => {
-    // backend field name "attachments" – adjust if your API expects another name
     formData.append("attachments", file, file.name || `attachment-${index}`);
   });
 
-  // Bearer token if available
   let headers: HeadersInit = {};
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("session_token");
@@ -1332,7 +1401,7 @@ export async function sendEmailApi(payload: SendEmailRequest) {
 
   const res = await fetch(url, {
     method: "POST",
-    headers,          // ❗ no Content-Type – browser sets multipart boundary
+    headers,
     body: formData,
   });
 
@@ -1343,7 +1412,6 @@ export async function sendEmailApi(payload: SendEmailRequest) {
 
   return res.json();
 }
-
 
 /* ------------------- NHS Service (NHS nominations) APIs ------------------- */
 
@@ -1374,9 +1442,9 @@ export type NhsServiceRequestDto = {
   delivery_postcode: string;
   delivery_country: string;
 
-  exemption: string;          // e.g. "age_60_plus", "pays"
+  exemption: string; // e.g. "age_60_plus", "pays"
   exemption_number: string;
-  exemption_expiry: string;   // ISO date string
+  exemption_expiry: string; // ISO date string
 
   consent_patient: boolean;
   consent_nomination: boolean;
@@ -1384,7 +1452,7 @@ export type NhsServiceRequestDto = {
   consent_exemption_signed: boolean;
   consent_scr_access: boolean;
 
-  status: string;             // "pending" | "approved" | "rejected" | etc.
+  status: string; // "pending" | "approved" | "rejected" | etc.
   approved_at: string | null;
   approvedBy: string | null;
   approval_note: string;

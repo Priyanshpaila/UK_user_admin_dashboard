@@ -2,14 +2,48 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createUserApi } from "../../../../api";
+import { createUserApi, type CreateUserPayload } from "../../../../api";
 import { Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+
+type FormState = {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  gender: "male" | "female" | "other";
+  phone: string;
+  dob: string;
+
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  county: string;
+  postalcode: string;
+  country: string;
+
+  // ✅ NEW
+  use_shipping_address: boolean;
+
+  shipping_address_line1: string;
+  shipping_address_line2: string;
+  shipping_city: string;
+  shipping_postalcode: string;
+  shipping_country: string;
+};
+
+const mapAddressToShipping = (form: FormState) => ({
+  shipping_address_line1: form.address_line1,
+  shipping_address_line2: form.address_line2,
+  shipping_city: form.city,
+  shipping_postalcode: form.postalcode,
+  shipping_country: form.country,
+});
 
 export default function CreatePatientPage() {
   const router = useRouter();
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<FormState>({
     email: "",
     password: "",
     firstName: "",
@@ -17,12 +51,22 @@ export default function CreatePatientPage() {
     gender: "male",
     phone: "",
     dob: "",
+
     address_line1: "",
     address_line2: "",
     city: "",
     county: "",
     postalcode: "",
     country: "",
+
+    // ✅ default: shipping same as address
+    use_shipping_address: true,
+
+    shipping_address_line1: "",
+    shipping_address_line2: "",
+    shipping_city: "",
+    shipping_postalcode: "",
+    shipping_country: "",
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -33,10 +77,44 @@ export default function CreatePatientPage() {
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     const { name, value } = e.target;
-    setForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+
+    setForm((prev) => {
+      const next = { ...prev, [name]: value } as FormState;
+
+      // ✅ If "shipping same as address" is enabled, keep shipping in sync
+      if (next.use_shipping_address) {
+        if (
+          name === "address_line1" ||
+          name === "address_line2" ||
+          name === "city" ||
+          name === "postalcode" ||
+          name === "country"
+        ) {
+          const sync = mapAddressToShipping(next);
+          return { ...next, ...sync };
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const handleToggleShippingSameAsAddress = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const checked = e.target.checked;
+
+    setForm((prev) => {
+      const next = { ...prev, use_shipping_address: checked };
+
+      // ✅ when turned ON, copy address into shipping immediately
+      if (checked) {
+        const sync = mapAddressToShipping(next);
+        return { ...next, ...sync };
+      }
+
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -46,7 +124,21 @@ export default function CreatePatientPage() {
     setSuccessMsg(null);
 
     try {
-      const payload = {
+      // ✅ Build shipping fields:
+      // - if use_shipping_address=true => copy from address
+      // - else => use shipping inputs
+      const shipping =
+        form.use_shipping_address
+          ? mapAddressToShipping(form)
+          : {
+              shipping_address_line1: form.shipping_address_line1,
+              shipping_address_line2: form.shipping_address_line2,
+              shipping_city: form.shipping_city,
+              shipping_postalcode: form.shipping_postalcode,
+              shipping_country: form.shipping_country,
+            };
+
+      const payload: CreateUserPayload = {
         email: form.email,
         password: form.password,
         firstName: form.firstName,
@@ -55,7 +147,7 @@ export default function CreatePatientPage() {
         gender: form.gender,
         phone: form.phone,
         email_verified: false,
-        dob: form.dob, // "YYYY-MM-DD"
+        dob: form.dob,
 
         address_line1: form.address_line1,
         address_line2: form.address_line2,
@@ -64,20 +156,21 @@ export default function CreatePatientPage() {
         postalcode: form.postalcode,
         country: form.country,
 
-        is_patient: true, // hard-coded as requested
+        // ✅ NEW shipping fields
+        use_shipping_address: form.use_shipping_address,
+        ...shipping,
+
+        is_patient: true,
       };
 
       const res = await createUserApi(payload);
       console.log("Patient created:", res);
 
       setSuccessMsg("Patient created successfully.");
-      // Optionally redirect after a short delay
       // router.push("/dashboard/patients");
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(
-        err?.message || "Failed to create patient. Please try again."
-      );
+      setErrorMsg(err?.message || "Failed to create patient. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -122,7 +215,6 @@ export default function CreatePatientPage() {
               Basic Information
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* First Name */}
               <div>
                 <label className="block text-sm text-neutral-300">
                   First Name
@@ -137,7 +229,6 @@ export default function CreatePatientPage() {
                 />
               </div>
 
-              {/* Last Name */}
               <div>
                 <label className="block text-sm text-neutral-300">
                   Last Name
@@ -152,7 +243,6 @@ export default function CreatePatientPage() {
                 />
               </div>
 
-              {/* Gender */}
               <div>
                 <label className="block text-sm text-neutral-300">Gender</label>
                 <select
@@ -167,7 +257,6 @@ export default function CreatePatientPage() {
                 </select>
               </div>
 
-              {/* DOB */}
               <div>
                 <label className="block text-sm text-neutral-300">
                   Date of Birth
@@ -190,7 +279,6 @@ export default function CreatePatientPage() {
               Contact & Login
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Email */}
               <div>
                 <label className="block text-sm text-neutral-300">Email</label>
                 <input
@@ -203,7 +291,6 @@ export default function CreatePatientPage() {
                 />
               </div>
 
-              {/* Phone */}
               <div>
                 <label className="block text-sm text-neutral-300">Phone</label>
                 <input
@@ -215,7 +302,6 @@ export default function CreatePatientPage() {
                 />
               </div>
 
-              {/* Password */}
               <div className="md:col-span-2">
                 <label className="block text-sm text-neutral-300">
                   Password
@@ -240,7 +326,6 @@ export default function CreatePatientPage() {
           <div>
             <h2 className="text-lg font-medium text-white mb-3">Address</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Address Line 1 */}
               <div className="md:col-span-2">
                 <label className="block text-sm text-neutral-300">
                   Address Line 1
@@ -251,11 +336,10 @@ export default function CreatePatientPage() {
                   value={form.address_line1}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="123 Baker Street"
+                  placeholder="Flat 17"
                 />
               </div>
 
-              {/* Address Line 2 */}
               <div className="md:col-span-2">
                 <label className="block text-sm text-neutral-300">
                   Address Line 2
@@ -266,11 +350,10 @@ export default function CreatePatientPage() {
                   value={form.address_line2}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="Apartment 4B"
+                  placeholder="19 Wellington Street"
                 />
               </div>
 
-              {/* City */}
               <div>
                 <label className="block text-sm text-neutral-300">City</label>
                 <input
@@ -279,11 +362,10 @@ export default function CreatePatientPage() {
                   value={form.city}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="London"
+                  placeholder="Leeds"
                 />
               </div>
 
-              {/* County */}
               <div>
                 <label className="block text-sm text-neutral-300">County</label>
                 <input
@@ -292,11 +374,10 @@ export default function CreatePatientPage() {
                   value={form.county}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="Greater London"
+                  placeholder="West Yorkshire"
                 />
               </div>
 
-              {/* Postal Code */}
               <div>
                 <label className="block text-sm text-neutral-300">
                   Postal Code
@@ -307,11 +388,10 @@ export default function CreatePatientPage() {
                   value={form.postalcode}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="NW1 6XE"
+                  placeholder="LS1 4JF"
                 />
               </div>
 
-              {/* Country */}
               <div>
                 <label className="block text-sm text-neutral-300">Country</label>
                 <input
@@ -320,13 +400,116 @@ export default function CreatePatientPage() {
                   value={form.country}
                   onChange={handleChange}
                   className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500"
-                  placeholder="UK"
+                  placeholder="United Kingdom"
                 />
               </div>
             </div>
           </div>
 
-     
+          {/* ✅ Shipping Address */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-medium text-white">Shipping Address</h2>
+
+              <label className="inline-flex items-center gap-2 text-sm text-neutral-300 select-none">
+                <input
+                  type="checkbox"
+                  checked={form.use_shipping_address}
+                  onChange={handleToggleShippingSameAsAddress}
+                  className="h-4 w-4 rounded border-neutral-700 bg-neutral-800"
+                />
+                Same as address
+              </label>
+            </div>
+
+            {form.use_shipping_address && (
+              <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-800/30 px-4 py-3 text-sm text-neutral-300">
+                Shipping address will be copied from the Address section and kept
+                in sync.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="block text-sm text-neutral-300">
+                  Shipping Address Line 1
+                </label>
+                <input
+                  type="text"
+                  name="shipping_address_line1"
+                  value={form.shipping_address_line1}
+                  onChange={handleChange}
+                  disabled={form.use_shipping_address}
+                  required={!form.use_shipping_address}
+                  className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  placeholder="Flat 17"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm text-neutral-300">
+                  Shipping Address Line 2
+                </label>
+                <input
+                  type="text"
+                  name="shipping_address_line2"
+                  value={form.shipping_address_line2}
+                  onChange={handleChange}
+                  disabled={form.use_shipping_address}
+                  className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  placeholder="19 Wellington Street"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping City
+                </label>
+                <input
+                  type="text"
+                  name="shipping_city"
+                  value={form.shipping_city}
+                  onChange={handleChange}
+                  disabled={form.use_shipping_address}
+                  required={!form.use_shipping_address}
+                  className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  placeholder="Leeds"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping Postal Code
+                </label>
+                <input
+                  type="text"
+                  name="shipping_postalcode"
+                  value={form.shipping_postalcode}
+                  onChange={handleChange}
+                  disabled={form.use_shipping_address}
+                  required={!form.use_shipping_address}
+                  className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  placeholder="LS1 4JF"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping Country
+                </label>
+                <input
+                  type="text"
+                  name="shipping_country"
+                  value={form.shipping_country}
+                  onChange={handleChange}
+                  disabled={form.use_shipping_address}
+                  required={!form.use_shipping_address}
+                  className="w-full mt-1 p-2 rounded-lg bg-neutral-800 border border-neutral-700 text-white focus:outline-none focus:border-blue-500 disabled:opacity-60"
+                  placeholder="United Kingdom"
+                />
+              </div>
+            </div>
+          </div>
 
           {/* Actions */}
           <div className="flex justify-end gap-3">
@@ -338,6 +521,7 @@ export default function CreatePatientPage() {
             >
               Cancel
             </button>
+
             <button
               type="submit"
               disabled={submitting}

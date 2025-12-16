@@ -300,6 +300,11 @@ export default function CreateServicePage() {
   const [viewType, setViewType] = useState("card");
   const [serviceType, setServiceType] = useState<"private" | "nhs">("private");
 
+  // ✅ NEW: appointment_medium toggle state (default "offline")
+  const [appointmentMedium, setAppointmentMedium] = useState<
+    "offline" | "online"
+  >("offline");
+
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
 
@@ -658,6 +663,9 @@ export default function CreateServicePage() {
       formData.append("status", "published");
       formData.append("service_type", serviceType);
 
+      // ✅ NEW: send appointment_medium
+      formData.append("appointment_medium", appointmentMedium);
+
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
       formData.append("forms_assignment", JSON.stringify({}));
@@ -672,7 +680,9 @@ export default function CreateServicePage() {
           ? localStorage.getItem("session_token")
           : null;
 
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
 
       const res = await fetch(`${base}/services`, {
         method: "POST",
@@ -838,6 +848,35 @@ export default function CreateServicePage() {
                 <p className="mt-1 text-[11px] text-neutral-500">
                   Choose whether this is an NHS or private service.
                 </p>
+              </div>
+
+              {/* ✅ NEW: Appointment medium toggle */}
+              <div>
+                <label className="text-xs font-medium mr-5 text-neutral-300">
+                  Appointment medium
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAppointmentMedium((prev) =>
+                      prev === "offline" ? "online" : "offline"
+                    )
+                  }
+                  className={`mt-1 inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+                    appointmentMedium === "offline"
+                      ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+                      : "bg-neutral-800 text-emerald-300 border border-emerald-500/40"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-[10px] w-[10px] rounded-full ${
+                      appointmentMedium === "offline"
+                        ? "bg-neutral-500"
+                        : "bg-emerald-400"
+                    }`}
+                  />
+                  {appointmentMedium === "offline" ? "Offline" : "Online"}
+                </button>
               </div>
 
               <div>
@@ -1261,8 +1300,7 @@ export default function CreateServicePage() {
                         placeholder="mounjaro-tirzepatide"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Auto-generated from name, but you can override if
-                        needed.
+                        Auto-generated from name, but you can override if needed.
                       </p>
                     </div>
 
@@ -1316,9 +1354,7 @@ export default function CreateServicePage() {
                       >
                         <span
                           className={`inline-block h-[10px] w-[10px] rounded-full ${
-                            medAllowReorder
-                              ? "bg-emerald-400"
-                              : "bg-neutral-500"
+                            medAllowReorder ? "bg-emerald-400" : "bg-neutral-500"
                           }`}
                         />
                         {medAllowReorder
@@ -1528,8 +1564,7 @@ export default function CreateServicePage() {
                         Image &amp; description
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Optional details to make this medicine easy to
-                        recognise.
+                        Optional details to make this medicine easy to recognise.
                       </p>
                     </div>
                   </div>
@@ -1545,9 +1580,7 @@ export default function CreateServicePage() {
                           type="button"
                           className="relative h-16 w-16 rounded-lg border border-dashed border-neutral-700 bg-neutral-900/80 flex items-center justify-center overflow-hidden hover:border-blue-500/60 hover:bg-neutral-800/80 transition-colors"
                           onClick={() =>
-                            document
-                              .getElementById("med-image-input")
-                              ?.click()
+                            document.getElementById("med-image-input")?.click()
                           }
                         >
                           {medImagePreview ? (
@@ -1569,9 +1602,7 @@ export default function CreateServicePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                document
-                                  .getElementById("med-image-input")
-                                  ?.click()
+                                document.getElementById("med-image-input")?.click()
                               }
                               className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
                             >

@@ -343,6 +343,11 @@ export default function EditServicePage() {
     ServiceMedicineRow[]
   >([]);
 
+  // ✅ appointment_medium (offline / online)
+  const [appointmentMedium, setAppointmentMedium] = useState<
+    "offline" | "online"
+  >("offline");
+
   // ---------- Inline Medicine Modal state (create + edit) ----------
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
   const [editingMed, setEditingMed] = useState<Medicine | null>(null);
@@ -376,6 +381,10 @@ export default function EditServicePage() {
           | "private"
           | "nhs";
         setServiceType(st === "nhs" ? "nhs" : "private");
+        const am = String(
+          data.appointment_medium || data.appointmentMedium || "offline"
+        );
+        setAppointmentMedium(am === "online" ? "online" : "offline");
 
         // IMAGE HANDLING
         if (data.image) {
@@ -493,6 +502,7 @@ export default function EditServicePage() {
       formData.append("view_type", viewType);
       formData.append("status", "published");
       formData.append("service_type", serviceType);
+      formData.append("appointment_medium", appointmentMedium);
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
       formData.append("forms_assignment", JSON.stringify({}));
@@ -813,10 +823,7 @@ export default function EditServicePage() {
       fd.append("slug", payload.slug);
       fd.append("description", payload.description);
       fd.append("status", payload.status);
-      fd.append(
-        "max_bookable_quantity",
-        String(payload.max_bookable_quantity)
-      );
+      fd.append("max_bookable_quantity", String(payload.max_bookable_quantity));
       fd.append("allow_reorder", String(payload.allow_reorder));
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
@@ -971,6 +978,35 @@ export default function EditServicePage() {
                     <option value="private">Private</option>
                     <option value="nhs">NHS</option>
                   </select>
+                </div>
+
+                {/* ✅ Appointment medium (added only) */}
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-medium text-neutral-300 mr-5">
+                    Appointment medium
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setAppointmentMedium((prev) =>
+                        prev === "offline" ? "online" : "offline"
+                      )
+                    }
+                    className={`mt-1 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                      appointmentMedium === "offline"
+                        ? "bg-neutral-800 text-neutral-300 border border-neutral-600"
+                        : "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-[10px] w-[10px] rounded-full ${
+                        appointmentMedium === "offline"
+                          ? "bg-neutral-500"
+                          : "bg-emerald-400"
+                      }`}
+                    />
+                    {appointmentMedium === "offline" ? "Offline" : "Online"}
+                  </button>
                 </div>
               </div>
 
@@ -1191,13 +1227,10 @@ export default function EditServicePage() {
                                   value={m._id}
                                   disabled={disabled || selectedElsewhere}
                                 >
-                                  {m.name}{" "}
-                                  {m.strength ? `(${m.strength})` : ""} –{" "}
-                                  {m.sku}
+                                  {m.name} {m.strength ? `(${m.strength})` : ""}{" "}
+                                  – {m.sku}
                                   {disabled ? " (already linked)" : ""}
-                                  {selectedElsewhere
-                                    ? " (selected above)"
-                                    : ""}
+                                  {selectedElsewhere ? " (selected above)" : ""}
                                 </option>
                               );
                             })}
@@ -1773,9 +1806,7 @@ export default function EditServicePage() {
                           type="button"
                           className="relative h-16 w-16 rounded-lg border border-dashed border-neutral-700 bg-neutral-900/80 flex items-center justify-center overflow-hidden hover:border-blue-500/60 hover:bg-neutral-800/80 transition-colors"
                           onClick={() =>
-                            document
-                              .getElementById("med-image-input")
-                              ?.click()
+                            document.getElementById("med-image-input")?.click()
                           }
                         >
                           {medImagePreview ? (

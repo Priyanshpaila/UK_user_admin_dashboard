@@ -1,6 +1,7 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
@@ -127,13 +128,12 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (fromOrder) return fromOrder;
 
   if (user) {
+    const u: any = user;
     const fromUser =
-      (user as any).name ||
-      (user as any).fullName ||
-      `${(user as any).firstName || ""} ${
-        (user as any).lastName || ""
-      }`.trim() ||
-      (user as any).email;
+      u.name ||
+      u.fullName ||
+      `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
+      u.email;
     if (fromUser) return fromUser;
   }
 
@@ -154,9 +154,9 @@ function getUserInitials(user: UserDto | null) {
   return initials.join("") || "PT";
 }
 
-/* --------------------- RAF file/image helpers --------------------- */
+/* ----------------- URL helper (same as Approved page) ----------------- */
 
-const resolveImageUrl = (imagePath?: string | null): string => {
+function resolveImageUrl(imagePath?: string | null): string {
   if (!imagePath) return "";
   if (/^https?:\/\//i.test(imagePath)) return imagePath;
 
@@ -167,78 +167,9 @@ const resolveImageUrl = (imagePath?: string | null): string => {
   const baseWithApi = getBackendBase();
   const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
   return `${cleanBase}${normalizedPath}`;
-};
-
-// Render RAF answer including file uploads with images
-function renderRafAnswer(qa: any) {
-  const raw = qa?.raw;
-
-  // File upload: raw is array of file objects with url/name/type
-  if (Array.isArray(raw) && raw.length && typeof raw[0] === "object") {
-    return (
-      <div className="mt-1 flex flex-wrap gap-3">
-        {raw.map((file: any, i: number) => {
-          const url = resolveImageUrl(file.url);
-          const isImage = (file.type || file.mimeType || "").startsWith(
-            "image/"
-          );
-
-          if (!url) {
-            return (
-              <div
-                key={i}
-                className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1"
-              >
-                <span className="text-[11px] font-medium text-neutral-100">
-                  {file.name || "File"}
-                </span>
-              </div>
-            );
-          }
-
-          return (
-            <div
-              key={i}
-              className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1"
-            >
-              {isImage && (
-                <button
-                  type="button"
-                  onClick={() => window.open(url, "_blank")}
-                  className="relative h-10 w-10 overflow-hidden rounded-md border border-neutral-800 bg-neutral-900"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={url}
-                    alt={file.name || "uploaded image"}
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-              )}
-
-              <div className="flex flex-col">
-                <button
-                  type="button"
-                  onClick={() => window.open(url, "_blank")}
-                  className="text-left text-[11px] font-medium text-emerald-300 hover:underline"
-                >
-                  {file.name || "View file"}
-                </button>
-                <span className="text-[10px] text-neutral-500">
-                  {file.type || file.mimeType || "file"}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  return (
-    <p className="mt-0.5 text-[11px] text-neutral-100">{qa?.answer ?? "—"}</p>
-  );
 }
+
+/* ----------------- API unwrap helpers (robust) ----------------- */
 
 function unwrapOrder(res: any): OrderDto {
   return (res?.data ?? res?.order ?? res) as OrderDto;
@@ -251,57 +182,127 @@ function unwrapUser(res: any): UserDto | null {
   return u as UserDto;
 }
 
-function normalizeRafQAs(order: OrderDto) {
-  const meta: any = (order as any)?.meta || {};
+function unwrapOrdersList(res: any): {
+  orders: OrderDto[];
+  meta: OrdersListMeta | null;
+} {
+  const orders =
+    (res?.data ??
+      res?.orders ??
+      res?.items ??
+      (Array.isArray(res) ? res : [])) as OrderDto[];
+  const meta = (res?.meta ?? res?.pagination ?? null) as OrdersListMeta | null;
+  return { orders: Array.isArray(orders) ? orders : [], meta };
+}
+
+function idOf(o: any) {
+  return String(o?._id || o?.id || "");
+}
+
+function extractUserIdFromOrder(order: any): string | null {
+  return (
+    (order?.user_id as string) ||
+    (order?.userId as string) ||
+    (order?.user?._id as string) ||
+    null
+  );
+}
+
+function extractTotalMinor(order: any): number | null {
+  return (
+    order?.meta?.totalMinor ??
+    order?.meta?.total_minor ??
+    order?.total_minor ??
+    order?.totalMinor ??
+    null
+  );
+}
+
+function extractAppointmentStart(order: any): string | null {
+  return (
+    order?.meta?.appointment_start_at ??
+    order?.meta?.appointmentStartAt ??
+    order?.start_at ??
+    order?.startAt ??
+    null
+  );
+}
+
+function extractProductName(order: any): string {
+  return (
+    order?.meta?.selectedProduct?.name ||
+    order?.meta?.lines?.[0]?.name ||
+    order?.meta?.items?.[0]?.name ||
+    order?.service_name ||
+    "Order"
+  );
+}
+
+/* ----------------- RAF extraction + render (SAME AS APPROVED PAGE) ----------------- */
+
+function getRafQAs(
+  order: any
+): Array<{ question: string; answer: string; raw?: any }> {
+  const meta: any = order?.meta || {};
+
+  // preferred: meta.formsQA.raf.qa
+  const forms = meta?.formsQA?.raf?.qa;
+  if (Array.isArray(forms) && forms.length) {
+    return forms.map((qa: any, idx: number) => ({
+      question: String(qa?.question || qa?.key || `Question ${idx + 1}`),
+      answer:
+        qa?.answer != null
+          ? String(qa.answer)
+          : qa?.raw == null
+          ? "—"
+          : Array.isArray(qa.raw)
+          ? qa.raw.map(String).join(", ")
+          : String(qa.raw),
+      raw: qa?.raw,
+    }));
+  }
+
   const ra =
     meta?.riskAssessment ||
     meta?.raf ||
-    (order as any)?.riskAssessment ||
-    (order as any)?.raf ||
-    [];
+    order?.riskAssessment ||
+    order?.raf ||
+    null;
 
-  // Expected formats:
-  // 1) Array: [{ question, answer, raw }, ...] or [{ key/question, value }, ...]
-  // 2) Object map: { "Question": "Answer", ... }
   if (Array.isArray(ra)) {
-    return ra
-      .map((it: any, idx: number) => {
-        const question = String(
-          it?.question || it?.key || it?.label || `Question ${idx + 1}`
-        );
+    return ra.map((it: any, idx: number) => {
+      const question = String(
+        it?.question || it?.key || it?.label || `Question ${idx + 1}`
+      );
+      const value = it?.value ?? it?.answer ?? it?.raw ?? it?.response ?? it;
 
-        const value = it?.value ?? it?.answer ?? it?.raw ?? it?.response ?? it;
+      if (
+        Array.isArray(value) &&
+        value.length &&
+        typeof value[0] === "object"
+      ) {
+        return {
+          question,
+          answer: `${value.length} attachment${value.length === 1 ? "" : "s"}`,
+          raw: value,
+        };
+      }
 
-        // If file array
-        if (
-          Array.isArray(value) &&
-          value.length &&
-          typeof value[0] === "object"
-        ) {
-          return {
-            question,
-            answer: `${value.length} attachment${value.length === 1 ? "" : "s"}`,
-            raw: value,
-          };
-        }
+      const answer =
+        value == null
+          ? "—"
+          : typeof value === "string" || typeof value === "number"
+          ? String(value)
+          : Array.isArray(value)
+          ? value.map(String).filter(Boolean).join(", ") || "—"
+          : typeof value === "boolean"
+          ? value
+            ? "Yes"
+            : "No"
+          : "—";
 
-        // Plain
-        const answer =
-          value == null
-            ? "—"
-            : typeof value === "string" || typeof value === "number"
-            ? String(value)
-            : Array.isArray(value)
-            ? value.map(String).filter(Boolean).join(", ") || "—"
-            : typeof value === "boolean"
-            ? value
-              ? "Yes"
-              : "No"
-            : "—";
-
-        return { question, answer, raw: it?.raw };
-      })
-      .filter((x: any) => x.question);
+      return { question, answer, raw: it?.raw };
+    });
   }
 
   if (ra && typeof ra === "object") {
@@ -326,6 +327,112 @@ function normalizeRafQAs(order: OrderDto) {
   return [];
 }
 
+function RafAnswer({ raw, answer }: { raw: any; answer: string }) {
+  const isFileArray =
+    Array.isArray(raw) &&
+    raw.length > 0 &&
+    typeof raw[0] === "object" &&
+    (raw[0].url || raw[0].name);
+
+  if (!isFileArray) {
+    return (
+      <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-neutral-100">
+        {answer}
+      </p>
+    );
+  }
+
+  const files = (raw as any[]).filter((f) => f && (f.url || f.name));
+  return (
+    <div className="mt-1 flex flex-wrap gap-2">
+      {files.map((file: any, i: number) => {
+        const fileUrl = resolveImageUrl(file.url || "");
+        if (!fileUrl) return null;
+
+        const isImage =
+          (file.type || file.mimeType || "").startsWith("image/") ||
+          /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || file.url || "");
+
+        if (isImage) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => window.open(fileUrl, "_blank")}
+              className="group relative overflow-hidden rounded border border-neutral-800 bg-neutral-900"
+              title="Open image"
+            >
+              <img
+                src={fileUrl}
+                alt={file.name || `Attachment ${i + 1}`}
+                className="max-h-24 max-w-[180px] object-contain"
+              />
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-[10px] text-neutral-200 opacity-0 group-hover:opacity-100">
+                {file.name || "Open"}
+              </span>
+            </button>
+          );
+        }
+
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => window.open(fileUrl, "_blank")}
+            className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
+          >
+            {file.name || `Attachment ${i + 1}`}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ----------------- Notes extraction (more robust) ----------------- */
+
+function normaliseStringArray(v: any): string[] {
+  const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+  return arr.map((x) => String(x).trim()).filter((x) => x.length > 0);
+}
+
+function extractAdminNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  return normaliseStringArray(o?.admin_notes ?? m?.admin_notes ?? []);
+}
+
+function extractConsultationNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  const raw =
+    o?.consultation_notes ??
+    o?.consultant_notes ??
+    o?.consultationNotes ??
+    m?.consultation_notes ??
+    m?.consultationNotes ??
+    m?.consultant_notes ??
+    m?.consultantNotes ??
+    [];
+  return normaliseStringArray(raw);
+}
+
+function extractRejectionNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  const raw =
+    o?.rejection_notes ??
+    o?.rejected_notes ??
+    o?.rejection_reason ??
+    o?.rejected_reason ??
+    m?.rejection_notes ??
+    m?.rejected_notes ??
+    m?.rejection_reason ??
+    m?.rejected_reason ??
+    [];
+  return normaliseStringArray(raw);
+}
+
 /* ----------------------------- Page ----------------------------- */
 
 export default function Page() {
@@ -339,8 +446,12 @@ export default function Page() {
   const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
     {}
   );
+  const orderUsersRef = useRef<Record<string, UserDto | null>>({});
+  useEffect(() => {
+    orderUsersRef.current = orderUsers;
+  }, [orderUsers]);
 
-  // detail modal state
+  // detail drawer state
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -356,9 +467,9 @@ export default function Page() {
   const [newConsultationNote, setNewConsultationNote] = useState("");
 
   // rejection notes
-  const [existingRejectionNotes, setExistingRejectionNotes] = useState<
-    string[]
-  >([]);
+  const [existingRejectionNotes, setExistingRejectionNotes] = useState<string[]>(
+    []
+  );
   const [newRejectionNotes, setNewRejectionNotes] = useState<string[]>([]);
   const [rejectionNoteInput, setRejectionNoteInput] = useState("");
   const [showRejectDialog, setShowRejectDialog] = useState(false);
@@ -381,8 +492,17 @@ export default function Page() {
   const [prioritySaving, setPrioritySaving] = useState(false);
   const [priorityError, setPriorityError] = useState<string | null>(null);
 
+  // previous orders state (NEW)
+  const [previousOrders, setPreviousOrders] = useState<OrderDto[]>([]);
+  const [previousOrdersMeta, setPreviousOrdersMeta] =
+    useState<OrdersListMeta | null>(null);
+  const [previousOrdersLoading, setPreviousOrdersLoading] = useState(false);
+  const [previousOrdersError, setPreviousOrdersError] = useState<string | null>(
+    null
+  );
+
   // global stats actions (for sidebar badges)
-  const { applyStatusChange, refresh } = useOrdersStats();
+  const { applyStatusChange, refresh: refreshStats } = useOrdersStats();
 
   // logged-in user id (for approved_by / rejected_by)
   const [loggedInUserId, setLoggedInUserId] = useState<string | null>(null);
@@ -413,30 +533,25 @@ export default function Page() {
       setError(null);
       try {
         const res: any = await getOrdersApi({ status: STATUS });
-
-        const ordersList: OrderDto[] =
-          (res as any)?.data ??
-          (res as any)?.orders ??
-          (Array.isArray(res) ? res : []);
-        const metaRes: OrdersListMeta | null =
-          (res as any)?.meta ?? (res as any)?.pagination ?? null;
-
         if (cancelled) return;
 
-        setOrders(Array.isArray(ordersList) ? ordersList : []);
+        const { orders: ordersList, meta: metaRes } = unwrapOrdersList(res);
+
+        setOrders(ordersList);
         setMeta(metaRes);
 
         // fetch users for all distinct user_ids in list
         const uniqueUserIds = Array.from(
           new Set(
-            (ordersList || [])
-              .map((o: any) => (o?.user_id || o?.userId) as string | undefined)
+            ordersList
+              .map((o: any) => extractUserIdFromOrder(o))
               .filter(Boolean)
           )
         ) as string[];
 
+        const currentUsers = orderUsersRef.current;
         const missingIds = uniqueUserIds.filter(
-          (id) => orderUsers[id] === undefined
+          (id) => currentUsers[id] === undefined
         );
 
         if (missingIds.length) {
@@ -461,7 +576,7 @@ export default function Page() {
           }
         }
 
-        await refresh();
+        await refreshStats();
       } catch (e: any) {
         if (cancelled) return;
         setError(e?.message || "Failed to load orders");
@@ -475,24 +590,59 @@ export default function Page() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refresh]);
+  }, [refreshStats]);
 
   // helper to reset notes state when opening a different order
   function hydrateNotes(order: OrderDto) {
-    setAdminNotes(((order as any).admin_notes as string[]) || []);
+    setAdminNotes(extractAdminNotes(order));
     setNewAdminNote("");
 
-    const existingConsultation =
-      ((order as any).consultation_notes as string[] | undefined) || [];
-    setConsultationNotes(existingConsultation);
+    setConsultationNotes(extractConsultationNotes(order));
     setNewConsultationNote("");
 
-    const existingRejection =
-      ((order as any).rejection_notes as string[] | undefined) || [];
+    const existingRejection = extractRejectionNotes(order);
     setExistingRejectionNotes(existingRejection);
     setNewRejectionNotes([]);
     setRejectionNoteInput("");
     setRejectError(null);
+  }
+
+  async function fetchPreviousOrdersForUser(userId: string, excludeId?: string) {
+    setPreviousOrdersLoading(true);
+    setPreviousOrdersError(null);
+    setPreviousOrders([]);
+    setPreviousOrdersMeta(null);
+
+    try {
+      const res: any = await getOrdersApi({
+        user_id: userId,
+        page: 1,
+        limit: 20,
+      });
+
+      const { orders: list, meta: m } = unwrapOrdersList(res);
+
+      const filtered = excludeId
+        ? list.filter((o) => idOf(o) !== excludeId)
+        : list;
+
+      filtered.sort((a: any, b: any) => {
+        const ta = new Date(
+          extractAppointmentStart(a) || a?.createdAt || a?.created_at || 0
+        ).getTime();
+        const tb = new Date(
+          extractAppointmentStart(b) || b?.createdAt || b?.created_at || 0
+        ).getTime();
+        return tb - ta;
+      });
+
+      setPreviousOrders(filtered);
+      setPreviousOrdersMeta(m);
+    } catch (e: any) {
+      setPreviousOrdersError(e?.message || "Failed to load previous orders.");
+    } finally {
+      setPreviousOrdersLoading(false);
+    }
   }
 
   // View details handler
@@ -508,25 +658,36 @@ export default function Page() {
     setPriorityError(null);
     setPrioritySaving(false);
 
+    setPreviousOrders([]);
+    setPreviousOrdersMeta(null);
+    setPreviousOrdersError(null);
+    setPreviousOrdersLoading(false);
+
     try {
       const orderRes = await getOrderByIdApi(id);
       const order = unwrapOrder(orderRes);
+
       setSelectedOrder(order);
       hydrateNotes(order);
 
-      const userId =
-        ((order as any).user_id || (order as any).userId) as string | undefined;
+      const userId = extractUserIdFromOrder(order);
       if (userId) {
-        if (orderUsers[userId] !== undefined) {
-          setOrderedByUser(orderUsers[userId]);
+        // use cache first for patient
+        if (orderUsersRef.current[userId] !== undefined) {
+          setOrderedByUser(orderUsersRef.current[userId] || null);
         } else {
           try {
             const userRes = await getUserByIdApi(userId);
-            setOrderedByUser(unwrapUser(userRes));
+            const u = unwrapUser(userRes);
+            setOrderedByUser(u);
+            setOrderUsers((prev) => ({ ...prev, [userId]: u }));
           } catch (err) {
             console.error("Failed to fetch user for order (detail)", err);
           }
         }
+
+        // load user's previous orders (NEW)
+        await fetchPreviousOrdersForUser(userId, idOf(order));
       }
     } catch (e: any) {
       setDetailError(e?.message || "Failed to load order details");
@@ -540,8 +701,14 @@ export default function Page() {
     setSelectedOrder(null);
     setOrderedByUser(null);
     setDetailError(null);
+
     setShowRejectDialog(false);
     setRejectError(null);
+
+    setPreviousOrders([]);
+    setPreviousOrdersMeta(null);
+    setPreviousOrdersError(null);
+    setPreviousOrdersLoading(false);
   }
 
   // helpers for notes
@@ -578,11 +745,24 @@ export default function Page() {
     setNewRejectionNotes((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  // approve
+  function bumpMetaAfterRemove() {
+    setMeta((prev) => {
+      if (!prev) return prev;
+      const next: any = { ...prev };
+      if (typeof next.total === "number") next.total = Math.max(0, next.total - 1);
+      if (typeof next.totalItems === "number")
+        next.totalItems = Math.max(0, next.totalItems - 1);
+      return next;
+    });
+  }
+
+  // approve (FIXED: only remove selected order, not all)
   async function handleApprove() {
     if (!selectedOrder) return;
 
-    const prevStatus = (selectedOrder as any).status;
+    const selectedId = idOf(selectedOrder);
+    const prevStatus = String((selectedOrder as any).status || "pending");
+
     setStatusAction("approved");
     setDetailError(null);
 
@@ -591,30 +771,28 @@ export default function Page() {
         status: "approved",
         admin_notes: adminNotes,
         consultation_notes: consultationNotes,
+        consultant_notes: consultationNotes,
       };
 
       if (loggedInUserId) payload.approved_by = loggedInUserId;
       payload.approved_at = new Date().toISOString();
 
-      const updatedRes = await updateOrderStatusApi(
-        (selectedOrder as any)._id,
-        payload
-      );
+      const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, (updated as any).status);
-      setOrders((prev) => prev.filter((o: any) => (o as any)._id !== idOf(o)));
+      applyStatusChange(prevStatus, String((updated as any).status || "approved"));
+
+      // ✅ remove only this order from pending list
+      setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
+      bumpMetaAfterRemove();
+
+      await refreshStats();
       closeDetail();
-      setSelectedOrder(updated);
     } catch (e: any) {
       setDetailError(e?.message || "Failed to update order status");
     } finally {
       setStatusAction(null);
     }
-  }
-
-  function idOf(o: any) {
-    return String(o?._id || o?.id || "");
   }
 
   // open reject dialog
@@ -623,9 +801,11 @@ export default function Page() {
     setRejectError(null);
   }
 
-  // confirm reject (with rejection notes)
+  // confirm reject (with rejection notes) (FIXED: only remove selected order, not all)
   async function confirmReject() {
     if (!selectedOrder) return;
+
+    const selectedId = idOf(selectedOrder);
 
     const finalNotes = [
       ...existingRejectionNotes,
@@ -638,7 +818,8 @@ export default function Page() {
       return;
     }
 
-    const prevStatus = (selectedOrder as any).status;
+    const prevStatus = String((selectedOrder as any).status || "pending");
+
     setStatusAction("rejected");
     setRejectError(null);
 
@@ -647,22 +828,24 @@ export default function Page() {
         status: "rejected",
         admin_notes: adminNotes,
         consultation_notes: consultationNotes,
+        consultant_notes: consultationNotes,
         rejection_notes: finalNotes,
       };
       if (loggedInUserId) payload.rejected_by = loggedInUserId;
       payload.rejected_at = new Date().toISOString();
 
-      const updatedRes = await updateOrderStatusApi(
-        (selectedOrder as any)._id,
-        payload
-      );
+      const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, (updated as any).status);
-      setOrders((prev) => prev.filter((o: any) => (o as any)._id !== idOf(o)));
+      applyStatusChange(prevStatus, String((updated as any).status || "rejected"));
+
+      // ✅ remove only this order from pending list
+      setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
+      bumpMetaAfterRemove();
+
       setShowRejectDialog(false);
+      await refreshStats();
       closeDetail();
-      setSelectedOrder(updated);
     } catch (e: any) {
       setRejectError(e?.message || "Failed to reject order");
     } finally {
@@ -756,11 +939,11 @@ export default function Page() {
     }
   }
 
-  const totalPending = meta?.total ?? orders.length;
+  const totalPending = (meta as any)?.total ?? orders.length;
 
   const rows = useMemo(() => {
     return orders.map((order: any) => {
-      const userId = (order?.user_id || order?.userId) as string | undefined;
+      const userId = extractUserIdFromOrder(order) || undefined;
       const listUser =
         userId && orderUsers[userId] !== undefined ? orderUsers[userId] : null;
 
@@ -769,16 +952,14 @@ export default function Page() {
         ((listUser as any)?.user_priority as string | undefined) || "yellow";
 
       const totalMinor =
-        order?.total_minor ?? order?.meta?.totalMinor ?? order?.meta?.total_minor;
+        order?.total_minor ??
+        order?.meta?.totalMinor ??
+        order?.meta?.total_minor ??
+        null;
 
-      const appointmentAt =
-        order?.meta?.appointment_start_at || order?.start_at || null;
+      const appointmentAt = extractAppointmentStart(order);
 
-      const productName =
-        order?.meta?.selectedProduct?.name ||
-        order?.meta?.lines?.[0]?.name ||
-        order?.service_name ||
-        "Order";
+      const productName = extractProductName(order);
 
       const reference = order?.reference || order?._id;
 
@@ -818,7 +999,9 @@ export default function Page() {
             </div>
             <span className="text-xs text-neutral-500">
               {totalPending} pending{" "}
-              {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
+              {meta
+                ? `• page ${(meta as any).page} of ${(meta as any).totalPages}`
+                : ""}
             </span>
           </div>
         </div>
@@ -858,9 +1041,7 @@ export default function Page() {
                     </th>
                     <th className="px-3 py-2 text-left font-medium">Status</th>
                     <th className="px-3 py-2 text-left font-medium">Payment</th>
-                    <th className="px-3 py-2 text-right font-medium">
-                      Total
-                    </th>
+                    <th className="px-3 py-2 text-right font-medium">Total</th>
                     <th className="px-3 py-2 text-right font-medium"></th>
                   </tr>
                 </thead>
@@ -884,6 +1065,7 @@ export default function Page() {
                         (order as any)?.email ||
                         (order as any)?.patient_email ||
                         "";
+
                       return (
                         <tr
                           key={String(order?._id)}
@@ -1020,7 +1202,8 @@ export default function Page() {
                 </p>
                 <p className="text-sm font-semibold text-white">
                   {selectedOrder
-                    ? (selectedOrder as any).reference || (selectedOrder as any)._id
+                    ? (selectedOrder as any).reference ||
+                      (selectedOrder as any)._id
                     : "—"}
                 </p>
                 <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-400">
@@ -1138,7 +1321,8 @@ export default function Page() {
                                 : "—"}
                               {orderedByUser &&
                               (orderedByUser as any).dob &&
-                              calculateAgeFromDob((orderedByUser as any).dob) != null ? (
+                              calculateAgeFromDob((orderedByUser as any).dob) !=
+                                null ? (
                                 <span className="text-neutral-400">
                                   {" "}
                                   (
@@ -1193,12 +1377,10 @@ export default function Page() {
                         </span>
 
                         <select
-                          value={
-                            String(
-                              ((orderedByUser as any)?.user_priority as string) ||
-                                "yellow"
-                            ).toLowerCase()
-                          }
+                          value={String(
+                            ((orderedByUser as any)?.user_priority as string) ||
+                              "yellow"
+                          ).toLowerCase()}
                           disabled={prioritySaving || !orderedByUser}
                           onChange={(e) => handlePriorityChange(e.target.value)}
                           className="mt-1 h-7 rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
@@ -1264,7 +1446,9 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleVerify("scr_verified")}
-                            disabled={verifyingField === "scr_verified" || !orderedByUser}
+                            disabled={
+                              verifyingField === "scr_verified" || !orderedByUser
+                            }
                             className={[
                               "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
                               (orderedByUser as any)?.scr_verified
@@ -1289,7 +1473,9 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleVerify("id_verified")}
-                            disabled={verifyingField === "id_verified" || !orderedByUser}
+                            disabled={
+                              verifyingField === "id_verified" || !orderedByUser
+                            }
                             className={[
                               "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
                               (orderedByUser as any)?.id_verified
@@ -1350,21 +1536,14 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Appointment</dt>
                         <dd className="text-neutral-100">
-                          {formatDateTime(
-                            (selectedOrder as any).meta?.appointment_start_at ||
-                              (selectedOrder as any).start_at
-                          )}
+                          {formatDateTime(extractAppointmentStart(selectedOrder))}
                         </dd>
                       </div>
 
                       <div>
                         <dt className="text-neutral-500">Total incl. VAT</dt>
                         <dd className="text-neutral-100">
-                          {formatMoney(
-                            (selectedOrder as any).meta?.totalMinor ??
-                              (selectedOrder as any).total_minor ??
-                              null
-                          )}
+                          {formatMoney(extractTotalMinor(selectedOrder))}
                         </dd>
                       </div>
 
@@ -1380,39 +1559,123 @@ export default function Page() {
                     </dl>
                   </div>
 
-                  {/* RAF */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <p className="mb-2 text-xs font-semibold text-neutral-200">
-                      Risk Assessment Form (RAF)
-                    </p>
+                  {/* RAF (NOW SAME AS APPROVED PAGE) */}
+                  {getRafQAs(selectedOrder).length ? (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold text-neutral-200">
+                        RAF Questions &amp; Answers
+                      </p>
 
-                    {normalizeRafQAs(selectedOrder).length === 0 ? (
+                      <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                        {getRafQAs(selectedOrder).map((qa, idx) => (
+                          <div
+                            key={idx}
+                            className="border-b border-neutral-800/60 pb-2 text-[11px] last:border-none"
+                          >
+                            <p className="font-medium text-neutral-400">
+                              {idx + 1}. {qa.question}
+                            </p>
+                            <RafAnswer raw={qa.raw} answer={qa.answer} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="text-[11px] text-neutral-400">
                         No Risk Assessment data captured for this order.
                       </p>
+                    </div>
+                  )}
+
+                  {/* Previous orders (NEW) */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Previous orders for this patient
+                      </p>
+                      {previousOrdersMeta && (
+                        <span className="text-[11px] text-neutral-500">
+                          {(previousOrdersMeta as any).total ?? previousOrders.length}{" "}
+                          order{((previousOrdersMeta as any).total ?? previousOrders.length) === 1
+                            ? ""
+                            : "s"}
+                        </span>
+                      )}
+                    </div>
+
+                    {previousOrdersLoading ? (
+                      <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Loading previous orders…</span>
+                      </div>
+                    ) : previousOrdersError ? (
+                      <p className="text-[11px] text-rose-300">{previousOrdersError}</p>
+                    ) : previousOrders.length === 0 ? (
+                      <p className="text-[11px] text-neutral-500">
+                        No previous orders found for this patient.
+                      </p>
                     ) : (
-                      <ol className="space-y-3">
-                        {normalizeRafQAs(selectedOrder).map((qa: any, idx: number) => (
-                          <li
-                            key={idx}
-                            className="rounded-md border border-neutral-800 bg-neutral-950/40 px-3 py-2"
-                          >
-                            <p className="text-xs font-medium text-neutral-100">
-                              {idx + 1}. {qa.question}
-                            </p>
-                            <div className="mt-1">
-                              <p className="text-[11px] text-neutral-300">
-                                <span className="font-semibold text-neutral-400">
-                                  Answer:
-                                </span>{" "}
-                                {qa.answer ?? "—"}
-                              </p>
-                              {/* if file uploads exist */}
-                              {qa.raw ? renderRafAnswer(qa) : null}
+                      <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                        {previousOrders.map((o: any) => {
+                          const name = extractProductName(o);
+                          const when = extractAppointmentStart(o) || o?.createdAt || o?.created_at;
+                          const total = extractTotalMinor(o);
+                          const st = String(o?.status || "—");
+                          const pay = String(o?.payment_status || "—");
+
+                          return (
+                            <div
+                              key={idOf(o)}
+                              className="rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-[11px] font-semibold text-neutral-100">
+                                    {name}
+                                  </p>
+                                  <p className="mt-0.5 text-[10px] text-neutral-400">
+                                    {formatDateTime(String(when || ""))}
+                                  </p>
+                                  <p className="mt-1 text-[10px] text-neutral-500">
+                                    Ref:{" "}
+                                    <span className="text-neutral-200">
+                                      {o?.reference || o?._id}
+                                    </span>
+                                  </p>
+                                </div>
+
+                                <div className="flex shrink-0 flex-col items-end gap-1">
+                                  <div className="flex gap-1">
+                                    <span
+                                      className={[
+                                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                        statusBadgeClasses(st),
+                                      ].join(" ")}
+                                    >
+                                      {st}
+                                    </span>
+                                    <span
+                                      className={[
+                                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                        paymentBadgeClasses(pay),
+                                      ].join(" ")}
+                                    >
+                                      {pay}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-neutral-300">
+                                    Total:{" "}
+                                    <span className="font-semibold text-neutral-100">
+                                      {formatMoney(total)}
+                                    </span>
+                                  </p>
+                                </div>
+                              </div>
                             </div>
-                          </li>
-                        ))}
-                      </ol>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
 
@@ -1550,7 +1813,9 @@ export default function Page() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          disabled={statusAction === "approved" || statusAction === "rejected"}
+                          disabled={
+                            statusAction === "approved" || statusAction === "rejected"
+                          }
                           onClick={openRejectDialog}
                           className={[
                             "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
@@ -1569,7 +1834,9 @@ export default function Page() {
 
                         <button
                           type="button"
-                          disabled={statusAction === "approved" || statusAction === "rejected"}
+                          disabled={
+                            statusAction === "approved" || statusAction === "rejected"
+                          }
                           onClick={handleApprove}
                           className={[
                             "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
@@ -1596,7 +1863,9 @@ export default function Page() {
                   </div>
                 </>
               ) : (
-                <div className="text-[11px] text-neutral-400">No order selected.</div>
+                <div className="text-[11px] text-neutral-400">
+                  No order selected.
+                </div>
               )}
             </div>
           </div>

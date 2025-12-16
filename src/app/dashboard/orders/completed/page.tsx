@@ -2594,6 +2594,9 @@ export default function Page() {
     return counts;
   }, [orders]);
 
+ 
+
+
   useEffect(() => {
     let cancelled = false;
 
@@ -2937,12 +2940,24 @@ export default function Page() {
     setEmailAttachments((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // helper – split by comma, semicolon, newline, spaces
+  function parseEmails(raw: string): string[] {
+    return raw
+      .split(/[,\n; ]+/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+
   const handleSendEmailPeople = async (e: React.FormEvent) => {
     e.preventDefault();
     setEmailPeopleError(null);
 
-    if (!emailTo.trim()) {
-      setEmailPeopleError("Please enter a recipient in the To field.");
+    const toList = parseEmails(emailTo);
+
+    if (!toList.length) {
+      setEmailPeopleError(
+        "Please enter at least one recipient in the To field."
+      );
       return;
     }
     if (!emailSubject.trim()) {
@@ -2957,18 +2972,25 @@ export default function Page() {
       const patientName = order
         ? getDisplayPatientName(order, orderedByUser ?? undefined)
         : "";
-      const friendlyName =
-        patientName || emailTo.trim().split("@")[0] || "Customer";
+
+      // Friendly name – just use patient or generic label,
+      // not email's local-part (because we may have multiple emails)
+      const friendlyName = patientName || "Customer";
       const loginUrl = getLoginUrl();
 
+      const ccList = parseEmails(emailCc);
+      const bccList = parseEmails(emailBcc);
+
       await sendEmailApi({
-        to: emailTo.trim(),
+        to: toList, // 👈 now an array
+        cc: ccList.length ? ccList : undefined,
+        bcc: bccList.length ? bccList : undefined,
         subject: emailSubject.trim(),
         template: "welcome",
         context: {
           subject: emailSubject.trim(),
           name: friendlyName,
-          email: emailTo.trim(),
+          email: toList.join(", "),
           loginUrl,
           supportEmail: PHARMACY_INFO.email,
           year: new Date().getFullYear(),
@@ -2979,7 +3001,7 @@ export default function Page() {
 
       setEmailPeopleSending(false);
       setEmailPeopleOpen(false);
-      setEmailPdfStatus(`Email sent to ${emailTo.trim()}.`);
+      setEmailPdfStatus(`Email sent to ${toList.join(", ")}.`);
     } catch (err: any) {
       console.error("Email send failed", err);
       setEmailPeopleSending(false);
@@ -3226,16 +3248,7 @@ export default function Page() {
 
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative w-full sm:max-w-xs">
-            <Filter className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-neutral-500" />
-            <input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-900/70 pl-7 pr-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none focus:ring-0"
-              placeholder="Search by reference, patient, service..."
-            />
+
           </div>
           <div className="flex items-center gap-2 text-[11px] text-neutral-400">
             <span>
@@ -3779,7 +3792,7 @@ export default function Page() {
                     value={emailTo}
                     onChange={(e) => setEmailTo(e.target.value)}
                     className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
-                    placeholder="patient@example.com"
+                    placeholder="patient@example.com, other@example.com"
                   />
                 </div>
                 <div>
@@ -3790,7 +3803,7 @@ export default function Page() {
                     value={emailCc}
                     onChange={(e) => setEmailCc(e.target.value)}
                     className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
-                    placeholder="optional"
+                    placeholder="optional — comma separated"
                   />
                 </div>
                 <div>
@@ -3801,7 +3814,7 @@ export default function Page() {
                     value={emailBcc}
                     onChange={(e) => setEmailBcc(e.target.value)}
                     className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
-                    placeholder="optional"
+                    placeholder="optional — comma separated"
                   />
                 </div>
               </div>

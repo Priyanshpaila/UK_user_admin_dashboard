@@ -63,12 +63,21 @@ function statusBadgeClasses(status: string | undefined) {
 
 function priorityBadgeClasses(priority: string | undefined) {
   const p = (priority || "yellow").toLowerCase();
-  if (p === "red")
-    return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "red") return "border-red-500/60 bg-red-500/10 text-red-300";
   if (p === "green")
     return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
-  // default yellow
   return "border-amber-500/60 bg-amber-500/10 text-amber-200";
+}
+
+// ✅ address → shipping mapping (for "Same as address")
+function mapAddressToShipping(p: any) {
+  return {
+    shipping_address_line1: p.address_line1 ?? "",
+    shipping_address_line2: p.address_line2 ?? "",
+    shipping_city: p.city ?? "",
+    shipping_postalcode: p.postalcode ?? "",
+    shipping_country: p.country ?? "",
+  };
 }
 
 export default function PatientsPage() {
@@ -126,24 +135,50 @@ export default function PatientsPage() {
     try {
       setSaving(true);
 
+      // ✅ If same as address ON, ensure shipping fields are synced before sending
+      const useShipping = Boolean(editingPatient.use_shipping_address);
+      const synced =
+        useShipping ? mapAddressToShipping(editingPatient) : undefined;
+
       const payload: any = {
         firstName: editingPatient.firstName ?? "",
         lastName: editingPatient.lastName ?? "",
         gender: editingPatient.gender ?? "male",
         email: editingPatient.email ?? "",
         phone: editingPatient.phone ?? "",
+
         address_line1: editingPatient.address_line1 ?? "",
         address_line2: editingPatient.address_line2 ?? "",
         city: editingPatient.city ?? "",
         county: editingPatient.county ?? "",
         postalcode: editingPatient.postalcode ?? "",
         country: editingPatient.country ?? "",
-        user_priority: editingPatient.user_priority ?? "yellow", // 🔹 allow changing priority
+
+        user_priority: editingPatient.user_priority ?? "yellow",
+
+        // ✅ NEW shipping fields
+        use_shipping_address: useShipping,
+        shipping_address_line1:
+          (synced?.shipping_address_line1 ??
+            editingPatient.shipping_address_line1 ??
+            "") as string,
+        shipping_address_line2:
+          (synced?.shipping_address_line2 ??
+            editingPatient.shipping_address_line2 ??
+            "") as string,
+        shipping_city:
+          (synced?.shipping_city ?? editingPatient.shipping_city ?? "") as string,
+        shipping_postalcode:
+          (synced?.shipping_postalcode ??
+            editingPatient.shipping_postalcode ??
+            "") as string,
+        shipping_country:
+          (synced?.shipping_country ??
+            editingPatient.shipping_country ??
+            "") as string,
       };
 
-      if (dobInput) {
-        payload.dob = dobInput; // "YYYY-MM-DD"
-      }
+      if (dobInput) payload.dob = dobInput;
 
       await updateUserApi(editingPatient._id, payload);
 
@@ -190,7 +225,6 @@ export default function PatientsPage() {
 
     const id = patient._id as string;
 
-    // If clicking same card again: collapse
     if (selectedPatientId === id) {
       setSelectedPatientId(null);
       setPatientOrders([]);
@@ -223,11 +257,58 @@ export default function PatientsPage() {
         p.city,
         p.postalcode,
         p.country,
+        p.shipping_city,
+        p.shipping_postalcode,
+        p.shipping_country,
       ]
         .filter(Boolean)
         .some((val: string) => val.toLowerCase().includes(q))
     );
   }, [patients, search]);
+
+  /* ----------------------------------------
+      MODAL INPUT HELPERS (shipping sync)
+  ---------------------------------------- */
+  const updateEditing = (patch: Record<string, any>) => {
+    setEditingPatient((prev: any) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+
+      // ✅ If same-as-address is enabled, keep shipping synced as user edits address
+      if (next.use_shipping_address) {
+        const touchedAddressKey = Object.keys(patch).some((k) =>
+          [
+            "address_line1",
+            "address_line2",
+            "city",
+            "postalcode",
+            "country",
+          ].includes(k)
+        );
+
+        if (touchedAddressKey) {
+          return { ...next, ...mapAddressToShipping(next) };
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const toggleShippingSameAsAddress = (checked: boolean) => {
+    setEditingPatient((prev: any) => {
+      if (!prev) return prev;
+      const next = { ...prev, use_shipping_address: checked };
+
+      if (checked) {
+        return { ...next, ...mapAddressToShipping(next) };
+      }
+
+      // When turning OFF, keep current shipping values as-is.
+      // (No changes required)
+      return next;
+    });
+  };
 
   /* ----------------------------------------
       RENDER
@@ -408,9 +489,7 @@ export default function PatientsPage() {
                   )}
 
                   {/* Address snippet */}
-                  {(patient.city ||
-                    patient.postalcode ||
-                    patient.country) && (
+                  {(patient.city || patient.postalcode || patient.country) && (
                     <div className="mt-2 flex items-center gap-1 text-[11px] text-neutral-400">
                       <MapPin size={11} className="text-neutral-500" />
                       <span className="line-clamp-1">
@@ -468,8 +547,7 @@ export default function PatientsPage() {
                         patientOrders.length > 0 && (
                           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                             {patientOrders.map((order) => {
-                              const firstLine =
-                                order.meta?.lines?.[0] || null;
+                              const firstLine = order.meta?.lines?.[0] || null;
                               const mainName =
                                 firstLine?.name ||
                                 order.meta?.selectedProduct?.name ||
@@ -568,8 +646,32 @@ export default function PatientsPage() {
 
                   <button
                     onClick={(e) => {
-                      e.stopPropagation(); // don't toggle card
-                      setEditingPatient(patient);
+                      e.stopPropagation();
+
+                      // ✅ Ensure modal has shipping defaults (and if same-as-address is true, sync once)
+                      const useShip =
+                        patient.use_shipping_address === undefined
+                          ? true
+                          : Boolean(patient.use_shipping_address);
+
+                      const base = {
+                        ...patient,
+                        use_shipping_address: useShip,
+                        shipping_address_line1:
+                          patient.shipping_address_line1 ?? "",
+                        shipping_address_line2:
+                          patient.shipping_address_line2 ?? "",
+                        shipping_city: patient.shipping_city ?? "",
+                        shipping_postalcode: patient.shipping_postalcode ?? "",
+                        shipping_country: patient.shipping_country ?? "",
+                      };
+
+                      const finalPatient = useShip
+                        ? { ...base, ...mapAddressToShipping(base) }
+                        : base;
+
+                      setEditingPatient(finalPatient);
+
                       setDobInput(
                         patient.dob
                           ? (patient.dob as string).substring(0, 10)
@@ -590,11 +692,24 @@ export default function PatientsPage() {
       {/* Edit Patient Modal */}
       {editingPatient && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-neutral-900 p-6 rounded-xl max-w-2xl w-full border border-neutral-700 max-h-[90vh] overflow-y-auto shadow-2xl">
-            <h2 className="text-2xl font-semibold mb-4">
-              Edit Patient – {editingPatient.firstName}{" "}
-              {editingPatient.lastName}
-            </h2>
+          <div className="bg-neutral-900 p-6 rounded-xl max-w-3xl w-full border border-neutral-700 max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h2 className="text-2xl font-semibold">
+                Edit Patient – {editingPatient.firstName}{" "}
+                {editingPatient.lastName}
+              </h2>
+
+              <button
+                onClick={() => {
+                  setEditingPatient(null);
+                  setDobInput("");
+                }}
+                className="text-sm text-neutral-300 hover:text-white px-3 py-1.5 rounded-lg border border-neutral-700 hover:bg-neutral-800"
+                disabled={saving}
+              >
+                Close
+              </button>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* First Name */}
@@ -606,12 +721,7 @@ export default function PatientsPage() {
                   type="text"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.firstName ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      firstName: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ firstName: e.target.value })}
                 />
               </div>
 
@@ -624,12 +734,7 @@ export default function PatientsPage() {
                   type="text"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.lastName ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      lastName: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ lastName: e.target.value })}
                 />
               </div>
 
@@ -639,12 +744,7 @@ export default function PatientsPage() {
                 <select
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.gender ?? "male"}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      gender: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ gender: e.target.value })}
                 >
                   <option value="male">Male</option>
                   <option value="female">Female</option>
@@ -672,12 +772,7 @@ export default function PatientsPage() {
                   type="email"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.email ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      email: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ email: e.target.value })}
                 />
               </div>
 
@@ -688,12 +783,7 @@ export default function PatientsPage() {
                   type="tel"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.phone ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      phone: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ phone: e.target.value })}
                 />
               </div>
 
@@ -706,16 +796,20 @@ export default function PatientsPage() {
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.user_priority ?? "yellow"}
                   onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      user_priority: e.target.value,
-                    })
+                    updateEditing({ user_priority: e.target.value })
                   }
                 >
                   <option value="red">Red – High risk</option>
                   <option value="yellow">Yellow – Medium</option>
                   <option value="green">Green – Low</option>
                 </select>
+              </div>
+
+              {/* ---------- Address ---------- */}
+              <div className="md:col-span-2 pt-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-white">Address</h3>
+                </div>
               </div>
 
               {/* Address Line 1 */}
@@ -728,10 +822,7 @@ export default function PatientsPage() {
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.address_line1 ?? ""}
                   onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      address_line1: e.target.value,
-                    })
+                    updateEditing({ address_line1: e.target.value })
                   }
                 />
               </div>
@@ -746,10 +837,7 @@ export default function PatientsPage() {
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.address_line2 ?? ""}
                   onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      address_line2: e.target.value,
-                    })
+                    updateEditing({ address_line2: e.target.value })
                   }
                 />
               </div>
@@ -761,12 +849,7 @@ export default function PatientsPage() {
                   type="text"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.city ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      city: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ city: e.target.value })}
                 />
               </div>
 
@@ -777,12 +860,7 @@ export default function PatientsPage() {
                   type="text"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.county ?? ""}
-                  onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      county: e.target.value,
-                    })
-                  }
+                  onChange={(e) => updateEditing({ county: e.target.value })}
                 />
               </div>
 
@@ -796,28 +874,126 @@ export default function PatientsPage() {
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.postalcode ?? ""}
                   onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      postalcode: e.target.value,
-                    })
+                    updateEditing({ postalcode: e.target.value })
                   }
                 />
               </div>
 
               {/* Country */}
               <div>
-                <label className="block text-sm text-neutral-300">
-                  Country
-                </label>
+                <label className="block text-sm text-neutral-300">Country</label>
                 <input
                   type="text"
                   className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700"
                   value={editingPatient.country ?? ""}
+                  onChange={(e) => updateEditing({ country: e.target.value })}
+                />
+              </div>
+
+              {/* ---------- Shipping ---------- */}
+              <div className="md:col-span-2 pt-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-white">
+                    Shipping Address
+                  </h3>
+
+                  <label className="inline-flex items-center gap-2 text-sm text-neutral-300 select-none">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-neutral-700 bg-neutral-800"
+                      checked={Boolean(editingPatient.use_shipping_address)}
+                      onChange={(e) =>
+                        toggleShippingSameAsAddress(e.target.checked)
+                      }
+                    />
+                    Same as address
+                  </label>
+                </div>
+
+                {Boolean(editingPatient.use_shipping_address) && (
+                  <div className="mt-2 rounded-lg border border-neutral-800 bg-neutral-800/30 px-4 py-3 text-sm text-neutral-300">
+                    Shipping address will be copied from Address and kept in
+                    sync.
+                  </div>
+                )}
+              </div>
+
+              {/* Shipping Address Line 1 */}
+              <div className="md:col-span-2">
+                <label className="block text-sm text-neutral-300">
+                  Shipping Address Line 1
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(editingPatient.use_shipping_address)}
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700 disabled:opacity-60"
+                  value={editingPatient.shipping_address_line1 ?? ""}
                   onChange={(e) =>
-                    setEditingPatient({
-                      ...editingPatient,
-                      country: e.target.value,
-                    })
+                    updateEditing({ shipping_address_line1: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Shipping Address Line 2 */}
+              <div className="md:col-span-2">
+                <label className="block text-sm text-neutral-300">
+                  Shipping Address Line 2
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(editingPatient.use_shipping_address)}
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700 disabled:opacity-60"
+                  value={editingPatient.shipping_address_line2 ?? ""}
+                  onChange={(e) =>
+                    updateEditing({ shipping_address_line2: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Shipping City */}
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping City
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(editingPatient.use_shipping_address)}
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700 disabled:opacity-60"
+                  value={editingPatient.shipping_city ?? ""}
+                  onChange={(e) =>
+                    updateEditing({ shipping_city: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Shipping Postal Code */}
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping Postal Code
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(editingPatient.use_shipping_address)}
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700 disabled:opacity-60"
+                  value={editingPatient.shipping_postalcode ?? ""}
+                  onChange={(e) =>
+                    updateEditing({ shipping_postalcode: e.target.value })
+                  }
+                />
+              </div>
+
+              {/* Shipping Country */}
+              <div>
+                <label className="block text-sm text-neutral-300">
+                  Shipping Country
+                </label>
+                <input
+                  type="text"
+                  disabled={Boolean(editingPatient.use_shipping_address)}
+                  className="w-full p-2 mt-1 bg-neutral-800 text-white rounded border border-neutral-700 disabled:opacity-60"
+                  value={editingPatient.shipping_country ?? ""}
+                  onChange={(e) =>
+                    updateEditing({ shipping_country: e.target.value })
                   }
                 />
               </div>
@@ -835,6 +1011,7 @@ export default function PatientsPage() {
               >
                 Cancel
               </button>
+
               <button
                 onClick={handleUpdatePatient}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center gap-2 disabled:opacity-60"
