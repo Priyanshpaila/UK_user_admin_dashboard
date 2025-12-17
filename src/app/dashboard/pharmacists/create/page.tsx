@@ -9,7 +9,7 @@ import {
   ChevronDown,
   Mail,
   Phone,
-  Frown 
+  Frown,
 } from "lucide-react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -18,9 +18,13 @@ import {
   createPharmacistApi,
   getPlatformTenantsApi,
   getBackendBase,
+  sendEmailApi,
   type PharmacistPayload,
   type PlatformTenantDto,
 } from "../../../../api";
+
+/** ✅ Hard-coded email template for login credentials */
+const LOGIN_DETAILS_TEMPLATE = "logindetails";
 
 /** ✅ Tenant slug logic for pharma-health.co.uk (DO NOT touch getBackendBase) */
 function deriveTenantSlugFromHostname(): string {
@@ -56,6 +60,36 @@ function deriveTenantSlugFromHostname(): string {
   } catch {
     return "";
   }
+}
+
+/** ✅ Helper: get root domain (handles co.uk style domains) */
+function getRootDomain(hostname: string): string {
+  const parts = hostname.split(".").filter(Boolean);
+  const lower = hostname.toLowerCase();
+
+  // handle common UK second-level domains
+  const isUkSecondLevel =
+    lower.endsWith(".co.uk") ||
+    lower.endsWith(".org.uk") ||
+    lower.endsWith(".gov.uk") ||
+    lower.endsWith(".ac.uk") ||
+    lower.endsWith(".nhs.uk");
+
+  const take = isUkSecondLevel ? 3 : 2;
+  if (parts.length <= take) return parts.join(".");
+  return parts.slice(-take).join(".");
+}
+
+/** ✅ Helper: build a login URL for the pharmacist portal */
+function buildPharmacistLoginUrl(subdomain?: string) {
+  if (typeof window === "undefined") return "";
+
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname.toLowerCase();
+  const root = getRootDomain(hostname);
+
+  const portalHost = subdomain ? `${subdomain}.${root}` : root;
+  return `${protocol}//${portalHost}/login`;
 }
 
 export default function CreatePharmacistPage() {
@@ -147,6 +181,27 @@ export default function CreatePharmacistPage() {
     return true;
   }, [firstName, lastName, email, phone, password]);
 
+  const pharmacistsScopeLabel = useMemo(() => {
+    if (!mounted) return "—";
+    return selectedSubdomain ? selectedSubdomain : "Master domain";
+  }, [mounted, selectedSubdomain]);
+
+  const selectedTenantObj = useMemo(() => {
+    if (!selectedSubdomain) return null;
+    return (
+      tenants.find(
+        (t) => (t.slug || "").toLowerCase() === selectedSubdomain.toLowerCase()
+      ) || null
+    );
+  }, [tenants, selectedSubdomain]);
+
+  const pharmacistsToShow = useMemo(() => {
+    if (!selectedTenantObj) return [];
+    return Array.isArray(selectedTenantObj.pharmacists)
+      ? selectedTenantObj.pharmacists
+      : [];
+  }, [selectedTenantObj]);
+
   const handleCreate = async () => {
     const payload: PharmacistPayload = {
       firstName: firstName.trim(),
@@ -154,17 +209,16 @@ export default function CreatePharmacistPage() {
       gender,
       email: email.trim(),
       phone: phone.trim(),
-      password,
+      password, // keep as-is (you explicitly want to email credentials)
     };
 
     setIsSubmitting(true);
     try {
-      // ✅ Tenant-selected (admin OR non-admin tenant lock)
+      // ✅ 1) Create pharmacist (tenant OR master)
       if (selectedSubdomain) {
         await createPharmacistApi(selectedSubdomain, payload);
         toast.success(`Pharmacist created for tenant: ${selectedSubdomain}`);
       } else {
-        // ✅ Master fallback (admin OR non-admin without tenant)
         const base = getBackendBase();
         const token =
           typeof window !== "undefined"
@@ -188,6 +242,45 @@ export default function CreatePharmacistPage() {
         toast.success("Pharmacist created on master domain");
       }
 
+      // ✅ 2) Send credentials email (hard-coded template)
+      try {
+        const fullName = `${payload.firstName} ${payload.lastName}`.trim();
+        const loginUrl = buildPharmacistLoginUrl(selectedSubdomain || undefined);
+
+        const hostname =
+          typeof window !== "undefined" ? window.location.hostname : "";
+        const root = hostname ? getRootDomain(hostname.toLowerCase()) : "";
+        const tenantDomain = selectedSubdomain
+          ? `${selectedSubdomain}.${root}`
+          : root;
+
+        await sendEmailApi({
+          to: payload.email,
+          subject: "Your Pharmacist Login Credentials",
+          template: LOGIN_DETAILS_TEMPLATE, // ✅ hard-coded template
+          context: {
+            subject: "Your account is ready",
+            name: fullName,
+            pharmacyName: selectedSubdomain || "Master domain",
+            email: payload.email,
+            username: payload.email, // optional, but useful in template
+            password: payload.password,
+            loginUrl,
+            tenantDomain,
+            supportEmail: "support@pharmacyexpress.co.uk",
+            year: String(new Date().getFullYear()),
+          },
+        });
+
+        toast.success("Login credentials email sent to pharmacist");
+      } catch (mailErr: any) {
+        console.error("Failed to send credentials email:", mailErr);
+        toast.error(
+          mailErr?.message ||
+            "Pharmacist created, but failed to send credentials email"
+        );
+      }
+
       // reset form
       setFirstName("");
       setLastName("");
@@ -205,27 +298,6 @@ export default function CreatePharmacistPage() {
       setIsSubmitting(false);
     }
   };
-
-  const pharmacistsScopeLabel = useMemo(() => {
-    if (!mounted) return "—";
-    return selectedSubdomain ? selectedSubdomain : "Master domain";
-  }, [mounted, selectedSubdomain]);
-
-  const selectedTenantObj = useMemo(() => {
-    if (!selectedSubdomain) return null;
-    return (
-      tenants.find(
-        (t) => (t.slug || "").toLowerCase() === selectedSubdomain.toLowerCase()
-      ) || null
-    );
-  }, [tenants, selectedSubdomain]);
-
-  const pharmacistsToShow = useMemo(() => {
-    if (!selectedTenantObj) return [];
-    return Array.isArray(selectedTenantObj.pharmacists)
-      ? selectedTenantObj.pharmacists
-      : [];
-  }, [selectedTenantObj]);
 
   // ✅ optional: avoid rendering until mounted to guarantee no hydration mismatch
   if (!mounted) {
@@ -445,7 +517,8 @@ export default function CreatePharmacistPage() {
             )
           ) : (
             <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 px-4 py-4 text-xs text-neutral-400">
-              Master-domain pharmacist listing is not available right now. <Frown className="inline-block h-4 w-4 ml-1 text-neutral-400" />
+              Master-domain pharmacist listing is not available right now.{" "}
+              <Frown className="inline-block h-4 w-4 ml-1 text-neutral-400" />
             </div>
           )}
         </div>
