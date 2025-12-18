@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   Loader2,
@@ -10,6 +10,7 @@ import {
   Plus,
   ArrowLeft,
   GripVertical,
+  Trash2,
 } from "lucide-react";
 import {
   getServiceApi,
@@ -100,6 +101,40 @@ function slugifyMed(input: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
+}
+
+/* ------------------- NEW: Forms assignment helpers/types ------------------- */
+
+type ClinicFormLite = {
+  _id: string;
+  name?: string;
+  description?: string;
+  form_type?: string; // "raf" | "advice" | ...
+  service_slug?: string;
+  service_id?: string;
+  treatment_slug?: string;
+  is_active?: boolean;
+  raf_status?: string; // "draft" | "published"
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type FormAssignmentRow = {
+  id: string;
+  form_type: string;
+  form_id: string;
+};
+
+function createId(prefix = "id") {
+  return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function humanizeType(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /* --------------------- Shared UI components ---------------------- */
@@ -348,6 +383,123 @@ export default function EditServicePage() {
     "offline" | "online"
   >("offline");
 
+  // ------------------- NEW: Clinic forms + assignment state -------------------
+  const [clinicForms, setClinicForms] = useState<ClinicFormLite[]>([]);
+  const [clinicFormsLoading, setClinicFormsLoading] = useState(false);
+  const [onlyActiveForms, setOnlyActiveForms] = useState(true);
+  const [assignmentRows, setAssignmentRows] = useState<FormAssignmentRow[]>([]);
+
+  const reloadClinicForms = useCallback(async () => {
+    try {
+      setClinicFormsLoading(true);
+      const base = getBackendBase();
+
+      const token =
+        typeof window !== "undefined"
+          ? localStorage.getItem("session_token")
+          : null;
+
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const res = await fetch(`${base}/clinic-forms`, { headers });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || "Failed to load clinic forms");
+      }
+
+      const json = await res.json().catch(() => null);
+      const listRaw = Array.isArray(json) ? json : json?.data || [];
+
+      const list: ClinicFormLite[] = (listRaw || []).map((f: any) => ({
+        _id: f._id,
+        name: f.name,
+        description: f.description,
+        form_type: f.form_type,
+        service_slug: f.service_slug,
+        service_id: f.service_id,
+        treatment_slug: f.treatment_slug,
+        is_active: f.is_active,
+        raf_status: f.raf_status,
+        createdAt: f.createdAt,
+        updatedAt: f.updatedAt,
+      }));
+
+      setClinicForms(list);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to load clinic forms");
+    } finally {
+      setClinicFormsLoading(false);
+    }
+  }, []);
+
+  const clinicFormsFiltered = useMemo(() => {
+    const list = clinicForms || [];
+    if (!onlyActiveForms) return list;
+    return list.filter((f) => f.is_active !== false);
+  }, [clinicForms, onlyActiveForms]);
+
+  const formTypeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of clinicFormsFiltered) {
+      const t = (f.form_type || "").trim();
+      if (t) set.add(t);
+    }
+    if (set.size === 0) {
+      ["raf", "advice", "reorder", "clinical_notes", "pharmacist_declaration"].forEach(
+        (t) => set.add(t)
+      );
+    }
+    return Array.from(set);
+  }, [clinicFormsFiltered]);
+
+  const formsByType = useMemo(() => {
+    const map: Record<string, ClinicFormLite[]> = {};
+    for (const f of clinicFormsFiltered) {
+      const t = (f.form_type || "").trim() || "unknown";
+      if (!map[t]) map[t] = [];
+      map[t].push(f);
+    }
+    Object.keys(map).forEach((k) => {
+      map[k] = map[k].slice().sort((a, b) =>
+        String(a.name || "").localeCompare(String(b.name || ""))
+      );
+    });
+    return map;
+  }, [clinicFormsFiltered]);
+
+  const addAssignmentRow = () => {
+    const firstType = formTypeOptions[0] || "raf";
+    setAssignmentRows((prev) => [
+      ...prev,
+      { id: createId("fa"), form_type: firstType, form_id: "" },
+    ]);
+  };
+
+  const removeAssignmentRow = (rowId: string) => {
+    setAssignmentRows((prev) => prev.filter((r) => r.id !== rowId));
+  };
+
+  const updateAssignmentRow = (
+    rowId: string,
+    patch: Partial<FormAssignmentRow>
+  ) => {
+    setAssignmentRows((prev) =>
+      prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r))
+    );
+  };
+
+  const formsAssignmentObject = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const row of assignmentRows) {
+      const t = (row.form_type || "").trim();
+      const fid = (row.form_id || "").trim();
+      if (!t || !fid) continue;
+      out[t] = fid;
+    }
+    return out;
+  }, [assignmentRows]);
+
   // ---------- Inline Medicine Modal state (create + edit) ----------
   const [isMedModalOpen, setIsMedModalOpen] = useState(false);
   const [editingMed, setEditingMed] = useState<Medicine | null>(null);
@@ -439,6 +591,36 @@ export default function EditServicePage() {
             reorderObj.step6,
           ].filter(Boolean)
         );
+
+        // ✅ FORMS ASSIGNMENT (load existing)
+        let formsObj: any = {};
+        try {
+          const raw =
+            (data as any).forms_assignment ??
+            (data as any).formsAssignment ??
+            (data as any).forms_assignment_json;
+
+          if (typeof raw === "string") {
+            formsObj = raw ? JSON.parse(raw) : {};
+          } else if (raw && typeof raw === "object") {
+            formsObj = raw;
+          } else {
+            formsObj = {};
+          }
+        } catch (e) {
+          console.warn("Failed to parse forms_assignment:", e);
+          formsObj = {};
+        }
+
+        const rowsFromObj: FormAssignmentRow[] = Object.entries(formsObj || {})
+          .filter(([k, v]) => String(k || "").trim() && String(v || "").trim())
+          .map(([k, v]) => ({
+            id: createId("fa"),
+            form_type: String(k),
+            form_id: String(v),
+          }));
+
+        setAssignmentRows(rowsFromObj);
       } catch (err) {
         console.error(err);
         toast.error("Failed to load service");
@@ -449,6 +631,11 @@ export default function EditServicePage() {
 
     loadService();
   }, [id]);
+
+  // ---------- Load clinic forms ----------
+  useEffect(() => {
+    reloadClinicForms();
+  }, [reloadClinicForms]);
 
   // ---------- Load medicines + service medicines ----------
   const loadMeds = useCallback(async () => {
@@ -505,7 +692,9 @@ export default function EditServicePage() {
       formData.append("appointment_medium", appointmentMedium);
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
-      formData.append("forms_assignment", JSON.stringify({}));
+
+      // ✅ UPDATED: save selected form assignments
+      formData.append("forms_assignment", JSON.stringify(formsAssignmentObject));
 
       if (imageFile) {
         formData.append("image", imageFile);
@@ -980,7 +1169,7 @@ export default function EditServicePage() {
                   </select>
                 </div>
 
-                {/* ✅ Appointment medium (added only) */}
+                {/* ✅ Appointment medium */}
                 <div className="sm:col-span-2">
                   <label className="text-xs font-medium text-neutral-300 mr-5">
                     Appointment medium
@@ -1059,13 +1248,182 @@ export default function EditServicePage() {
             setSelectedOption={setSelectedReorderOption}
           />
 
-          {/* Service Medicines */}
+          {/* ---------------- NEW: ASSIGN FORMS SECTION ---------------- */}
           <SectionCard
-            title="Service Products"
+            title="Assign Forms"
+            subtitle="Choose which clinic forms this service should use (saved into forms_assignment)."
           >
-            <div className="space-y-5">
-            
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={reloadClinicForms}
+                    className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-800 transition-colors"
+                  >
+                    Reload forms
+                  </button>
 
+                  <label className="inline-flex items-center gap-2 text-xs text-neutral-300">
+                    <input
+                      type="checkbox"
+                      checked={onlyActiveForms}
+                      onChange={(e) => setOnlyActiveForms(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
+                    />
+                    Only active forms
+                  </label>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addAssignmentRow}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-blue-500 transition-colors"
+                >
+                  <Plus size={14} />
+                  Add assignment
+                </button>
+              </div>
+
+              {clinicFormsLoading && (
+                <p className="text-xs text-neutral-500">Loading clinic forms…</p>
+              )}
+
+              {!clinicFormsLoading && clinicFormsFiltered.length === 0 && (
+                <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-4 py-3 text-xs text-neutral-500">
+                  No clinic forms found. Create forms first, then come back here
+                  to assign them.
+                </div>
+              )}
+
+              {assignmentRows.length === 0 && (
+                <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-4 py-3 text-xs text-neutral-500">
+                  No assignments yet. Click “Add assignment” to map a form type
+                  to a clinic form.
+                </div>
+              )}
+
+              {assignmentRows.map((row) => {
+                const usedTypes = new Set(
+                  assignmentRows
+                    .filter((r) => r.id !== row.id)
+                    .map((r) => (r.form_type || "").trim())
+                    .filter(Boolean)
+                );
+
+                const availableTypes = Array.from(
+                  new Set([...(formTypeOptions || []), row.form_type].filter(Boolean))
+                );
+
+                const list = formsByType[row.form_type] || [];
+
+                return (
+                  <div
+                    key={row.id}
+                    className="rounded-xl border border-neutral-800 bg-neutral-900/70 p-4 space-y-3"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-neutral-300">
+                        Form assignment
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => removeAssignmentRow(row.id)}
+                        className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300 hover:bg-red-500/20"
+                      >
+                        <Trash2 size={12} />
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                          Form type
+                        </label>
+                        <select
+                          value={row.form_type}
+                          onChange={(e) => {
+                            const nextType = e.target.value;
+
+                            if (usedTypes.has(nextType)) {
+                              toast.error(
+                                "This form type is already assigned. Use a different type."
+                              );
+                              return;
+                            }
+
+                            updateAssignmentRow(row.id, {
+                              form_type: nextType,
+                              form_id: "",
+                            });
+                          }}
+                          className="w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        >
+                          {availableTypes.map((t) => (
+                            <option key={t} value={t}>
+                              {humanizeType(t)}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-[11px] text-neutral-500">
+                          Stored as key in <code>forms_assignment</code>
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-medium text-neutral-300">
+                          Clinic form
+                        </label>
+                        <select
+                          value={row.form_id}
+                          onChange={(e) =>
+                            updateAssignmentRow(row.id, {
+                              form_id: e.target.value,
+                            })
+                          }
+                          className="w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                        >
+                          <option value="">Select form…</option>
+                          {list.map((f) => {
+                            const metaBits: string[] = [];
+                            if (f.raf_status) metaBits.push(f.raf_status);
+                            if (f.service_slug) metaBits.push(`svc:${f.service_slug}`);
+                            if (f.treatment_slug) metaBits.push(`trt:${f.treatment_slug}`);
+                            const meta = metaBits.length ? ` • ${metaBits.join(" • ")}` : "";
+
+                            return (
+                              <option key={f._id} value={f._id}>
+                                {(f.name || "Unnamed form") + meta}
+                              </option>
+                            );
+                          })}
+                        </select>
+
+                        <p className="mt-1 text-[11px] text-neutral-500">
+                          Stored as value (clinic_form_id) for this type.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div className="pt-2 border-t border-neutral-800">
+                <p className="text-[11px] text-neutral-500 mb-2">
+                  Preview (will be saved into <code>forms_assignment</code>):
+                </p>
+                <pre className="max-h-44 overflow-auto rounded-lg bg-neutral-950 border border-neutral-800 p-3 text-[11px] leading-relaxed text-neutral-300">
+                  {JSON.stringify(formsAssignmentObject, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </SectionCard>
+          {/* ---------------- END: ASSIGN FORMS SECTION ---------------- */}
+
+          {/* Service Medicines */}
+          <SectionCard title="Service Products">
+            <div className="space-y-5">
               {/* Already linked medicines */}
               {/* <div className="space-y-2">
               
@@ -1571,9 +1929,7 @@ export default function EditServicePage() {
                       >
                         <span
                           className={`inline-block h-[10px] w-[10px] rounded-full ${
-                            medAllowReorder
-                              ? "bg-emerald-400"
-                              : "bg-neutral-500"
+                            medAllowReorder ? "bg-emerald-400" : "bg-neutral-500"
                           }`}
                         />
                         {medAllowReorder
@@ -1783,8 +2139,7 @@ export default function EditServicePage() {
                         Image &amp; description
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Optional details to make this product easy to
-                        recognise.
+                        Optional details to make this product easy to recognise.
                       </p>
                     </div>
                   </div>
@@ -1822,9 +2177,7 @@ export default function EditServicePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                document
-                                  .getElementById("med-image-input")
-                                  ?.click()
+                                document.getElementById("med-image-input")?.click()
                               }
                               className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
                             >
