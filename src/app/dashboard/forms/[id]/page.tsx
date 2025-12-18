@@ -178,6 +178,13 @@ export default function EditClinicFormPage() {
   const [fields, setFields] = useState<FormField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
 
+  // ✅ Insert-between state
+  const [openInsertMenuAt, setOpenInsertMenuAt] = useState<number | null>(null);
+
+  // ✅ Drag state
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
   const selectedField = useMemo(
     () => fields.find((f) => f.id === selectedFieldId) || null,
     [fields, selectedFieldId]
@@ -558,6 +565,128 @@ export default function EditClinicFormPage() {
     );
   };
 
+  // ✅ Create a new field using your EXISTING palette-add logic (kept same defaults)
+  const buildNewFieldFromPalette = (type: FieldType, label: string): FormField => {
+    const base: BaseField = {
+      id: createId(),
+      type,
+      label,
+      key: `${type}_${createId()}`,
+      required: false,
+      showIf: defaultShowIf(),
+    };
+
+    if (type === "select" || type === "dropdown" || type === "radio" || type === "checkbox") {
+      return {
+        ...base,
+        options: [
+          { id: createId(), label: "Option 1", value: "option_1" },
+          { id: createId(), label: "Option 2", value: "option_2" },
+        ],
+        multiple: type === "select",
+      };
+    }
+
+    if (type === "textBlock") {
+      return {
+        ...base,
+        type: "textBlock",
+        content: "This is a static text block. You can edit this content.",
+      };
+    }
+
+    if (type === "image") {
+      return {
+        ...base,
+        type: "image",
+        imageUrl: "",
+        helpText: "Paste image URL or configure later.",
+      };
+    }
+
+    if (type === "file") {
+      return {
+        ...base,
+        type: "file",
+        fileMultiple: true,
+        helpText: "Max 10MB. PDF or image.",
+      };
+    }
+
+    if (type === "divider" || type === "pageBreak" || type === "section") {
+      return { ...base, type };
+    }
+
+    return {
+      ...base,
+      placeholder: "",
+    };
+  };
+
+  // ✅ Add field at any index (defaults bottom)
+  const handleAddField = (type: FieldType, label: string, insertIndex?: number) => {
+    const newField = buildNewFieldFromPalette(type, label);
+
+    setFields((prev) => {
+      if (insertIndex == null || insertIndex < 0 || insertIndex > prev.length) {
+        return [...prev, newField];
+      }
+      const arr = [...prev];
+      arr.splice(insertIndex, 0, newField);
+      return arr;
+    });
+
+    setSelectedFieldId(newField.id);
+    setOpenInsertMenuAt(null);
+  };
+
+  /* ---------- Drag & drop reorder ---------- */
+
+  const reorderByDropIndex = (fieldId: string, dropIndex: number) => {
+    setFields((prev) => {
+      const fromIndex = prev.findIndex((f) => f.id === fieldId);
+      if (fromIndex === -1) return prev;
+
+      const next = [...prev];
+      const [moving] = next.splice(fromIndex, 1);
+
+      let targetIndex = dropIndex;
+      if (fromIndex < dropIndex) targetIndex = dropIndex - 1;
+
+      if (targetIndex < 0) targetIndex = 0;
+      if (targetIndex > next.length) targetIndex = next.length;
+
+      next.splice(targetIndex, 0, moving);
+      return next;
+    });
+  };
+
+  const onDragStartField = (e: React.DragEvent, fid: string) => {
+    e.dataTransfer.setData("text/plain", fid);
+    e.dataTransfer.effectAllowed = "move";
+    setDraggingId(fid);
+  };
+
+  const onDragEndField = () => {
+    setDraggingId(null);
+    setDragOverIndex(null);
+  };
+
+  const onDragOverInsert = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIndex(index);
+  };
+
+  const onDropInsert = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    const fid = e.dataTransfer.getData("text/plain");
+    if (!fid) return;
+    reorderByDropIndex(fid, index);
+    setDragOverIndex(null);
+    setDraggingId(null);
+  };
+
   /* ---------- build backend schema from fields ---------- */
 
   const apiSchema = useMemo(
@@ -812,6 +941,81 @@ export default function EditClinicFormPage() {
     }
   };
 
+  /* ---------- Insert row UI ---------- */
+
+  const InsertRow = ({ index }: { index: number }) => {
+    const menuOpen = openInsertMenuAt === index;
+    const isDropTarget = dragOverIndex === index && draggingId;
+
+    return (
+      <div
+        className="relative py-2"
+        onDragOver={(e) => onDragOverInsert(e, index)}
+        onDrop={(e) => onDropInsert(e, index)}
+      >
+        <div className="flex items-center justify-center gap-3">
+          <div className="h-px flex-1 bg-neutral-800" />
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenInsertMenuAt((prev) => (prev === index ? null : index));
+            }}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium transition ${
+              isDropTarget
+                ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                : "border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100"
+            }`}
+            title="Add field here"
+          >
+            <Plus className="h-3 w-3" />
+            Add field here
+          </button>
+          <div className="h-px flex-1 bg-neutral-800" />
+        </div>
+
+        {menuOpen && (
+          <div
+            className="absolute left-1/2 top-full z-30 mt-2 w-[280px] -translate-x-1/2 rounded-xl border border-neutral-800 bg-neutral-950 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b border-neutral-800">
+              <p className="text-xs font-semibold text-neutral-200">
+                Insert field at position {index + 1}
+              </p>
+              <p className="text-[11px] text-neutral-500">
+                Choose a field type to insert here.
+              </p>
+            </div>
+
+            <div className="max-h-72 overflow-auto p-2">
+              <div className="space-y-1">
+                {FIELD_PALETTE.map((item) => (
+                  <button
+                    key={`${index}-${item.type}`}
+                    type="button"
+                    onClick={() => handleAddField(item.type, item.label, index)}
+                    className="w-full text-left text-sm px-3 py-2 rounded-md bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800/80 hover:border-blue-500/60 text-neutral-100 transition-colors"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setOpenInsertMenuAt(null)}
+                className="mt-2 w-full rounded-md border border-neutral-800 bg-neutral-900/60 px-3 py-2 text-[11px] text-neutral-300 hover:bg-neutral-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   /* ---------- UI ---------- */
 
   if (!id) {
@@ -1050,110 +1254,44 @@ export default function EditClinicFormPage() {
       </div>
 
       {/* Main 3-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1.6fr)_minmax(0,1.1fr)] gap-5">
-        {/* Palette */}
-        <aside className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-3">
-          <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em] mb-3">
-            Field types
-          </h2>
-          <div className="space-y-1">
-            {FIELD_PALETTE.map((item) => (
-              <button
-                key={item.type}
-                type="button"
-                onClick={() => {
-                  const newField: FormField = (() => {
-                    const base: BaseField = {
-                      id: createId(),
-                      type: item.type,
-                      label: item.label,
-                      key: `${item.type}_${createId()}`,
-                      required: false,
-                      showIf: defaultShowIf(),
-                    };
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1.6fr)_minmax(0,1.1fr)] gap-5 lg:items-start">
+        {/* ✅ Sticky Palette */}
+        <aside className="self-start lg:sticky lg:top-6">
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-3 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+            <h2 className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em] mb-3">
+              Field types
+            </h2>
+            <p className="mb-3 text-[11px] text-neutral-500">
+              Tip: Use “Add field here” in the middle panel to insert between
+              fields.
+            </p>
 
-                    if (
-                      item.type === "select" ||
-                      item.type === "dropdown" ||
-                      item.type === "radio" ||
-                      item.type === "checkbox"
-                    ) {
-                      return {
-                        ...base,
-                        options: [
-                          {
-                            id: createId(),
-                            label: "Option 1",
-                            value: "option_1",
-                          },
-                          {
-                            id: createId(),
-                            label: "Option 2",
-                            value: "option_2",
-                          },
-                        ],
-                        multiple: item.type === "select",
-                      };
-                    }
-
-                    if (item.type === "textBlock") {
-                      return {
-                        ...base,
-                        type: "textBlock",
-                        content:
-                          "This is a static text block. You can edit this content.",
-                      };
-                    }
-
-                    if (item.type === "image") {
-                      return {
-                        ...base,
-                        type: "image",
-                        imageUrl: "",
-                        helpText: "Paste image URL or configure later.",
-                      };
-                    }
-
-                    if (item.type === "file") {
-                      return {
-                        ...base,
-                        type: "file",
-                        fileMultiple: true,
-                        helpText: "Max 10MB. PDF or image.",
-                      };
-                    }
-
-                    if (
-                      item.type === "divider" ||
-                      item.type === "pageBreak" ||
-                      item.type === "section"
-                    ) {
-                      return { ...base, type: item.type };
-                    }
-
-                    return {
-                      ...base,
-                      placeholder: "",
-                    };
-                  })();
-
-                  setFields((prev) => [...prev, newField]);
-                  setSelectedFieldId(newField.id);
-                }}
-                className="w-full text-left text-sm px-3 py-1.5 rounded-md bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800/80 hover:border-blue-500/60 text-neutral-100 transition-colors"
-              >
-                {item.label}
-              </button>
-            ))}
+            <div className="space-y-1">
+              {FIELD_PALETTE.map((item) => (
+                <button
+                  key={item.type}
+                  type="button"
+                  onClick={() => handleAddField(item.type, item.label)}
+                  className="w-full text-left text-sm px-3 py-1.5 rounded-md bg-neutral-900/80 hover:bg-neutral-800 border border-neutral-800/80 hover:border-blue-500/60 text-neutral-100 transition-colors"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
         </aside>
 
         {/* Canvas / Form preview */}
         <main className="rounded-2xl border border-neutral-800 bg-neutral-950/80 p-4 sm:p-5 space-y-4">
           <div className="flex items-center justify-between mb-1">
-            <h2 className="text-sm font-semibold text-neutral-200">
-              Form layout
-            </h2>
+            <div>
+              <h2 className="text-sm font-semibold text-neutral-200">
+                Form layout
+              </h2>
+              <p className="text-[11px] text-neutral-500 mt-0.5">
+                Use “Add field here” to insert between fields.
+              </p>
+            </div>
             <span className="text-[11px] text-neutral-500">
               Click a field to edit its properties
             </span>
@@ -1164,559 +1302,572 @@ export default function EditClinicFormPage() {
               No fields yet. Use the field types on the left to add fields.
             </div>
           ) : (
-            <div className="space-y-3">
-              {fields.map((field, index) => (
-                <div
-                  key={field.id}
-                  className={`group rounded-xl border px-3 py-3 sm:px-4 sm:py-3.5 bg-neutral-900/80 flex items-start gap-3 ${
-                    selectedFieldId === field.id
-                      ? "border-blue-500 shadow-[0_0_0_1px_rgba(37,99,235,0.4)]"
-                      : "border-neutral-800 hover:border-neutral-600"
-                  }`}
-                  onClick={() => setSelectedFieldId(field.id)}
-                >
-                  <div className="flex flex-col items-center gap-1 pt-1">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveField(field.id, "up");
-                      }}
-                      className="p-0.5 rounded-full text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </button>
-                    <span className="text-[10px] text-neutral-500">
-                      {index + 1}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveField(field.id, "down");
-                      }}
-                      className="p-0.5 rounded-full text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </button>
-                  </div>
+            <div className="space-y-1">
+              {/* ✅ Insert before first */}
+              <InsertRow index={0} />
 
-                  <div className="flex-1 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-neutral-100">
-                          {field.label || "(no label)"}
-                        </span>
-                        <span className="text-[11px] px-1.5 py-[1px] rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700">
-                          {field.type}
-                        </span>
-                      </div>
+              {fields.map((field, index) => (
+                <React.Fragment key={field.id}>
+                  <div
+                    draggable
+                    onDragStart={(e) => onDragStartField(e, field.id)}
+                    onDragEnd={onDragEndField}
+                    className={`group rounded-xl border px-3 py-3 sm:px-4 sm:py-3.5 bg-neutral-900/80 flex items-start gap-3 cursor-pointer ${
+                      selectedFieldId === field.id
+                        ? "border-blue-500 shadow-[0_0_0_1px_rgba(37,99,235,0.4)]"
+                        : "border-neutral-800 hover:border-neutral-600"
+                    } ${draggingId === field.id ? "opacity-70" : ""}`}
+                    onClick={() => setSelectedFieldId(field.id)}
+                  >
+                    <div className="flex flex-col items-center gap-1 pt-1">
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          deleteField(field.id);
+                          moveField(field.id, "up");
                         }}
-                        className="inline-flex items-center justify-center rounded-full bg-red-500/10 text-red-400 hover:bg-red-500/20 p-1"
+                        className="p-0.5 rounded-full text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                        title="Move up"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <ChevronUp className="h-4 w-4" />
+                      </button>
+                      <span className="text-[10px] text-neutral-500">
+                        {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          moveField(field.id, "down");
+                        }}
+                        className="p-0.5 rounded-full text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+                        title="Move down"
+                      >
+                        <ChevronDown className="h-4 w-4" />
                       </button>
                     </div>
 
-                    {/* Quick preview */}
-                    <div className="pt-1">
-                      {field.type === "section" && (
-                        <div className="border-b border-neutral-700 pb-1">
-                          <span className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em]">
-                            {field.label || "Section"}
+                    <div className="flex-1 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-neutral-100">
+                            {field.label || "(no label)"}
                           </span>
+                          <span className="text-[11px] px-1.5 py-[1px] rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700">
+                            {field.type}
+                          </span>
+                         
                         </div>
-                      )}
-
-                      {["text", "email", "number", "date"].includes(
-                        field.type
-                      ) && (
-                        <input
-                          disabled
-                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
-                          placeholder={field.placeholder || "Input preview"}
-                        />
-                      )}
-
-                      {field.type === "textarea" && (
-                        <textarea
-                          disabled
-                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
-                          rows={2}
-                          placeholder={field.placeholder || "Textarea preview"}
-                        />
-                      )}
-
-                      {["select", "dropdown"].includes(field.type) && (
-                        <select
-                          disabled
-                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteField(field.id);
+                          }}
+                          className="inline-flex items-center justify-center rounded-full bg-red-500/10 text-red-400 hover:bg-red-500/20 p-1"
+                          title="Delete field"
                         >
-                          <option>— select —</option>
-                          {field.options?.map((o) => (
-                            <option key={o.id}>{o.label}</option>
-                          ))}
-                        </select>
-                      )}
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
 
-                      {field.type === "radio" && (
-                        <div className="mt-1 flex flex-wrap gap-3 text-xs text-neutral-300">
-                          {field.options?.map((o) => (
-                            <label
-                              key={o.id}
-                              className="inline-flex items-center gap-1"
-                            >
-                              <input
-                                type="radio"
-                                disabled
-                                className="h-3 w-3"
-                              />
-                              {o.label}
-                            </label>
-                          ))}
-                        </div>
-                      )}
-
-                      {field.type === "checkbox" && (
-                        <div className="mt-1 flex flex-wrap gap-3 text-xs text-neutral-300">
-                          {field.options?.map((o) => (
-                            <label
-                              key={o.id}
-                              className="inline-flex items-center gap-1"
-                            >
-                              <input
-                                type="checkbox"
-                                disabled
-                                className="h-3 w-3"
-                              />
-                              {o.label}
-                            </label>
-                          ))}
-                        </div>
-                      )}
-
-                      {field.type === "file" && (
-                        <div className="mt-1">
-                          <div className="inline-flex items-center rounded-md border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-[11px] text-neutral-400">
-                            File upload preview
+                      {/* Quick preview */}
+                      <div className="pt-1">
+                        {field.type === "section" && (
+                          <div className="border-b border-neutral-700 pb-1">
+                            <span className="text-xs font-semibold text-neutral-300 uppercase tracking-[0.12em]">
+                              {field.label || "Section"}
+                            </span>
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {field.type === "signature" && (
-                        <div className="mt-1 border border-dashed border-neutral-700 rounded-md h-16 flex items-center justify-center text-[11px] text-neutral-500">
-                          Signature box preview
-                        </div>
-                      )}
+                        {["text", "email", "number", "date"].includes(
+                          field.type
+                        ) && (
+                          <input
+                            disabled
+                            className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
+                            placeholder={field.placeholder || "Input preview"}
+                          />
+                        )}
 
-                      {field.type === "textBlock" && (
-                        <p className="mt-1 text-xs text-neutral-300 whitespace-pre-line">
-                          {field.content}
-                        </p>
-                      )}
+                        {field.type === "textarea" && (
+                          <textarea
+                            disabled
+                            className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
+                            rows={2}
+                            placeholder={field.placeholder || "Textarea preview"}
+                          />
+                        )}
 
-                      {field.type === "divider" && (
-                        <div className="mt-2 border-t border-neutral-700" />
-                      )}
+                        {["select", "dropdown"].includes(field.type) && (
+                          <select
+                            disabled
+                            className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
+                          >
+                            <option>— select —</option>
+                            {field.options?.map((o) => (
+                              <option key={o.id}>{o.label}</option>
+                            ))}
+                          </select>
+                        )}
 
-                      {field.type === "image" && (
-                        <div className="mt-1 h-20 border border-dashed border-neutral-700 rounded-md flex items-center justify-center text-[11px] text-neutral-500">
-                          Image placeholder
-                        </div>
-                      )}
+                        {field.type === "radio" && (
+                          <div className="mt-1 flex flex-wrap gap-3 text-xs text-neutral-300">
+                            {field.options?.map((o) => (
+                              <label
+                                key={o.id}
+                                className="inline-flex items-center gap-1"
+                              >
+                                <input
+                                  type="radio"
+                                  disabled
+                                  className="h-3 w-3"
+                                />
+                                {o.label}
+                              </label>
+                            ))}
+                          </div>
+                        )}
 
-                      {field.type === "pageBreak" && (
-                        <div className="mt-2 text-[11px] text-neutral-500 italic">
-                          --- Page Break ---
-                        </div>
-                      )}
+                        {field.type === "checkbox" && (
+                          <div className="mt-1 flex flex-wrap gap-3 text-xs text-neutral-300">
+                            {field.options?.map((o) => (
+                              <label
+                                key={o.id}
+                                className="inline-flex items-center gap-1"
+                              >
+                                <input
+                                  type="checkbox"
+                                  disabled
+                                  className="h-3 w-3"
+                                />
+                                {o.label}
+                              </label>
+                            ))}
+                          </div>
+                        )}
 
-                      {field.helpText && (
-                        <div className="mt-1 text-[11px] text-neutral-500">
-                          {field.helpText}
-                        </div>
-                      )}
+                        {field.type === "file" && (
+                          <div className="mt-1">
+                            <div className="inline-flex items-center rounded-md border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-[11px] text-neutral-400">
+                              File upload preview
+                            </div>
+                          </div>
+                        )}
+
+                        {field.type === "signature" && (
+                          <div className="mt-1 border border-dashed border-neutral-700 rounded-md h-16 flex items-center justify-center text-[11px] text-neutral-500">
+                            Signature box preview
+                          </div>
+                        )}
+
+                        {field.type === "textBlock" && (
+                          <p className="mt-1 text-xs text-neutral-300 whitespace-pre-line">
+                            {field.content}
+                          </p>
+                        )}
+
+                        {field.type === "divider" && (
+                          <div className="mt-2 border-t border-neutral-700" />
+                        )}
+
+                        {field.type === "image" && (
+                          <div className="mt-1 h-20 border border-dashed border-neutral-700 rounded-md flex items-center justify-center text-[11px] text-neutral-500">
+                            Image placeholder
+                          </div>
+                        )}
+
+                        {field.type === "pageBreak" && (
+                          <div className="mt-2 text-[11px] text-neutral-500 italic">
+                            --- Page Break ---
+                          </div>
+                        )}
+
+                        {field.helpText && (
+                          <div className="mt-1 text-[11px] text-neutral-500">
+                            {field.helpText}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                  {/* ✅ Insert between this and next */}
+                  <InsertRow index={index + 1} />
+                </React.Fragment>
               ))}
             </div>
           )}
         </main>
 
-        {/* Inspector + JSON */}
-        <aside className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-4 space-y-4">
-          <h2 className="text-sm font-semibold text-neutral-200">
-            Field settings
-          </h2>
+        {/* ✅ Sticky Inspector + JSON */}
+        <aside className="self-start lg:sticky lg:top-6">
+          <div className="rounded-2xl border border-neutral-800 bg-neutral-950/90 p-4 space-y-4 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+            <h2 className="text-sm font-semibold text-neutral-200">
+              Field settings
+            </h2>
 
-          {!selectedField && (
-            <p className="text-xs text-neutral-500">
-              Select a field from the middle panel to configure its properties.
-            </p>
-          )}
+            {!selectedField && (
+              <p className="text-xs text-neutral-500">
+                Select a field from the middle panel to configure its properties.
+              </p>
+            )}
 
-          {selectedField && (
-            <div className="space-y-4 text-sm">
-              {/* Label */}
-              <div>
-                <label className="text-xs font-medium text-neutral-300">
-                  Label
-                </label>
-                <input
-                  value={selectedField.label}
-                  onChange={(e) =>
-                    updateField(selectedField.id, { label: e.target.value })
-                  }
-                  className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-sm text-neutral-100"
-                />
-              </div>
-
-              {/* Key */}
-              <div>
-                <label className="text-xs font-medium text-neutral-300">
-                  Field key (for backend)
-                </label>
-                <input
-                  value={selectedField.key}
-                  onChange={(e) =>
-                    updateField(selectedField.id, { key: e.target.value })
-                  }
-                  className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                />
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  This will be used as <code>data.key</code> in your schema.
-                </p>
-              </div>
-
-              {/* Required */}
-              {![
-                "section",
-                "divider",
-                "textBlock",
-                "image",
-                "pageBreak",
-              ].includes(selectedField.type) && (
-                <div className="flex items-center gap-2">
-                  <input
-                    id="required-toggle"
-                    type="checkbox"
-                    checked={!!selectedField.required}
-                    onChange={(e) =>
-                      updateField(selectedField.id, {
-                        required: e.target.checked,
-                      })
-                    }
-                    className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
-                  />
-                  <label
-                    htmlFor="required-toggle"
-                    className="text-xs text-neutral-300"
-                  >
-                    Required field
-                  </label>
-                </div>
-              )}
-
-              {/* Placeholder */}
-              {["text", "email", "number", "textarea", "date"].includes(
-                selectedField.type
-              ) && (
+            {selectedField && (
+              <div className="space-y-4 text-sm">
+                {/* Label */}
                 <div>
                   <label className="text-xs font-medium text-neutral-300">
-                    Placeholder
+                    Label
                   </label>
                   <input
-                    value={selectedField.placeholder || ""}
+                    value={selectedField.label}
                     onChange={(e) =>
-                      updateField(selectedField.id, {
-                        placeholder: e.target.value,
-                      })
+                      updateField(selectedField.id, { label: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-sm text-neutral-100"
+                  />
+                </div>
+
+                {/* Key */}
+                <div>
+                  <label className="text-xs font-medium text-neutral-300">
+                    Field key (for backend)
+                  </label>
+                  <input
+                    value={selectedField.key}
+                    onChange={(e) =>
+                      updateField(selectedField.id, { key: e.target.value })
                     }
                     className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
                   />
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    This will be used as <code>data.key</code> in your schema.
+                  </p>
                 </div>
-              )}
 
-              {/* Help text */}
-              <div>
-                <label className="text-xs font-medium text-neutral-300">
-                  Help text
-                </label>
-                <textarea
-                  rows={2}
-                  value={selectedField.helpText || ""}
-                  onChange={(e) =>
-                    updateField(selectedField.id, {
-                      helpText: e.target.value,
-                    })
-                  }
-                  className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                />
-              </div>
-
-              {/* Multiple for select/dropdown/checkbox */}
-              {["select", "dropdown", "checkbox"].includes(
-                selectedField.type
-              ) && (
-                <div className="flex items-center gap-2">
-                  <input
-                    id="multiple-toggle"
-                    type="checkbox"
-                    checked={!!selectedField.multiple}
-                    onChange={(e) =>
-                      updateField(selectedField.id, {
-                        multiple: e.target.checked,
-                      })
-                    }
-                    className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
-                  />
-                  <label
-                    htmlFor="multiple-toggle"
-                    className="text-xs text-neutral-300"
-                  >
-                    Allow multiple values (<code>data.multiple</code>)
-                  </label>
-                </div>
-              )}
-
-              {/* File multiple */}
-              {selectedField.type === "file" && (
-                <div className="flex items-center gap-2">
-                  <input
-                    id="file-multiple-toggle"
-                    type="checkbox"
-                    checked={!!selectedField.fileMultiple}
-                    onChange={(e) =>
-                      updateField(selectedField.id, {
-                        fileMultiple: e.target.checked,
-                      })
-                    }
-                    className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
-                  />
-                  <label
-                    htmlFor="file-multiple-toggle"
-                    className="text-xs text-neutral-300"
-                  >
-                    Allow multiple files
-                  </label>
-                </div>
-              )}
-
-              {/* Options */}
-              {["select", "dropdown", "radio", "checkbox"].includes(
-                selectedField.type
-              ) && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-neutral-300">
-                      Options
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => addOption(selectedField.id)}
-                      className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-100 border border-neutral-700 hover:bg-neutral-700"
+                {/* Required */}
+                {![
+                  "section",
+                  "divider",
+                  "textBlock",
+                  "image",
+                  "pageBreak",
+                ].includes(selectedField.type) && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="required-toggle"
+                      type="checkbox"
+                      checked={!!selectedField.required}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          required: e.target.checked,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
+                    />
+                    <label
+                      htmlFor="required-toggle"
+                      className="text-xs text-neutral-300"
                     >
-                      <Plus className="h-3 w-3" />
-                      Add option
-                    </button>
+                      Required field
+                    </label>
                   </div>
+                )}
 
-                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                    {selectedField.options?.map((opt) => (
-                      <div
-                        key={opt.id}
-                        className="flex items-center gap-2 text-xs"
-                      >
-                        <input
-                          value={opt.label}
-                          onChange={(e) =>
-                            updateOption(selectedField.id, opt.id, {
-                              label: e.target.value,
-                            })
-                          }
-                          placeholder="Label"
-                          className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100"
-                        />
-                        <input
-                          value={opt.value}
-                          onChange={(e) =>
-                            updateOption(selectedField.id, opt.id, {
-                              value: e.target.value,
-                            })
-                          }
-                          placeholder="value_key"
-                          className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => deleteOption(selectedField.id, opt.id)}
-                          className="p-1 rounded-md text-red-400 hover:bg-red-500/10"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                    {(!selectedField.options ||
-                      selectedField.options.length === 0) && (
-                      <p className="text-[11px] text-neutral-500">
-                        No options yet. Click “Add option” to create choices.
-                      </p>
-                    )}
+                {/* Placeholder */}
+                {["text", "email", "number", "textarea", "date"].includes(
+                  selectedField.type
+                ) && (
+                  <div>
+                    <label className="text-xs font-medium text-neutral-300">
+                      Placeholder
+                    </label>
+                    <input
+                      value={selectedField.placeholder || ""}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          placeholder: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                    />
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Text block content */}
-              {selectedField.type === "textBlock" && (
+                {/* Help text */}
                 <div>
                   <label className="text-xs font-medium text-neutral-300">
-                    Text content
+                    Help text
                   </label>
                   <textarea
-                    rows={4}
-                    value={selectedField.content || ""}
+                    rows={2}
+                    value={selectedField.helpText || ""}
                     onChange={(e) =>
                       updateField(selectedField.id, {
-                        content: e.target.value,
+                        helpText: e.target.value,
                       })
                     }
                     className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
                   />
                 </div>
-              )}
 
-              {/* Image URL */}
-              {selectedField.type === "image" && (
-                <div>
-                  <label className="text-xs font-medium text-neutral-300">
-                    Image URL
-                  </label>
-                  <input
-                    value={selectedField.imageUrl || ""}
-                    onChange={(e) =>
-                      updateField(selectedField.id, {
-                        imageUrl: e.target.value,
-                      })
-                    }
-                    placeholder="https://example.com/image.png"
-                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                  />
-                </div>
-              )}
+                {/* Multiple for select/dropdown/checkbox */}
+                {["select", "dropdown", "checkbox"].includes(
+                  selectedField.type
+                ) && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="multiple-toggle"
+                      type="checkbox"
+                      checked={!!selectedField.multiple}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          multiple: e.target.checked,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
+                    />
+                    <label
+                      htmlFor="multiple-toggle"
+                      className="text-xs text-neutral-300"
+                    >
+                      Allow multiple values (<code>data.multiple</code>)
+                    </label>
+                  </div>
+                )}
 
-              {/* ShowIf configuration with equals + in (multiple) */}
-              <div className="border-t border-neutral-800 pt-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    id="showif-toggle"
-                    type="checkbox"
-                    checked={!!selectedField.showIf?.enabled}
-                    onChange={(e) =>
-                      updateShowIf(selectedField.id, {
-                        enabled: e.target.checked,
-                      })
-                    }
-                    className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
-                  />
-                  <label
-                    htmlFor="showif-toggle"
-                    className="text-xs text-neutral-300"
-                  >
-                    Enable conditional visibility (showIf)
-                  </label>
-                </div>
+                {/* File multiple */}
+                {selectedField.type === "file" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="file-multiple-toggle"
+                      type="checkbox"
+                      checked={!!selectedField.fileMultiple}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          fileMultiple: e.target.checked,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
+                    />
+                    <label
+                      htmlFor="file-multiple-toggle"
+                      className="text-xs text-neutral-300"
+                    >
+                      Allow multiple files
+                    </label>
+                  </div>
+                )}
 
-                {selectedField.showIf?.enabled && (
-                  <div className="space-y-2 pl-1">
-                    {/* Source field key */}
-                    <div>
-                      <label className="text-xs font-medium text-neutral-300">
-                        Source field key
-                      </label>
-                      <input
-                        value={selectedField.showIf.field || ""}
-                        onChange={(e) =>
-                          updateShowIf(selectedField.id, {
-                            field: e.target.value || null,
-                          })
-                        }
-                        placeholder="e.g. meds_current"
-                        className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                      />
+                {/* Options */}
+                {["select", "dropdown", "radio", "checkbox"].includes(
+                  selectedField.type
+                ) && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-neutral-300">
+                        Options
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => addOption(selectedField.id)}
+                        className="inline-flex items-center gap-1 rounded-md bg-neutral-800 px-2 py-1 text-[11px] text-neutral-100 border border-neutral-700 hover:bg-neutral-700"
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add option
+                      </button>
                     </div>
 
-                    {/* equals (single) */}
-                    <div>
-                      <label className="text-xs font-medium text-neutral-300">
-                        Equals value (single)
-                      </label>
-                      <input
-                        value={selectedField.showIf.equals || ""}
-                        onChange={(e) =>
-                          updateShowIf(selectedField.id, {
-                            equals: e.target.value || null,
-                          })
-                        }
-                        placeholder='e.g. "yes"'
-                        className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                      />
-                      <p className="mt-1 text-[11px] text-neutral-500">
-                        Basic equality check:{" "}
-                        <code>value === showIf.equals</code>.
-                      </p>
-                    </div>
-
-                    {/* in (multiple) */}
-                    <div>
-                      <label className="text-xs font-medium text-neutral-300">
-                        Equals any of these (comma-separated)
-                      </label>
-                      <input
-                        value={
-                          selectedField.showIf?.inRaw ??
-                          (selectedField.showIf?.in || []).join(", ")
-                        }
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          const values = raw
-                            .split(",")
-                            .map((v) => v.trim())
-                            .filter(Boolean);
-
-                          updateShowIf(selectedField.id, {
-                            inRaw: raw,
-                            in: values,
-                          });
-                        }}
-                        placeholder='e.g. "yes,no,maybe"'
-                        className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
-                      />
-                      <p className="mt-1 text-[11px] text-neutral-500">
-                        This fills <code>showIf.in</code> as an array, e.g.{" "}
-                        <code>["yes","no","maybe"]</code>.
-                      </p>
+                    <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {selectedField.options?.map((opt) => (
+                        <div
+                          key={opt.id}
+                          className="flex items-center gap-2 text-xs"
+                        >
+                          <input
+                            value={opt.label}
+                            onChange={(e) =>
+                              updateOption(selectedField.id, opt.id, {
+                                label: e.target.value,
+                              })
+                            }
+                            placeholder="Label"
+                            className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100"
+                          />
+                          <input
+                            value={opt.value}
+                            onChange={(e) =>
+                              updateOption(selectedField.id, opt.id, {
+                                value: e.target.value,
+                              })
+                            }
+                            placeholder="value_key"
+                            className="flex-1 rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1 text-xs text-neutral-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => deleteOption(selectedField.id, opt.id)}
+                            className="p-1 rounded-md text-red-400 hover:bg-red-500/10"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {(!selectedField.options ||
+                        selectedField.options.length === 0) && (
+                        <p className="text-[11px] text-neutral-500">
+                          No options yet. Click “Add option” to create choices.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
 
-          {/* JSON preview */}
-          <div className="pt-4 border-t border-neutral-800 mt-4">
-            <p className="text-xs font-semibold text-neutral-300 mb-2">
-              Payload preview (what will be sent to{" "}
-              <code>/clinic-forms/{id}</code>)
-            </p>
-            <pre className="max-h-60 overflow-auto rounded-md bg-neutral-950 border border-neutral-800 p-2 text-[10px] leading-relaxed text-neutral-300">
-              {JSON.stringify(formPayload, null, 2)}
-            </pre>
+                {/* Text block content */}
+                {selectedField.type === "textBlock" && (
+                  <div>
+                    <label className="text-xs font-medium text-neutral-300">
+                      Text content
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={selectedField.content || ""}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          content: e.target.value,
+                        })
+                      }
+                      className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                    />
+                  </div>
+                )}
+
+                {/* Image URL */}
+                {selectedField.type === "image" && (
+                  <div>
+                    <label className="text-xs font-medium text-neutral-300">
+                      Image URL
+                    </label>
+                    <input
+                      value={selectedField.imageUrl || ""}
+                      onChange={(e) =>
+                        updateField(selectedField.id, {
+                          imageUrl: e.target.value,
+                        })
+                      }
+                      placeholder="https://example.com/image.png"
+                      className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                    />
+                  </div>
+                )}
+
+                {/* ShowIf configuration with equals + in (multiple) */}
+                <div className="border-t border-neutral-800 pt-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="showif-toggle"
+                      type="checkbox"
+                      checked={!!selectedField.showIf?.enabled}
+                      onChange={(e) =>
+                        updateShowIf(selectedField.id, {
+                          enabled: e.target.checked,
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded border-neutral-600 bg-neutral-900"
+                    />
+                    <label
+                      htmlFor="showif-toggle"
+                      className="text-xs text-neutral-300"
+                    >
+                      Enable conditional visibility (showIf)
+                    </label>
+                  </div>
+
+                  {selectedField.showIf?.enabled && (
+                    <div className="space-y-2 pl-1">
+                      <div>
+                        <label className="text-xs font-medium text-neutral-300">
+                          Source field key
+                        </label>
+                        <input
+                          value={selectedField.showIf.field || ""}
+                          onChange={(e) =>
+                            updateShowIf(selectedField.id, {
+                              field: e.target.value || null,
+                            })
+                          }
+                          placeholder="e.g. meds_current"
+                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-medium text-neutral-300">
+                          Equals value (single)
+                        </label>
+                        <input
+                          value={selectedField.showIf.equals || ""}
+                          onChange={(e) =>
+                            updateShowIf(selectedField.id, {
+                              equals: e.target.value || null,
+                            })
+                          }
+                          placeholder='e.g. "yes"'
+                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                        />
+                        <p className="mt-1 text-[11px] text-neutral-500">
+                          Basic equality check:{" "}
+                          <code>value === showIf.equals</code>.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-medium text-neutral-300">
+                          Equals any of these (comma-separated)
+                        </label>
+                        <input
+                          value={
+                            selectedField.showIf?.inRaw ??
+                            (selectedField.showIf?.in || []).join(", ")
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const values = raw
+                              .split(",")
+                              .map((v) => v.trim())
+                              .filter(Boolean);
+
+                            updateShowIf(selectedField.id, {
+                              inRaw: raw,
+                              in: values,
+                            });
+                          }}
+                          placeholder='e.g. "yes,no,maybe"'
+                          className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-1.5 text-xs text-neutral-200"
+                        />
+                        <p className="mt-1 text-[11px] text-neutral-500">
+                          This fills <code>showIf.in</code> as an array, e.g.{" "}
+                          <code>["yes","no","maybe"]</code>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* JSON preview */}
+            <div className="pt-4 border-t border-neutral-800 mt-4">
+              <p className="text-xs font-semibold text-neutral-300 mb-2">
+                Payload preview (what will be sent to{" "}
+                <code>/clinic-forms/{id}</code>)
+              </p>
+              <pre className="max-h-60 overflow-auto rounded-md bg-neutral-950 border border-neutral-800 p-2 text-[10px] leading-relaxed text-neutral-300">
+                {JSON.stringify(formPayload, null, 2)}
+              </pre>
+            </div>
           </div>
         </aside>
       </div>
