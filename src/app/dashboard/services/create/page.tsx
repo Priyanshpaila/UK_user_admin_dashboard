@@ -1033,13 +1033,13 @@ export default function CreateServicePage() {
 
       {/* ---------------- LINK MEDICINES SECTION ---------------- */}
       <SectionCard
-        title="Link Medicines"
-        subtitle="Attach default medicines to this service along with quantities and order."
+        title="Link Products"
+        subtitle="Attach default products to this service along with quantities and order."
       >
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-neutral-400">
-              Choose existing medicines to link, or create a new one.
+              Choose existing products to link, or create a new one.
             </p>
             <button
               type="button"
@@ -1047,17 +1047,17 @@ export default function CreateServicePage() {
               className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-500 transition-colors"
             >
               <Plus size={14} />
-              Create medicine
+              Create product
             </button>
           </div>
 
           {medicinesLoading && (
-            <p className="text-xs text-neutral-500">Loading medicines list…</p>
+            <p className="text-xs text-neutral-500">Loading products list…</p>
           )}
 
           {!medicinesLoading && medicines.length === 0 && (
             <p className="text-xs text-neutral-500">
-              No medicines found. Create medicines first to link them here.
+              No products found. Create products first to link them here.
             </p>
           )}
 
@@ -1068,7 +1068,7 @@ export default function CreateServicePage() {
             >
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-neutral-300">
-                  Medicine #{index + 1}
+                  Product #{index + 1}
                 </p>
                 <div className="flex items-center gap-2">
                   {row.medicine_id && (
@@ -1086,7 +1086,7 @@ export default function CreateServicePage() {
                       }}
                       className="inline-flex items-center gap-1 rounded-full border border-neutral-600 bg-neutral-800/60 px-2.5 py-1 text-[11px] font-medium text-neutral-100 hover:bg-neutral-700"
                     >
-                      Edit medicine
+                      Edit product
                     </button>
                   )}
                   {linkRows.length > 1 && (
@@ -1106,7 +1106,7 @@ export default function CreateServicePage() {
                 {/* Medicine select */}
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-[11px] font-medium text-neutral-300">
-                    Medicine
+                    Product
                   </label>
                   <select
                     value={row.medicine_id}
@@ -1115,7 +1115,7 @@ export default function CreateServicePage() {
                     }
                     className="w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   >
-                    <option value="">Select medicine...</option>
+                    <option value="">Select product...</option>
                     {medicines.map((m) => (
                       <option key={m._id} value={m._id}>
                         {m.name}
@@ -1206,11 +1206,11 @@ export default function CreateServicePage() {
             className="inline-flex items-center gap-1 rounded-lg border border-dashed border-neutral-700 bg-neutral-900/80 px-3 py-2 text-xs font-medium text-neutral-200 hover:border-blue-500 hover:text-blue-300 transition-colors"
           >
             <Plus size={14} />
-            Add another medicine
+            Add another products
           </button>
 
           <p className="text-[11px] text-neutral-500">
-            These medicines will be linked to the service after it is created.
+            These products will be linked to the service after it is created.
             Each combination is sent individually to the server.
           </p>
         </div>
@@ -1224,10 +1224,10 @@ export default function CreateServicePage() {
             <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
-                  {editingMed ? "Update existing medicine" : "Add new medicine"}
+                  {editingMed ? "Update existing product" : "Add new product"}
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-neutral-50 flex items-center gap-2">
-                  {editingMed ? "Edit Medicine" : "Create Medicine"}
+                  {editingMed ? "Edit Product" : "Create Product"}
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-[2px] text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
                     Inventory
                   </span>
@@ -1362,7 +1362,7 @@ export default function CreateServicePage() {
                           : "Re-order not allowed"}
                       </button>
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Toggle to control whether this medicine can be ordered
+                        Toggle to control whether this product can be ordered
                         again by patients.
                       </p>
                     </div>
@@ -1564,7 +1564,7 @@ export default function CreateServicePage() {
                         Image &amp; description
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Optional details to make this medicine easy to recognise.
+                        Optional details to make this product easy to recognise.
                       </p>
                     </div>
                   </div>
@@ -1677,7 +1677,7 @@ export default function CreateServicePage() {
                       : "Creating..."
                     : editingMed
                     ? "Save changes"
-                    : "Create medicine"}
+                    : "Create product"}
                 </button>
               </div>
             </form>

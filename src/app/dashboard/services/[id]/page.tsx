@@ -1061,20 +1061,14 @@ export default function EditServicePage() {
 
           {/* Service Medicines */}
           <SectionCard
-            title="Service Medicines"
-            subtitle="Pre-link medicines to this service so they appear as ready-made options during booking."
+            title="Service Products"
           >
             <div className="space-y-5">
-              <p className="text-sm text-neutral-300">
-                Attach medicines to this service to pre-fill treatment options
-                during booking.
-              </p>
+            
 
               {/* Already linked medicines */}
-              <div className="space-y-2">
-                <p className="text-xs font-semibold text-neutral-400">
-                  Already linked medicines
-                </p>
+              {/* <div className="space-y-2">
+              
                 {loadingMeds ? (
                   <div className="text-xs text-neutral-500 flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -1100,7 +1094,7 @@ export default function EditServicePage() {
                     ))}
                   </div>
                 )}
-              </div>
+              </div> */}
 
               <div className="h-px bg-neutral-800" />
 
@@ -1112,7 +1106,7 @@ export default function EditServicePage() {
                       +
                     </div>
                     <p className="text-xs font-semibold text-neutral-400">
-                      Add / link medicines
+                      Add / link products
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1122,7 +1116,7 @@ export default function EditServicePage() {
                       className="inline-flex items-center gap-1 rounded-lg border border-neutral-600 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800"
                     >
                       <Plus size={14} />
-                      Create medicine
+                      Create product
                     </button>
                     <button
                       type="button"
@@ -1130,22 +1124,22 @@ export default function EditServicePage() {
                       className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-blue-500"
                     >
                       <Plus size={14} />
-                      Add medicine row
+                      Add product row
                     </button>
                   </div>
                 </div>
 
                 {serviceMedicineRows.length === 0 && (
                   <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/70 px-4 py-3 text-xs text-neutral-500">
-                    No pending medicine mappings. Click{" "}
+                    No pending product mappings. Click{" "}
                     <span className="font-semibold text-neutral-300">
-                      “Create medicine”
+                      “Create product”
                     </span>{" "}
                     or{" "}
                     <span className="font-semibold text-neutral-300">
-                      “Add medicine row”
+                      “Add product row”
                     </span>{" "}
-                    to start linking medicines to this service.
+                    to start linking products to this service.
                   </div>
                 )}
 
@@ -1161,7 +1155,7 @@ export default function EditServicePage() {
                             {idx + 1}
                           </div>
                           <span className="text-xs text-neutral-400">
-                            New medicine link
+                            New product link
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -1174,7 +1168,7 @@ export default function EditServicePage() {
                                 );
                                 if (!med) {
                                   toast.error(
-                                    "Selected medicine not found. Try refreshing."
+                                    "Selected product not found. Try refreshing."
                                   );
                                   return;
                                 }
@@ -1182,7 +1176,7 @@ export default function EditServicePage() {
                               }}
                               className="inline-flex items-center gap-1 rounded-md bg-neutral-800/70 px-2.5 py-1 text-[11px] font-medium text-neutral-100 hover:bg-neutral-700"
                             >
-                              Edit medicine
+                              Edit product
                             </button>
                           )}
                           <button
@@ -1200,7 +1194,7 @@ export default function EditServicePage() {
                         {/* Medicine select */}
                         <div className="sm:col-span-1">
                           <label className="mb-1 block text-xs font-medium text-neutral-300">
-                            Medicine
+                            Product
                           </label>
                           <select
                             className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
@@ -1211,7 +1205,7 @@ export default function EditServicePage() {
                               })
                             }
                           >
-                            <option value="">Select medicine…</option>
+                            <option value="">Select product…</option>
                             {allMedicines.map((m) => {
                               const disabled =
                                 linkedIds.has(m._id) &&
@@ -1327,7 +1321,7 @@ export default function EditServicePage() {
                       {savingMeds && (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       )}
-                      {savingMeds ? "Saving medicines..." : "Save medicines"}
+                      {savingMeds ? "Saving products..." : "Save products"}
                     </button>
                   </div>
                 )}
@@ -1446,10 +1440,10 @@ export default function EditServicePage() {
             <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
-                  {editingMed ? "Update existing medicine" : "Add new medicine"}
+                  {editingMed ? "Update existing product" : "Add new product"}
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-neutral-50 flex items-center gap-2">
-                  {editingMed ? "Edit Medicine" : "Create Medicine"}
+                  {editingMed ? "Edit Product" : "Create Product"}
                   <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-[2px] text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
                     Inventory
                   </span>
@@ -1487,7 +1481,7 @@ export default function EditServicePage() {
                         Basic details
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Name, slug and SKU for this medicine.
+                        Name, slug and SKU for this product.
                       </p>
                     </div>
                   </div>
@@ -1587,7 +1581,7 @@ export default function EditServicePage() {
                           : "Re-order not allowed"}
                       </button>
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Toggle to control whether this medicine can be ordered
+                        Toggle to control whether this product can be ordered
                         again by patients.
                       </p>
                     </div>
@@ -1789,7 +1783,7 @@ export default function EditServicePage() {
                         Image &amp; description
                       </p>
                       <p className="text-[11px] text-neutral-500">
-                        Optional details to make this medicine easy to
+                        Optional details to make this product easy to
                         recognise.
                       </p>
                     </div>
@@ -1905,7 +1899,7 @@ export default function EditServicePage() {
                       : "Creating..."
                     : editingMed
                     ? "Save changes"
-                    : "Create medicine"}
+                    : "Create product"}
                 </button>
               </div>
             </form>
