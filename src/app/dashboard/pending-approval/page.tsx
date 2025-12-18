@@ -186,11 +186,10 @@ function unwrapOrdersList(res: any): {
   orders: OrderDto[];
   meta: OrdersListMeta | null;
 } {
-  const orders =
-    (res?.data ??
-      res?.orders ??
-      res?.items ??
-      (Array.isArray(res) ? res : [])) as OrderDto[];
+  const orders = (res?.data ??
+    res?.orders ??
+    res?.items ??
+    (Array.isArray(res) ? res : [])) as OrderDto[];
   const meta = (res?.meta ?? res?.pagination ?? null) as OrdersListMeta | null;
   return { orders: Array.isArray(orders) ? orders : [], meta };
 }
@@ -236,6 +235,72 @@ function extractProductName(order: any): string {
     order?.service_name ||
     "Order"
   );
+}
+type OrderItemRow = {
+  name: string;
+  qty: number;
+  variation: string;
+  totalMinor: number | null;
+  unitMinor: number | null;
+};
+
+function toNumberOrNull(v: any): number | null {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractOrderItems(order: any): OrderItemRow[] {
+  const meta: any = order?.meta || {};
+
+  // primary (same as your approved page logic)
+  const raw =
+    meta?.items ??
+    // fallback used in some orders
+    meta?.lines ??
+    // last resort
+    order?.items ??
+    [];
+
+  const arr = Array.isArray(raw) ? raw : [];
+  if (!arr.length) return [];
+
+  return arr
+    .map((it: any) => {
+      const name = String(
+        it?.name || it?.title || it?.medicine_name || "Item"
+      ).trim();
+
+      const qtyRaw = it?.qty ?? it?.quantity ?? it?.count ?? 1;
+      const qty = Math.max(1, toNumberOrNull(qtyRaw) ?? 1);
+
+      const variation = String(
+        it?.variation || it?.variations || it?.strength || "Standard"
+      ).trim();
+
+      // prefer explicit minor fields
+      const unitMinor =
+        toNumberOrNull(it?.unitMinor) ??
+        toNumberOrNull(it?.unit_minor) ??
+        toNumberOrNull(it?.priceMinor) ??
+        toNumberOrNull(it?.price_minor) ??
+        null;
+
+      const totalMinorExplicit =
+        toNumberOrNull(it?.totalMinor) ??
+        toNumberOrNull(it?.total_minor) ??
+        null;
+
+      // compute if missing and unitMinor exists
+      const totalMinor =
+        totalMinorExplicit != null
+          ? totalMinorExplicit
+          : unitMinor != null
+          ? unitMinor * qty
+          : null;
+
+      return { name, qty, variation, totalMinor, unitMinor };
+    })
+    .filter((x) => x.name.length > 0);
 }
 
 /* ----------------- RAF extraction + render (SAME AS APPROVED PAGE) ----------------- */
@@ -467,9 +532,9 @@ export default function Page() {
   const [newConsultationNote, setNewConsultationNote] = useState("");
 
   // rejection notes
-  const [existingRejectionNotes, setExistingRejectionNotes] = useState<string[]>(
-    []
-  );
+  const [existingRejectionNotes, setExistingRejectionNotes] = useState<
+    string[]
+  >([]);
   const [newRejectionNotes, setNewRejectionNotes] = useState<string[]>([]);
   const [rejectionNoteInput, setRejectionNoteInput] = useState("");
   const [showRejectDialog, setShowRejectDialog] = useState(false);
@@ -607,7 +672,10 @@ export default function Page() {
     setRejectError(null);
   }
 
-  async function fetchPreviousOrdersForUser(userId: string, excludeId?: string) {
+  async function fetchPreviousOrdersForUser(
+    userId: string,
+    excludeId?: string
+  ) {
     setPreviousOrdersLoading(true);
     setPreviousOrdersError(null);
     setPreviousOrders([]);
@@ -749,7 +817,8 @@ export default function Page() {
     setMeta((prev) => {
       if (!prev) return prev;
       const next: any = { ...prev };
-      if (typeof next.total === "number") next.total = Math.max(0, next.total - 1);
+      if (typeof next.total === "number")
+        next.total = Math.max(0, next.total - 1);
       if (typeof next.totalItems === "number")
         next.totalItems = Math.max(0, next.totalItems - 1);
       return next;
@@ -780,7 +849,10 @@ export default function Page() {
       const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, String((updated as any).status || "approved"));
+      applyStatusChange(
+        prevStatus,
+        String((updated as any).status || "approved")
+      );
 
       // ✅ remove only this order from pending list
       setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
@@ -837,7 +909,10 @@ export default function Page() {
       const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(prevStatus, String((updated as any).status || "rejected"));
+      applyStatusChange(
+        prevStatus,
+        String((updated as any).status || "rejected")
+      );
 
       // ✅ remove only this order from pending list
       setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
@@ -1033,14 +1108,11 @@ export default function Page() {
                     <th className="px-3 py-2 text-left font-medium">
                       Product / Service
                     </th>
-                    <th className="px-3 py-2 text-left font-medium">
-                      Appointment
-                    </th>
+
                     <th className="px-3 py-2 text-left font-medium">
                       Priority
                     </th>
-                    <th className="px-3 py-2 text-left font-medium">Status</th>
-                    <th className="px-3 py-2 text-left font-medium">Payment</th>
+
                     <th className="px-3 py-2 text-right font-medium">Total</th>
                     <th className="px-3 py-2 text-right font-medium"></th>
                   </tr>
@@ -1059,7 +1131,9 @@ export default function Page() {
                       productName,
                     }) => {
                       const status = String(order?.status || "pending");
-                      const payment = String(order?.payment_status || "pending");
+                      const payment = String(
+                        order?.payment_status || "pending"
+                      );
                       const email =
                         (listUser as any)?.email ||
                         (order as any)?.email ||
@@ -1106,13 +1180,6 @@ export default function Page() {
                             </p>
                           </td>
 
-                          <td className="whitespace-nowrap px-3 py-2 align-middle text-[11px] text-neutral-200">
-                            <span className="inline-flex items-center gap-1">
-                              <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
-                              {formatDateTime(appointmentAt)}
-                            </span>
-                          </td>
-
                           <td className="px-3 py-2 align-middle">
                             <span
                               className={[
@@ -1122,43 +1189,6 @@ export default function Page() {
                             >
                               <span className="h-2 w-2 rounded-full bg-current" />
                               {String(priority).toLowerCase()}
-                            </span>
-                          </td>
-
-                          <td className="px-3 py-2 align-middle">
-                            <span
-                              className={[
-                                "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
-                                statusBadgeClasses(status),
-                              ].join(" ")}
-                            >
-                              {status === "approved" ? (
-                                <CheckCircle2 className="h-3 w-3" />
-                              ) : status === "pending" ? (
-                                <Clock className="h-3 w-3" />
-                              ) : status === "rejected" ||
-                                status === "cancelled" ? (
-                                <XCircle className="h-3 w-3" />
-                              ) : (
-                                <ClipboardList className="h-3 w-3" />
-                              )}
-                              <span className="capitalize">
-                                {status.replace(/_/g, " ")}
-                              </span>
-                            </span>
-                          </td>
-
-                          <td className="px-3 py-2 align-middle">
-                            <span
-                              className={[
-                                "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
-                                paymentBadgeClasses(payment),
-                              ].join(" ")}
-                            >
-                              <CreditCard className="h-3 w-3" />
-                              <span className="capitalize">
-                                {payment.replace(/_/g, " ")}
-                              </span>
                             </span>
                           </td>
 
@@ -1221,21 +1251,30 @@ export default function Page() {
                       <span
                         className={[
                           "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                          statusBadgeClasses(String((selectedOrder as any).status)),
+                          statusBadgeClasses(
+                            String((selectedOrder as any).status)
+                          ),
                         ].join(" ")}
                       >
-                        {String((selectedOrder as any).status) === "approved" ? (
+                        {String((selectedOrder as any).status) ===
+                        "approved" ? (
                           <CheckCircle2 className="h-3 w-3" />
-                        ) : String((selectedOrder as any).status) === "pending" ? (
+                        ) : String((selectedOrder as any).status) ===
+                          "pending" ? (
                           <Clock className="h-3 w-3" />
-                        ) : String((selectedOrder as any).status) === "rejected" ||
-                          String((selectedOrder as any).status) === "cancelled" ? (
+                        ) : String((selectedOrder as any).status) ===
+                            "rejected" ||
+                          String((selectedOrder as any).status) ===
+                            "cancelled" ? (
                           <XCircle className="h-3 w-3" />
                         ) : (
                           <ClipboardList className="h-3 w-3" />
                         )}
                         <span className="capitalize">
-                          {String((selectedOrder as any).status).replace(/_/g, " ")}
+                          {String((selectedOrder as any).status).replace(
+                            /_/g,
+                            " "
+                          )}
                         </span>
                       </span>
                     )}
@@ -1251,10 +1290,9 @@ export default function Page() {
                       >
                         <CreditCard className="h-3 w-3" />
                         <span className="capitalize">
-                          {String((selectedOrder as any).payment_status).replace(
-                            /_/g,
-                            " "
-                          )}
+                          {String(
+                            (selectedOrder as any).payment_status
+                          ).replace(/_/g, " ")}
                         </span>
                       </span>
                     )}
@@ -1306,7 +1344,9 @@ export default function Page() {
                                   ? String((orderedByUser as any).gender)
                                       .charAt(0)
                                       .toUpperCase() +
-                                    String((orderedByUser as any).gender).slice(1)
+                                    String((orderedByUser as any).gender).slice(
+                                      1
+                                    )
                                   : "Gender: —"
                                 : "Gender: —"}
                             </span>
@@ -1364,8 +1404,8 @@ export default function Page() {
                           className={[
                             "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
                             priorityBadgeClasses(
-                              ((orderedByUser as any)?.user_priority as string) ||
-                                "yellow"
+                              ((orderedByUser as any)
+                                ?.user_priority as string) || "yellow"
                             ),
                           ].join(" ")}
                         >
@@ -1447,7 +1487,8 @@ export default function Page() {
                             type="button"
                             onClick={() => handleVerify("scr_verified")}
                             disabled={
-                              verifyingField === "scr_verified" || !orderedByUser
+                              verifyingField === "scr_verified" ||
+                              !orderedByUser
                             }
                             className={[
                               "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
@@ -1536,7 +1577,9 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Appointment</dt>
                         <dd className="text-neutral-100">
-                          {formatDateTime(extractAppointmentStart(selectedOrder))}
+                          {formatDateTime(
+                            extractAppointmentStart(selectedOrder)
+                          )}
                         </dd>
                       </div>
 
@@ -1550,13 +1593,73 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Payment</dt>
                         <dd className="text-neutral-100 capitalize">
-                          {String((selectedOrder as any).payment_status || "—").replace(
-                            /_/g,
-                            " "
-                          )}
+                          {String(
+                            (selectedOrder as any).payment_status || "—"
+                          ).replace(/_/g, " ")}
                         </dd>
                       </div>
                     </dl>
+                  </div>
+                  {/* Items (NEW in side drawer) */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-neutral-300" />
+                        <p className="text-xs font-semibold text-neutral-200">
+                          Items
+                        </p>
+                        <span className="rounded-full border border-neutral-800 bg-neutral-950/60 px-2 py-0.5 text-[10px] text-neutral-400">
+                          {extractOrderItems(selectedOrder).length}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-neutral-400">
+                        Total:{" "}
+                        <span className="font-semibold text-neutral-100">
+                          {formatMoney(extractTotalMinor(selectedOrder))}
+                        </span>
+                      </p>
+                    </div>
+
+                    {extractOrderItems(selectedOrder).length ? (
+                      <div className="space-y-1">
+                        {extractOrderItems(selectedOrder).map((it, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-start justify-between gap-3 border-b border-neutral-800/60 py-2 last:border-none"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-semibold text-neutral-100">
+                                {it.name}
+                              </p>
+                              <p className="mt-0.5 text-[10px] text-neutral-500">
+                                {it.variation || "Standard"}
+                              </p>
+                            </div>
+
+                            <div className="shrink-0 text-right">
+                              <p className="text-[10px] text-neutral-400">
+                                Qty: {it.qty}
+                              </p>
+
+                              {it.totalMinor != null ? (
+                                <p className="mt-0.5 text-[11px] font-semibold text-neutral-100">
+                                  {formatMoney(it.totalMinor)}
+                                </p>
+                              ) : (
+                                <p className="mt-0.5 text-[10px] text-neutral-600">
+                                  —
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-neutral-500">
+                        No items found on this order.
+                      </p>
+                    )}
                   </div>
 
                   {/* RAF (NOW SAME AS APPROVED PAGE) */}
@@ -1592,12 +1695,15 @@ export default function Page() {
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between">
                       <p className="text-xs font-semibold text-neutral-200">
-                        Previous orders for this patient
+                        Previous orders of this patient
                       </p>
                       {previousOrdersMeta && (
                         <span className="text-[11px] text-neutral-500">
-                          {(previousOrdersMeta as any).total ?? previousOrders.length}{" "}
-                          order{((previousOrdersMeta as any).total ?? previousOrders.length) === 1
+                          {(previousOrdersMeta as any).total ??
+                            previousOrders.length}{" "}
+                          order
+                          {((previousOrdersMeta as any).total ??
+                            previousOrders.length) === 1
                             ? ""
                             : "s"}
                         </span>
@@ -1610,7 +1716,9 @@ export default function Page() {
                         <span>Loading previous orders…</span>
                       </div>
                     ) : previousOrdersError ? (
-                      <p className="text-[11px] text-rose-300">{previousOrdersError}</p>
+                      <p className="text-[11px] text-rose-300">
+                        {previousOrdersError}
+                      </p>
                     ) : previousOrders.length === 0 ? (
                       <p className="text-[11px] text-neutral-500">
                         No previous orders found for this patient.
@@ -1619,7 +1727,10 @@ export default function Page() {
                       <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                         {previousOrders.map((o: any) => {
                           const name = extractProductName(o);
-                          const when = extractAppointmentStart(o) || o?.createdAt || o?.created_at;
+                          const when =
+                            extractAppointmentStart(o) ||
+                            o?.createdAt ||
+                            o?.created_at;
                           const total = extractTotalMinor(o);
                           const st = String(o?.status || "—");
                           const pay = String(o?.payment_status || "—");
@@ -1685,7 +1796,7 @@ export default function Page() {
                       Notes
                     </p>
 
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 md:grid-cols-1">
                       {/* Admin notes */}
                       <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
                         <p className="text-[11px] font-semibold text-neutral-200">
@@ -1734,55 +1845,6 @@ export default function Page() {
                           </button>
                         </div>
                       </div>
-
-                      {/* Consultation notes */}
-                      <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
-                        <p className="text-[11px] font-semibold text-neutral-200">
-                          Consultation notes
-                        </p>
-
-                        <div className="mt-2 space-y-2">
-                          {consultationNotes.length === 0 ? (
-                            <p className="text-[11px] text-neutral-500">
-                              No consultation notes yet.
-                            </p>
-                          ) : (
-                            consultationNotes.map((n, idx) => (
-                              <div
-                                key={idx}
-                                className="flex items-start justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950/60 px-2 py-1"
-                              >
-                                <p className="text-[11px] text-neutral-100">
-                                  {n}
-                                </p>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveConsultationNote(idx)}
-                                  className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 text-neutral-400 hover:border-rose-500/70 hover:text-rose-200"
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ))
-                          )}
-                        </div>
-
-                        <div className="mt-2 flex gap-2">
-                          <input
-                            value={newConsultationNote}
-                            onChange={(e) => setNewConsultationNote(e.target.value)}
-                            className="h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
-                            placeholder="Add consultation note…"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleAddConsultationNote}
-                            className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-neutral-700 bg-neutral-900/70 px-3 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100"
-                          >
-                            Add
-                          </button>
-                        </div>
-                      </div>
                     </div>
 
                     {/* Existing rejection notes (read-only) */}
@@ -1805,16 +1867,12 @@ export default function Page() {
                   {/* Actions */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-[11px] text-neutral-400">
-                        Approve or reject this order. Rejection requires at least
-                        one note.
-                      </div>
-
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
                           disabled={
-                            statusAction === "approved" || statusAction === "rejected"
+                            statusAction === "approved" ||
+                            statusAction === "rejected"
                           }
                           onClick={openRejectDialog}
                           className={[
@@ -1835,7 +1893,8 @@ export default function Page() {
                         <button
                           type="button"
                           disabled={
-                            statusAction === "approved" || statusAction === "rejected"
+                            statusAction === "approved" ||
+                            statusAction === "rejected"
                           }
                           onClick={handleApprove}
                           className={[

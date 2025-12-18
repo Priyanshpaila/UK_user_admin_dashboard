@@ -191,11 +191,10 @@ function unwrapOrdersList(res: any): {
   orders: OrderDto[];
   meta: OrdersListMeta | null;
 } {
-  const orders =
-    (res?.data ??
-      res?.orders ??
-      res?.items ??
-      (Array.isArray(res) ? res : [])) as OrderDto[];
+  const orders = (res?.data ??
+    res?.orders ??
+    res?.items ??
+    (Array.isArray(res) ? res : [])) as OrderDto[];
   const meta = (res?.meta ?? res?.pagination ?? null) as OrdersListMeta | null;
   return { orders: Array.isArray(orders) ? orders : [], meta };
 }
@@ -495,7 +494,9 @@ function PatientProfileCard({
         </div>
         <div>
           <dt className="text-neutral-500">Postcode</dt>
-          <dd className="text-neutral-100">{u.postalcode || u.postcode || "—"}</dd>
+          <dd className="text-neutral-100">
+            {u.postalcode || u.postcode || "—"}
+          </dd>
         </div>
         <div>
           <dt className="text-neutral-500">Country</dt>
@@ -505,10 +506,12 @@ function PatientProfileCard({
 
       <div className="flex flex-wrap gap-4 border-t border-neutral-800 pt-2 text-[11px] text-neutral-500">
         <span>
-          Created: <span className="text-neutral-200">{formatDateOnly(createdAt)}</span>
+          Created:{" "}
+          <span className="text-neutral-200">{formatDateOnly(createdAt)}</span>
         </span>
         <span>
-          Updated: <span className="text-neutral-200">{formatDateOnly(updatedAt)}</span>
+          Updated:{" "}
+          <span className="text-neutral-200">{formatDateOnly(updatedAt)}</span>
         </span>
       </div>
 
@@ -541,7 +544,9 @@ function PatientProfileCard({
             )}
           </div>
 
-          {priorityError && <p className="text-[11px] text-rose-300">{priorityError}</p>}
+          {priorityError && (
+            <p className="text-[11px] text-rose-300">{priorityError}</p>
+          )}
         </div>
       )}
     </div>
@@ -563,7 +568,9 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>({});
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
+    {}
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
 
@@ -577,7 +584,9 @@ export default function Page() {
   const [adminNotes, setAdminNotes] = useState<string[]>([]);
   const [newNote, setNewNote] = useState("");
 
-  const [consultationNotesEdit, setConsultationNotesEdit] = useState<string[]>([]);
+  const [consultationNotesEdit, setConsultationNotesEdit] = useState<string[]>(
+    []
+  );
   const [newConsultNote, setNewConsultNote] = useState("");
 
   const [savingNotes, setSavingNotes] = useState(false);
@@ -644,10 +653,16 @@ export default function Page() {
         setMeta(metaRes);
 
         const uniqueUserIds = Array.from(
-          new Set(ordersList.map((o: any) => extractUserIdFromOrder(o)).filter(Boolean))
+          new Set(
+            ordersList
+              .map((o: any) => extractUserIdFromOrder(o))
+              .filter(Boolean)
+          )
         ) as string[];
 
-        const missing = uniqueUserIds.filter((id) => orderUsers[id] === undefined);
+        const missing = uniqueUserIds.filter(
+          (id) => orderUsers[id] === undefined
+        );
 
         if (missing.length) {
           const results = await Promise.all(
@@ -693,7 +708,9 @@ export default function Page() {
       const u = userId ? orderUsers[userId] : null;
 
       const appointmentAt = extractAppointmentStart(o);
-      const appointmentTs = appointmentAt ? new Date(appointmentAt).getTime() : 0;
+      const appointmentTs = appointmentAt
+        ? new Date(appointmentAt).getTime()
+        : 0;
 
       const patientName = getDisplayPatientName(o, u);
       const productName = extractProductName(o);
@@ -708,33 +725,34 @@ export default function Page() {
       };
     });
 
-    const filtered =
-      !q
-        ? withComputed
-        : withComputed.filter(({ order, user, patientName, productName }) => {
-            const o: any = order;
-            const u: any = user;
-            const hay = [
-              patientName,
-              productName,
-              o?.service_name,
-              o?.service_slug,
-              o?.reference,
-              o?._id,
-              o?.email,
-              u?.email,
-              u?.phone,
-              u?.phoneNumber,
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
+    const filtered = !q
+      ? withComputed
+      : withComputed.filter(({ order, user, patientName, productName }) => {
+          const o: any = order;
+          const u: any = user;
+          const hay = [
+            patientName,
+            productName,
+            o?.service_name,
+            o?.service_slug,
+            o?.reference,
+            o?._id,
+            o?.email,
+            u?.email,
+            u?.phone,
+            u?.phoneNumber,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
 
-            return hay.includes(q);
-          });
+          return hay.includes(q);
+        });
 
     filtered.sort((a, b) =>
-      sortDir === "desc" ? b.appointmentTs - a.appointmentTs : a.appointmentTs - b.appointmentTs
+      sortDir === "desc"
+        ? b.appointmentTs - a.appointmentTs
+        : a.appointmentTs - b.appointmentTs
     );
 
     return filtered;
@@ -798,7 +816,10 @@ export default function Page() {
         consultant_notes: consultationNotesEdit,
       };
 
-      const updatedRes: any = await updateOrderStatusApi((selectedOrder as any)._id, payload);
+      const updatedRes: any = await updateOrderStatusApi(
+        (selectedOrder as any)._id,
+        payload
+      );
       const updated = unwrapOrder(updatedRes);
 
       setSelectedOrder(updated);
@@ -806,7 +827,9 @@ export default function Page() {
       setConsultationNotesEdit(extractConsultationNotes(updated));
 
       // keep list in sync
-      setOrders((prev) => prev.map((o: any) => (idOf(o) === idOf(updated) ? updated : o)));
+      setOrders((prev) =>
+        prev.map((o: any) => (idOf(o) === idOf(updated) ? updated : o))
+      );
     } catch (e: any) {
       setDetailError(e?.message || "Failed to save notes");
     } finally {
@@ -873,9 +896,13 @@ export default function Page() {
       try {
         const patientName = getDisplayPatientName(selectedOrder, orderedByUser);
         const patientEmail =
-          (orderedByUser as any)?.email || (selectedOrder as any)?.email || null;
+          (orderedByUser as any)?.email ||
+          (selectedOrder as any)?.email ||
+          null;
         const patientPhone =
-          (orderedByUser as any)?.phone || (orderedByUser as any)?.phoneNumber || null;
+          (orderedByUser as any)?.phone ||
+          (orderedByUser as any)?.phoneNumber ||
+          null;
 
         const payload = {
           orderId,
@@ -909,7 +936,10 @@ export default function Page() {
           },
         };
 
-        window.localStorage.setItem("current_consult_patient", JSON.stringify(payload));
+        window.localStorage.setItem(
+          "current_consult_patient",
+          JSON.stringify(payload)
+        );
       } catch (err) {
         console.error("Failed to store consult patient data", err);
       }
@@ -930,7 +960,9 @@ export default function Page() {
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white md:text-3xl">{TITLE}</h1>
+          <h1 className="text-2xl font-semibold text-white md:text-3xl">
+            {TITLE}
+          </h1>
           <p className="mt-1 text-sm text-neutral-400">
             List view for faster scanning, searching, and opening details.
           </p>
@@ -944,7 +976,9 @@ export default function Page() {
           </div>
           <span className="text-xs text-neutral-500">
             {totalCount} {STATUS_LABEL.toLowerCase()}{" "}
-            {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
+            {meta
+              ? `• page ${(meta as any).page} of ${(meta as any).totalPages}`
+              : ""}
           </span>
         </div>
       </div>
@@ -993,98 +1027,180 @@ export default function Page() {
             <table className="w-full text-sm">
               <thead className="bg-neutral-900/70 text-xs text-neutral-400">
                 <tr className="border-b border-neutral-800">
-                  <th className="px-4 py-3 text-left font-semibold">Patient / Ref</th>
-                  <th className="px-4 py-3 text-left font-semibold">Service / Item</th>
-                  <th className="px-4 py-3 text-left font-semibold">Appointment</th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    Patient / Ref
+                  </th>
+                  <th className="px-4 py-3 text-left font-semibold">
+                    Service / Item
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold">Total</th>
-                  <th className="px-4 py-3 text-left font-semibold">Status</th>
                   <th className="px-4 py-3 text-right font-semibold">Action</th>
                 </tr>
               </thead>
 
               <tbody>
-                {filteredOrders.map(({ order, user, patientName, productName, appointmentAt }) => {
-                  const o: any = order;
-                  const totalMinor = extractTotalMinor(o);
-                  const priority = ((user as any)?.user_priority as string | undefined) || undefined;
+                {filteredOrders.map(
+                  ({
+                    order,
+                    user,
+                    patientName,
+                    productName,
+                    appointmentAt,
+                  }) => {
+                    const o: any = order;
+                    const totalMinor = extractTotalMinor(o);
+                    const priority =
+                      ((user as any)?.user_priority as string | undefined) ||
+                      undefined;
 
-                  const status = String(o?.status || STATUS);
-                  const payment = String(o?.payment_status || "pending");
+                    const status = String(o?.status || STATUS);
+                    const payment = String(o?.payment_status || "pending");
 
-                  return (
-                    <tr
-                      key={idOf(o)}
-                      className="border-b border-neutral-900/70 hover:bg-neutral-900/40"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900">
-                            <span className="text-xs font-semibold text-neutral-100">
-                              {getUserInitials(user)}
-                            </span>
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="truncate font-semibold text-white">{patientName}</p>
-                              {priority && (
-                                <span
-                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
-                                    priority
-                                  )}`}
-                                >
-                                  <span className="h-2 w-2 rounded-full bg-current" />
-                                  {priority}
-                                </span>
-                              )}
+                    return (
+                      <tr
+                        key={idOf(o)}
+                        className="border-b border-neutral-900/70 hover:bg-neutral-900/40"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900">
+                              <span className="text-xs font-semibold text-neutral-100">
+                                {getUserInitials(user)}
+                              </span>
                             </div>
-                            <p className="mt-0.5 text-[11px] text-neutral-400">
-                              Ref: <span className="font-mono">{o?.reference || o?._id}</span>
-                              {(o?.email || (user as any)?.email) && (
-                                <>
-                                  {" "}
-                                  • <span className="truncate">{o?.email || (user as any)?.email}</span>
-                                </>
-                              )}
-                            </p>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="truncate font-semibold text-white">
+                                  {patientName}
+                                </p>
+                                {priority && (
+                                  <span
+                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                                      priority
+                                    )}`}
+                                  >
+                                    <span className="h-2 w-2 rounded-full bg-current" />
+                                    {priority}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 text-[11px] text-neutral-400">
+                                Ref:{" "}
+                                <span className="font-mono">
+                                  {o?.reference || o?._id}
+                                </span>
+                                {(o?.email || (user as any)?.email) && (
+                                  <>
+                                    {" "}
+                                    •{" "}
+                                    <span className="truncate">
+                                      {o?.email || (user as any)?.email}
+                                    </span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-neutral-100">
-                          {o?.service_name || "—"}
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-neutral-400">
-                          {productName}
-                        </p>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 text-neutral-200">
-                          <CalendarDays className="h-4 w-4 text-neutral-500" />
-                          <span>{formatDateTime(appointmentAt)}</span>
-                        </div>
-                        {appointmentAt && o?.end_at ? (
-                          <p className="mt-0.5 text-[11px] text-neutral-500">
-                            End: {formatDateTime(o.end_at)}
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-neutral-100">
+                            {o?.service_name || "—"}
                           </p>
-                        ) : null}
-                      </td>
+                          <p className="mt-0.5 text-[11px] text-neutral-400">
+                            {productName}
+                          </p>
+                        </td>
 
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-white">{formatMoney(totalMinor)}</p>
-                        <span
-                          className={
-                            "mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                            paymentBadgeClasses(payment)
-                          }
-                        >
-                          <CreditCard className="h-3 w-3" />
-                          {payment.toUpperCase()}
-                        </span>
-                      </td>
+                        <td className="px-4 py-3">
+                          <p className="font-semibold text-white">
+                            {formatMoney(totalMinor)}
+                          </p>
+                          <span
+                            className={
+                              "mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                              paymentBadgeClasses(payment)
+                            }
+                          >
+                            <CreditCard className="h-3 w-3" />
+                            {payment.toUpperCase()}
+                          </span>
+                        </td>
 
-                      <td className="px-4 py-3">
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleViewDetails(String(o?._id))}
+                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300"
+                          >
+                            View
+                            <ArrowRight className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile list */}
+          <div className="md:hidden">
+            {filteredOrders.map(
+              ({ order, user, patientName, productName, appointmentAt }) => {
+                const o: any = order;
+                const totalMinor = extractTotalMinor(o);
+                const priority =
+                  ((user as any)?.user_priority as string | undefined) ||
+                  undefined;
+
+                const status = String(o?.status || STATUS);
+                const payment = String(o?.payment_status || "pending");
+
+                return (
+                  <button
+                    key={idOf(o)}
+                    type="button"
+                    onClick={() => handleViewDetails(String(o?._id))}
+                    className="w-full border-b border-neutral-900/70 px-4 py-3 text-left hover:bg-neutral-900/40"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-white">
+                          {patientName}
+                        </p>
+                        <p className="mt-0.5 truncate text-[11px] text-neutral-400">
+                          {productName} • Ref:{" "}
+                          <span className="font-mono">
+                            {o?.reference || o?._id}
+                          </span>
+                        </p>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-300">
+                          <span className="inline-flex items-center gap-1">
+                            <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
+                            {formatDateTime(appointmentAt)}
+                          </span>
+                          <span className="text-neutral-600">•</span>
+                          <span className="font-semibold text-white">
+                            {formatMoney(totalMinor)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end gap-1">
+                        {priority && (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                              priority
+                            )}`}
+                          >
+                            <span className="h-2 w-2 rounded-full bg-current" />
+                            {priority}
+                          </span>
+                        )}
+
                         <span
                           className={
                             "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
@@ -1095,116 +1211,21 @@ export default function Page() {
                           {status.toUpperCase()}
                         </span>
 
-                        <div className="mt-1">
-                          {status === "approved" ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-300">
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Ready
-                            </span>
-                          ) : status === "pending" ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-amber-300">
-                              <Clock className="h-3.5 w-3.5" />
-                              Waiting
-                            </span>
-                          ) : status === "draft" ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] text-neutral-400">
-                              <XCircle className="h-3.5 w-3.5" />
-                              Draft
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => handleViewDetails(String(o?._id))}
-                          className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300"
+                        <span
+                          className={
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                            paymentBadgeClasses(payment)
+                          }
                         >
-                          View
-                          <ArrowRight className="h-3 w-3" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile list */}
-          <div className="md:hidden">
-            {filteredOrders.map(({ order, user, patientName, productName, appointmentAt }) => {
-              const o: any = order;
-              const totalMinor = extractTotalMinor(o);
-              const priority = ((user as any)?.user_priority as string | undefined) || undefined;
-
-              const status = String(o?.status || STATUS);
-              const payment = String(o?.payment_status || "pending");
-
-              return (
-                <button
-                  key={idOf(o)}
-                  type="button"
-                  onClick={() => handleViewDetails(String(o?._id))}
-                  className="w-full border-b border-neutral-900/70 px-4 py-3 text-left hover:bg-neutral-900/40"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">
-                        {patientName}
-                      </p>
-                      <p className="mt-0.5 truncate text-[11px] text-neutral-400">
-                        {productName} • Ref:{" "}
-                        <span className="font-mono">{o?.reference || o?._id}</span>
-                      </p>
-
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-300">
-                        <span className="inline-flex items-center gap-1">
-                          <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
-                          {formatDateTime(appointmentAt)}
+                          <CreditCard className="h-3 w-3" />
+                          {payment.toUpperCase()}
                         </span>
-                        <span className="text-neutral-600">•</span>
-                        <span className="font-semibold text-white">{formatMoney(totalMinor)}</span>
                       </div>
                     </div>
-
-                    <div className="flex flex-col items-end gap-1">
-                      {priority && (
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
-                            priority
-                          )}`}
-                        >
-                          <span className="h-2 w-2 rounded-full bg-current" />
-                          {priority}
-                        </span>
-                      )}
-
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          statusBadgeClasses(status)
-                        }
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                        {status.toUpperCase()}
-                      </span>
-
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          paymentBadgeClasses(payment)
-                        }
-                      >
-                        <CreditCard className="h-3 w-3" />
-                        {payment.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
+                  </button>
+                );
+              }
+            )}
           </div>
         </div>
       )}
@@ -1214,12 +1235,15 @@ export default function Page() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
           <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
+            <div className="flex items-start border-b border-neutral-800 px-5 py-4">
               <div className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-2">
                   <ClipboardList className="h-4 w-4 text-emerald-400" />
-                  <h2 className="text-sm font-semibold text-white">Order details</h2>
+                  <h2 className="text-sm font-semibold text-white">
+                    Order details
+                  </h2>
                 </div>
+
                 {selectedOrder && (
                   <p className="text-[11px] text-neutral-500">
                     Ref:{" "}
@@ -1230,36 +1254,50 @@ export default function Page() {
                 )}
               </div>
 
-              {selectedOrder && (
-                <div className="flex flex-col items-end gap-1">
-                  <span
-                    className={
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                      statusBadgeClasses(String((selectedOrder as any).status || STATUS))
-                    }
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                    {String((selectedOrder as any).status || STATUS).toUpperCase()}
-                  </span>
-                  <span
-                    className={
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                      paymentBadgeClasses(String((selectedOrder as any).payment_status || "pending"))
-                    }
-                  >
-                    <CreditCard className="h-3 w-3" />
-                    {String((selectedOrder as any).payment_status || "pending").toUpperCase()}
-                  </span>
-                </div>
-              )}
+              {/* RIGHT SIDE (pills + close) */}
+              <div className="ml-auto flex items-start gap-3">
+                {selectedOrder && (
+                  <div className="flex flex-col items-end gap-1">
+                    <span
+                      className={
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                        statusBadgeClasses(
+                          String((selectedOrder as any).status || STATUS)
+                        )
+                      }
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                      {String(
+                        (selectedOrder as any).status || STATUS
+                      ).toUpperCase()}
+                    </span>
 
-              <button
-                type="button"
-                onClick={() => setShowDetail(false)}
-                className="ml-4 rounded-full p-1 text-neutral-400 hover:bg-neutral-800 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
+                    <span
+                      className={
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                        paymentBadgeClasses(
+                          String(
+                            (selectedOrder as any).payment_status || "pending"
+                          )
+                        )
+                      }
+                    >
+                      <CreditCard className="h-3 w-3" />
+                      {String(
+                        (selectedOrder as any).payment_status || "pending"
+                      ).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setShowDetail(false)}
+                  className="rounded-full p-1 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             {/* Body */}
@@ -1282,7 +1320,9 @@ export default function Page() {
                   {/* Top summary */}
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="mb-0.5 text-xs text-neutral-400">Reference</p>
+                      <p className="mb-0.5 text-xs text-neutral-400">
+                        Reference
+                      </p>
                       <p className="font-mono text-sm text-white">
                         {(selectedOrder as any).reference}
                       </p>
@@ -1301,7 +1341,9 @@ export default function Page() {
                     <PatientProfileCard
                       user={orderedByUser}
                       priority={
-                        ((orderedByUser as any)?.user_priority as string | undefined) || "yellow"
+                        ((orderedByUser as any)?.user_priority as
+                          | string
+                          | undefined) || "yellow"
                       }
                       onPriorityChange={handlePriorityChange}
                       prioritySaving={prioritySaving}
@@ -1309,15 +1351,18 @@ export default function Page() {
                     />
 
                     <div className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-4">
-                      <p className="mb-0.5 text-xs text-neutral-400">Appointment</p>
+                      <p className="mb-0.5 text-xs text-neutral-400">
+                        Appointment
+                      </p>
                       <p className="text-sm text-white">
                         {formatDateTime(extractAppointmentStart(selectedOrder))}
                       </p>
-                      {(selectedOrder as any).end_at && extractAppointmentStart(selectedOrder) && (
-                        <p className="text-xs text-neutral-400">
-                          End: {formatDateTime((selectedOrder as any).end_at)}
-                        </p>
-                      )}
+                      {(selectedOrder as any).end_at &&
+                        extractAppointmentStart(selectedOrder) && (
+                          <p className="text-xs text-neutral-400">
+                            End: {formatDateTime((selectedOrder as any).end_at)}
+                          </p>
+                        )}
                     </div>
                   </div>
 
@@ -1326,7 +1371,9 @@ export default function Page() {
                     <div className="mb-2 flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
-                        <p className="text-xs font-semibold text-neutral-200">Items</p>
+                        <p className="text-xs font-semibold text-neutral-200">
+                          Items
+                        </p>
                       </div>
                       <p className="text-xs text-neutral-400">
                         Total:{" "}
@@ -1338,30 +1385,36 @@ export default function Page() {
 
                     {(selectedOrder as any)?.meta?.items?.length ? (
                       <div className="space-y-1">
-                        {(selectedOrder as any).meta.items.map((it: any, idx: number) => (
-                          <div
-                            key={idx}
-                            className="flex items-center justify-between border-b border-neutral-800/60 py-1 text-xs last:border-none"
-                          >
-                            <div className="flex flex-col">
-                              <span className="font-medium text-white">{it.name}</span>
-                              <span className="text-[11px] text-neutral-400">
-                                {it.variation || it.variations || "Standard"}
-                              </span>
+                        {(selectedOrder as any).meta.items.map(
+                          (it: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between border-b border-neutral-800/60 py-1 text-xs last:border-none"
+                            >
+                              <div className="flex flex-col">
+                                <span className="font-medium text-white">
+                                  {it.name}
+                                </span>
+                                <span className="text-[11px] text-neutral-400">
+                                  {it.variation || it.variations || "Standard"}
+                                </span>
+                              </div>
+                              <div className="text-right">
+                                <span className="block text-[11px] text-neutral-400">
+                                  Qty: {it.qty}
+                                </span>
+                                <span className="block text-[11px] text-neutral-300">
+                                  {formatMoney(it.totalMinor)}
+                                </span>
+                              </div>
                             </div>
-                            <div className="text-right">
-                              <span className="block text-[11px] text-neutral-400">
-                                Qty: {it.qty}
-                              </span>
-                              <span className="block text-[11px] text-neutral-300">
-                                {formatMoney(it.totalMinor)}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+                          )
+                        )}
                       </div>
                     ) : (
-                      <p className="text-xs text-neutral-500">No items found on this order.</p>
+                      <p className="text-xs text-neutral-500">
+                        No items found on this order.
+                      </p>
                     )}
                   </div>
 
@@ -1378,7 +1431,9 @@ export default function Page() {
                             key={idx}
                             className="border-b border-neutral-800/60 pb-2 text-[11px] last:border-none"
                           >
-                            <p className="font-medium text-neutral-400">{qa.question}</p>
+                            <p className="font-medium text-neutral-400">
+                              {qa.question}
+                            </p>
                             <RafAnswer raw={qa.raw} answer={qa.answer} />
                           </div>
                         ))}
@@ -1389,7 +1444,9 @@ export default function Page() {
                   {/* Notes */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
                     <div className="mb-2 flex items-center justify-between">
-                      <p className="text-xs font-semibold text-neutral-200">Notes</p>
+                      <p className="text-xs font-semibold text-neutral-200">
+                        Notes
+                      </p>
 
                       <button
                         type="button"
@@ -1397,11 +1454,12 @@ export default function Page() {
                         disabled={savingNotes}
                         className="inline-flex items-center gap-1 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {savingNotes && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {savingNotes && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
                         {savingNotes ? "Saving…" : "Save notes"}
                       </button>
                     </div>
-
 
                     {/* Admin notes */}
                     {adminNotes.length === 0 && (
@@ -1413,7 +1471,10 @@ export default function Page() {
                     {adminNotes.length > 0 && (
                       <ul className="mb-3 space-y-2">
                         {adminNotes.map((note, idx) => (
-                          <li key={idx} className="flex items-start gap-2 text-xs">
+                          <li
+                            key={idx}
+                            className="flex items-start gap-2 text-xs"
+                          >
                             <span className="mt-1 text-[10px] text-neutral-500">
                               #{idx + 1}
                             </span>
@@ -1423,7 +1484,9 @@ export default function Page() {
                             <button
                               type="button"
                               onClick={() =>
-                                setAdminNotes((prev) => prev.filter((_, i) => i !== idx))
+                                setAdminNotes((prev) =>
+                                  prev.filter((_, i) => i !== idx)
+                                )
                               }
                               className="text-[11px] text-rose-400 hover:text-rose-300"
                             >
@@ -1459,7 +1522,8 @@ export default function Page() {
                   {/* Start consultancy */}
                   <div className="flex flex-col justify-between gap-3 pt-2 md:flex-row md:items-center">
                     <p className="text-xs text-neutral-500">
-                      Ready to speak to the patient? Start a consultation session for this order.
+                      Ready to speak to the patient? Start a consultation
+                      session for this order.
                     </p>
                     <div className="flex flex-wrap justify-end gap-2">
                       <button

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getPatientsApi,
   updateUserApi,
@@ -89,14 +89,27 @@ export default function PatientsPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Orders state (for selected patient)
+  // ✅ Expanded card (only one at a time)
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
     null
   );
-  const [patientOrders, setPatientOrders] = useState<OrderDto[]>([]);
-  const [ordersMeta, setOrdersMeta] = useState<OrdersListMeta | null>(null);
-  const [ordersLoading, setOrdersLoading] = useState(false);
-  const [ordersError, setOrdersError] = useState("");
+
+  // ✅ Orders state PER patient (prevents cross-card bleed + allows caching)
+  const [ordersByPatientId, setOrdersByPatientId] = useState<
+    Record<string, OrderDto[]>
+  >({});
+  const [metaByPatientId, setMetaByPatientId] = useState<
+    Record<string, OrdersListMeta | null>
+  >({});
+  const [ordersLoadingByPatientId, setOrdersLoadingByPatientId] = useState<
+    Record<string, boolean>
+  >({});
+  const [ordersErrorByPatientId, setOrdersErrorByPatientId] = useState<
+    Record<string, string>
+  >({});
+
+  // ✅ Avoid race conditions if user clicks different patients quickly
+  const ordersReqSeq = useRef<Record<string, number>>({});
 
   /* ----------------------------------------
       FETCH PATIENTS
@@ -193,14 +206,15 @@ export default function PatientsPage() {
   };
 
   /* ----------------------------------------
-      FETCH ORDERS FOR A PATIENT
+      FETCH ORDERS FOR A PATIENT (cached + race-safe)
   ---------------------------------------- */
   const fetchOrdersForPatient = async (patientId: string) => {
+    const seq = (ordersReqSeq.current[patientId] || 0) + 1;
+    ordersReqSeq.current[patientId] = seq;
+
     try {
-      setOrdersLoading(true);
-      setOrdersError("");
-      setPatientOrders([]);
-      setOrdersMeta(null);
+      setOrdersLoadingByPatientId((prev) => ({ ...prev, [patientId]: true }));
+      setOrdersErrorByPatientId((prev) => ({ ...prev, [patientId]: "" }));
 
       const res = await getOrdersApi({
         user_id: patientId,
@@ -208,15 +222,28 @@ export default function PatientsPage() {
         limit: 20,
       });
 
-      setPatientOrders(res.data || []);
-      setOrdersMeta(res.meta || null);
+      // If another request started after this one, ignore this response
+      if (ordersReqSeq.current[patientId] !== seq) return;
+
+      setOrdersByPatientId((prev) => ({ ...prev, [patientId]: res.data || [] }));
+      setMetaByPatientId((prev) => ({ ...prev, [patientId]: res.meta || null }));
     } catch (err) {
       console.error("Failed to load orders for patient:", err);
-      setOrdersError("Failed to load this patient's orders.");
-      setPatientOrders([]);
-      setOrdersMeta(null);
+      if (ordersReqSeq.current[patientId] !== seq) return;
+
+      setOrdersByPatientId((prev) => ({ ...prev, [patientId]: [] }));
+      setMetaByPatientId((prev) => ({ ...prev, [patientId]: null }));
+      setOrdersErrorByPatientId((prev) => ({
+        ...prev,
+        [patientId]: "Failed to load this patient's orders.",
+      }));
     } finally {
-      setOrdersLoading(false);
+      if (ordersReqSeq.current[patientId] === seq) {
+        setOrdersLoadingByPatientId((prev) => ({
+          ...prev,
+          [patientId]: false,
+        }));
+      }
     }
   };
 
@@ -227,14 +254,15 @@ export default function PatientsPage() {
 
     if (selectedPatientId === id) {
       setSelectedPatientId(null);
-      setPatientOrders([]);
-      setOrdersMeta(null);
-      setOrdersError("");
       return;
     }
 
     setSelectedPatientId(id);
-    fetchOrdersForPatient(id);
+
+    // ✅ Fetch only if we don't already have cached orders for this patient
+    if (!ordersByPatientId[id]) {
+      fetchOrdersForPatient(id);
+    }
   };
 
   useEffect(() => {
@@ -277,13 +305,9 @@ export default function PatientsPage() {
       // ✅ If same-as-address is enabled, keep shipping synced as user edits address
       if (next.use_shipping_address) {
         const touchedAddressKey = Object.keys(patch).some((k) =>
-          [
-            "address_line1",
-            "address_line2",
-            "city",
-            "postalcode",
-            "country",
-          ].includes(k)
+          ["address_line1", "address_line2", "city", "postalcode", "country"].includes(
+            k
+          )
         );
 
         if (touchedAddressKey) {
@@ -305,7 +329,6 @@ export default function PatientsPage() {
       }
 
       // When turning OFF, keep current shipping values as-is.
-      // (No changes required)
       return next;
     });
   };
@@ -407,7 +430,8 @@ export default function PatientsPage() {
 
       {/* Patients Grid */}
       {!loading && filteredPatients.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        // ✅ KEY FIX: items-start prevents other cards from stretching when one expands
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 items-start">
           {filteredPatients.map((patient) => {
             const fullName = `${patient.firstName ?? ""} ${
               patient.lastName ?? ""
@@ -416,17 +440,25 @@ export default function PatientsPage() {
             const isSelected = selectedPatientId === patient._id;
             const priority = (patient.user_priority || "yellow") as string;
 
+            const pid = patient._id as string;
+
+            const patientOrders = ordersByPatientId[pid] || [];
+            const ordersMeta = metaByPatientId[pid] || null;
+            const ordersLoading = Boolean(ordersLoadingByPatientId[pid]);
+            const ordersError = ordersErrorByPatientId[pid] || "";
+
             return (
               <div
                 key={patient._id}
                 onClick={() => handleSelectPatient(patient)}
-                className={`group rounded-xl border bg-neutral-900/70 transition shadow-sm flex flex-col cursor-pointer ${
+                // ✅ KEY FIX: self-start / h-fit ensures card height fits content only
+                className={`group self-start h-fit rounded-xl border bg-neutral-900/70 transition shadow-sm flex flex-col cursor-pointer ${
                   isSelected
                     ? "border-blue-500/70 shadow-blue-500/20 bg-neutral-900"
                     : "border-neutral-800 hover:bg-neutral-800"
                 }`}
               >
-                <div className="p-4 flex-1 flex flex-col gap-2">
+                <div className="p-4 flex flex-col gap-2">
                   {/* Top row: avatar + name + gender + priority */}
                   <div className="flex items-start gap-3">
                     <div className="h-10 w-10 rounded-full bg-neutral-800 flex items-center justify-center border border-neutral-700 text-sm font-semibold text-neutral-200">
@@ -583,14 +615,16 @@ export default function PatientsPage() {
                                           </span>
                                         )}
                                       </div>
+
                                       <div className="text-[11px] text-neutral-400 flex items-center gap-1.5">
                                         <Clock size={11} />
                                         <span>{formatDateTime(when)}</span>
                                       </div>
+
                                       <div className="text-[11px] text-neutral-400">
                                         Ref:{" "}
                                         <span className="text-neutral-200 font-medium">
-                                          {order.reference}
+                                          {order.reference || "—"}
                                         </span>
                                       </div>
                                     </div>
