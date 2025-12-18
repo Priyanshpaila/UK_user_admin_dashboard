@@ -1678,13 +1678,19 @@ export default function EditClinicFormPage() {
                         Equals any of these (comma-separated)
                       </label>
                       <input
-                        value={(selectedField.showIf.in || []).join(", ")}
+                        value={
+                          selectedField.showIf?.inRaw ??
+                          (selectedField.showIf?.in || []).join(", ")
+                        }
                         onChange={(e) => {
-                          const values = e.target.value
+                          const raw = e.target.value;
+                          const values = raw
                             .split(",")
                             .map((v) => v.trim())
                             .filter(Boolean);
+
                           updateShowIf(selectedField.id, {
+                            inRaw: raw,
                             in: values,
                           });
                         }}
