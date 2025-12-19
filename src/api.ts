@@ -64,24 +64,87 @@ export function getMasterBase(): string {
 
 /* ------------------- Generic helper ------------------- */
 
+function getSessionToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem("session_token");
+  } catch {
+    return null;
+  }
+}
+
+function toHeaders(init?: HeadersInit): Headers {
+  const h = new Headers();
+  if (!init) return h;
+
+  // Normalize init into Headers
+  if (init instanceof Headers) {
+    init.forEach((v, k) => h.set(k, v));
+  } else if (Array.isArray(init)) {
+    init.forEach(([k, v]) => h.set(k, v));
+  } else {
+    Object.entries(init).forEach(([k, v]) => {
+      if (typeof v !== "undefined") h.set(k, String(v));
+    });
+  }
+  return h;
+}
+
 async function jsonFetch<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
+  const headers = toHeaders(options.headers);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `Request failed: ${res.status}`);
+  // ✅ Always attach Bearer token when available (unless caller already set it)
+  const token = getSessionToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
   }
 
-  return res.json();
+  // ✅ Default JSON headers unless body is FormData
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
+  if (!isFormData) {
+    // Your preference: default JSON content-type
+    if (!headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (!headers.has("Accept")) {
+      headers.set("Accept", "application/json");
+    }
+  }
+
+  const res = await fetch(url, { ...options, headers });
+
+  // Try to read body safely once
+  const text = await res.text().catch(() => "");
+
+  if (!res.ok) {
+    // Prefer backend JSON message if present
+    try {
+      const parsed = text ? JSON.parse(text) : null;
+      const msg =
+        parsed?.message ||
+        parsed?.error ||
+        parsed?.details ||
+        (typeof parsed === "string" ? parsed : null);
+      throw new Error(msg || text || `Request failed: ${res.status}`);
+    } catch {
+      throw new Error(text || `Request failed: ${res.status}`);
+    }
+  }
+
+  // If empty body, return empty object as T
+  if (!text) return {} as T;
+
+  // Prefer JSON parse; otherwise return raw text
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }
 
 /* ------------------- Auth APIs ------------------- */
@@ -99,7 +162,6 @@ export async function loginApi(email: string, password: string) {
 
 /* ------------------- Services APIs ------------------- */
 export type AppointmentMedium = "offline" | "online";
-
 
 export type ServicePayload = {
   name: string;
@@ -385,7 +447,6 @@ export async function createServiceMedicineApi(
 
   return res.json();
 }
-
 
 // DELETE /service-medicines/:id  -> remove service-medicine mapping by mapping id
 export async function deleteServiceMedicineApi(linkId: string) {
@@ -822,20 +883,22 @@ export type PageFormPayload = {
 
 export const createPageApi = async (formData: FormData) => {
   const base = getBackendBase();
+  const token = getSessionToken();
 
   const res = await fetch(`${base}/pages`, {
     method: "POST",
-    body: formData, // no headers here
+    body: formData,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!res.ok) throw new Error(await res.text());
-
   return res.json();
 };
 
 export async function updatePageApi(id: string, payload: PageFormPayload) {
   const base = getBackendBase();
   const url = `${base}/pages/${id}`;
+  const token = getSessionToken();
 
   const fd = new FormData();
 
@@ -853,17 +916,15 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
   fd.append("published_at", new Date().toISOString());
   fd.append("meta", JSON.stringify(payload.meta || {}));
 
-  (payload.galleryExisting || []).forEach((g) => {
-    fd.append("gallery_existing", g);
-  });
-
-  (payload.galleryFiles || []).forEach((file) => {
-    fd.append("gallery", file);
-  });
+  (payload.galleryExisting || []).forEach((g) =>
+    fd.append("gallery_existing", g)
+  );
+  (payload.galleryFiles || []).forEach((file) => fd.append("gallery", file));
 
   const res = await fetch(url, {
     method: "PUT",
     body: fd,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!res.ok) {
@@ -874,24 +935,20 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
   return res.json();
 }
 
-// Upload a single image for pages: POST /pages/upload-image
-export type PageImageUploadResponse = {
-  path: string; // e.g. "/upload/pages/page-123.png"
-  [key: string]: any; // allow backend to return extra fields
-};
-
 export async function uploadPageImageApi(
   file: File
 ): Promise<PageImageUploadResponse> {
-  const base = getBackendBase(); // e.g. http://tenant.domain:8000/api
+  const base = getBackendBase();
   const url = `${base}/pages/upload-image`;
+  const token = getSessionToken();
 
   const formData = new FormData();
-  formData.append("image", file); // adjust field name if backend expects something else
+  formData.append("image", file);
 
   const res = await fetch(url, {
     method: "POST",
     body: formData,
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!res.ok) {
@@ -900,15 +957,17 @@ export async function uploadPageImageApi(
   }
 
   const data = await res.json();
-
-  // backend "gives a path" – usually under `path`
-  // keep it flexible in case it returns url or something else
   if (!data.path && !data.url) {
     console.warn("Unexpected upload response shape:", data);
   }
-
   return data as PageImageUploadResponse;
 }
+
+// Upload a single image for pages: POST /pages/upload-image
+export type PageImageUploadResponse = {
+  path: string; // e.g. "/upload/pages/page-123.png"
+  [key: string]: any; // allow backend to return extra fields
+};
 
 /* ------------------- Orders APIs ------------------- */
 
@@ -1543,3 +1602,239 @@ export async function updateNhsServiceApi(
     body: JSON.stringify(payload),
   });
 }
+
+/* ------------------- Analytics APIs ------------------- */
+
+export type RevenueBookingsGranularity =
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | string;
+
+export type RevenueBookingsAnalyticsParams = {
+  granularity?: RevenueBookingsGranularity; // optional; backend may default
+  last?: number; // use this OR start/end
+  start?: string; // ISO string
+  end?: string; // ISO string
+  status?: string;
+  payment_status?: string;
+  date_field?: string;
+  include_deleted?: boolean;
+};
+
+export type RevenueBookingsAnalyticsTotals = {
+  revenue: number;
+  bookings: number;
+  avg_revenue_per_booking: number;
+};
+
+export type RevenueBookingsAnalyticsPoint = {
+  bucket: string;
+  revenue: number;
+  bookings: number;
+  avg_revenue_per_booking: number;
+};
+
+export type RevenueBookingsAnalyticsResponse = {
+  filters: Record<string, any>;
+  totals: RevenueBookingsAnalyticsTotals;
+  series: RevenueBookingsAnalyticsPoint[];
+};
+
+/**
+ * GET /analytics/revenue-bookings
+ *
+ * Supports:
+ * 1) Range mode:
+ *    getRevenueBookingsAnalyticsApi({ start, end, granularity?, status?, payment_status? })
+ *
+ * 2) Rolling mode:
+ *    getRevenueBookingsAnalyticsApi({ last, granularity, status?, payment_status? })
+ *
+ * If start/end are provided, they take precedence over last.
+ */
+export async function getRevenueBookingsAnalyticsApi(
+  params: RevenueBookingsAnalyticsParams = {}
+): Promise<RevenueBookingsAnalyticsResponse> {
+  const base = getBackendBase();
+
+  const qs = new URLSearchParams();
+
+  // Optional filters
+  if (params.granularity) qs.set("granularity", String(params.granularity));
+  if (params.status) qs.set("status", params.status);
+  if (params.payment_status) qs.set("payment_status", params.payment_status);
+  if (params.date_field) qs.set("date_field", params.date_field);
+  if (typeof params.include_deleted === "boolean") {
+    qs.set("include_deleted", String(params.include_deleted));
+  }
+
+  // Range mode (preferred when provided)
+  const hasStart =
+    typeof params.start === "string" && params.start.trim().length > 0;
+  const hasEnd = typeof params.end === "string" && params.end.trim().length > 0;
+
+  if (hasStart) qs.set("start", params.start!.trim());
+  if (hasEnd) qs.set("end", params.end!.trim());
+
+  // Rolling mode (only if range not provided)
+  if (!hasStart && !hasEnd && typeof params.last === "number") {
+    qs.set("last", String(params.last));
+  }
+
+  const url = qs.toString()
+    ? `${base}/analytics/revenue-bookings?${qs.toString()}`
+    : `${base}/analytics/revenue-bookings`;
+
+  return jsonFetch<RevenueBookingsAnalyticsResponse>(url);
+}
+
+
+/* ------------------- Analytics APIs ------------------- */
+
+export type AnalyticsCommonParams = {
+  start?: string; // ISO string
+  end?: string; // ISO string
+  status?: string | null;
+  payment_status?: string | null;
+  include_deleted?: boolean;
+};
+
+export type AnalyticsTotals = {
+  bookings: number;
+  revenue: number;
+  avg_revenue_per_booking: number;
+};
+
+/* ---------- 1) GET /analytics/summary ---------- */
+
+export type AnalyticsSummaryBreakdownByStatus = {
+  bookings: number;
+  status: string;
+  revenue: number;
+  avg_revenue_per_booking: number;
+  percent_of_total_bookings: number;
+  percent_of_total_revenue: number;
+};
+
+export type AnalyticsSummaryBreakdownByPaymentStatus = {
+  bookings: number;
+  payment_status: string;
+  revenue: number;
+  avg_revenue_per_booking: number;
+  percent_of_total_bookings: number;
+  percent_of_total_revenue: number;
+};
+
+export type AnalyticsSummaryResponse = {
+  filters: {
+    start?: string;
+    end?: string;
+    status: string | null;
+    payment_status: string | null;
+    include_deleted: boolean;
+    [key: string]: any;
+  };
+  totals: AnalyticsTotals;
+  breakdown: {
+    byStatus: AnalyticsSummaryBreakdownByStatus[];
+    byPaymentStatus: AnalyticsSummaryBreakdownByPaymentStatus[];
+    [key: string]: any;
+  };
+};
+
+export async function getAnalyticsSummaryApi(
+  params: AnalyticsCommonParams = {}
+): Promise<AnalyticsSummaryResponse> {
+  const base = getBackendBase();
+
+  const qs = new URLSearchParams();
+  if (params.start) qs.set("start", params.start);
+  if (params.end) qs.set("end", params.end);
+
+  // allow passing explicit status/payment_status if your backend supports it
+  if (params.status != null && String(params.status).trim().length > 0) {
+    qs.set("status", String(params.status));
+  }
+  if (
+    params.payment_status != null &&
+    String(params.payment_status).trim().length > 0
+  ) {
+    qs.set("payment_status", String(params.payment_status));
+  }
+  if (typeof params.include_deleted === "boolean") {
+    qs.set("include_deleted", String(params.include_deleted));
+  }
+
+  const url = qs.toString()
+    ? `${base}/analytics/summary?${qs.toString()}`
+    : `${base}/analytics/summary`;
+
+  return jsonFetch<AnalyticsSummaryResponse>(url);
+}
+
+/* ---------- 2) GET /analytics/by-service ---------- */
+
+export type AnalyticsByServiceRow = {
+  bookings: number;
+  service_id: string;
+  service_name: string;
+  service_slug: string;
+  revenue: number;
+  avg_revenue_per_booking: number;
+  percent_of_total_bookings: number;
+  percent_of_total_revenue: number;
+};
+
+export type AnalyticsByServiceResponse = {
+  filters: {
+    start?: string;
+    end?: string;
+    status: string | null;
+    payment_status: string | null;
+    include_deleted: boolean;
+    [key: string]: any;
+  };
+  totals: AnalyticsTotals;
+  data: AnalyticsByServiceRow[];
+};
+
+
+
+export async function getAnalyticsByServiceApi(
+  params: AnalyticsCommonParams = {}
+): Promise<AnalyticsByServiceResponse> {
+  const base = getBackendBase();
+
+  const qs = new URLSearchParams();
+  if (params.start) qs.set("start", params.start);
+  if (params.end) qs.set("end", params.end);
+
+  if (params.status != null && String(params.status).trim().length > 0) {
+    qs.set("status", String(params.status));
+  }
+  if (
+    params.payment_status != null &&
+    String(params.payment_status).trim().length > 0
+  ) {
+    qs.set("payment_status", String(params.payment_status));
+  }
+  if (typeof params.include_deleted === "boolean") {
+    qs.set("include_deleted", String(params.include_deleted));
+  }
+
+  const url = qs.toString()
+    ? `${base}/analytics/by-service?${qs.toString()}`
+    : `${base}/analytics/by-service`;
+
+  return jsonFetch<AnalyticsByServiceResponse>(url);
+}
+
+
+// ✅ Backward-compatible alias (some components import this name)
+export type RevenueBookingsResponse = RevenueBookingsAnalyticsResponse;
+
+// Optional aliases if you used these names elsewhere
+export type RevenueBookingsTotals = RevenueBookingsAnalyticsTotals;
+export type RevenueBookingsPoint = RevenueBookingsAnalyticsPoint;
+export type RevenueBookingsParams = RevenueBookingsAnalyticsParams;

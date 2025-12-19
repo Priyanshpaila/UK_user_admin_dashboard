@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getClinicFormsApi,
   getOrderByIdApi,
+  getServiceApi,
+  getBackendBase,
   type ClinicForm,
   type OrderDto,
 } from "../../../../api";
@@ -15,13 +17,236 @@ type AdviceState = {
 
 interface Props {
   orderId: string;
-  serviceId: string;
+  serviceId?: string; // can be optional now (we can resolve via order)
 }
 
 type OrderNotes = {
   admin: string[];
   consultation: string[];
 };
+
+/* ----------------- helpers ----------------- */
+
+function extractId(v: any): string {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  return String(v._id || v.$oid || v.id || "");
+}
+
+function normalizeType(v: any): string {
+  return String(v ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-+/g, "_");
+}
+
+function parseMaybeJsonObject(val: any): Record<string, any> | null {
+  if (!val) return null;
+
+  // already an object map
+  if (typeof val === "object" && !Array.isArray(val)) return val as any;
+
+  // JSON string
+  if (typeof val === "string") {
+    const s = val.trim();
+    if (!s) return null;
+    try {
+      const parsed = JSON.parse(s);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as any;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find Pharmacist Advice form id from a Service document's form assignments.
+ *
+ * Your DB example:
+ *  forms_assignment: "{\"raf\":\"...\",\"advice\":\"...\",\"pharmacist_declaration\":\"...\"}"
+ *
+ * So we:
+ *  1) parse forms_assignment if it's JSON string
+ *  2) read advice key from that map
+ *  3) fallback to other shapes (arrays / other maps)
+ */
+function pickAdviceFormIdFromService(service: any): string | null {
+  if (!service) return null;
+
+  // ✅ 0) Your actual field: forms_assignment (often JSON string)
+  const directMapsToTry = [
+    service.forms_assignment,
+    service.formsAssignment,
+    service.forms_assignments,
+    service.formsAssignments,
+    service.form_assignment, // just in case
+    service.form_assignments,
+    service?.meta?.forms_assignment,
+    service?.meta?.formsAssignment,
+    service?.meta?.forms_assignments,
+    service?.meta?.formsAssignments,
+  ];
+
+  for (const candidate of directMapsToTry) {
+    const m = parseMaybeJsonObject(candidate);
+    if (!m) continue;
+
+    // keys your system uses
+    const keysToTry = [
+      "advice",
+      "pharmacist_advice",
+      "pharmacistAdvice",
+      "advice_form",
+      "adviceForm",
+      "pharmacist_advice_form",
+      "pharmacistAdviceForm",
+    ];
+
+    for (const k of keysToTry) {
+      const id = extractId((m as any)[k]);
+      if (id) return id;
+    }
+  }
+
+  // ✅ 1) Array-based assignment shapes (if you ever store as arrays)
+  const want = new Set([
+    "advice",
+    "pharmacist_advice",
+    "pharmacistadvice",
+  ]);
+
+  const readRowId = (row: any) =>
+    extractId(
+      row?.form_id ??
+        row?.formId ??
+        row?.clinic_form_id ??
+        row?.clinicFormId ??
+        row?.form ??
+        row?.clinic_form ??
+        row?.clinicForm ??
+        row?._id
+    );
+
+  const readRowType = (row: any) =>
+    normalizeType(
+      row?.form_type ??
+        row?.formType ??
+        row?.type ??
+        row?.key ??
+        row?.slug ??
+        row?.name ??
+        row?.step
+    );
+
+  const arrayCandidates = [
+    service.form_assignment,
+    service.formAssignments,
+    service.forms_assignment,
+    service.formsAssignments,
+    service.form_assignments,
+    service.forms_assignments,
+    service.assigned_forms,
+    service.assignedForms,
+    service.clinic_forms,
+    service.clinicForms,
+    service?.meta?.form_assignments,
+    service?.meta?.formAssignments,
+    service?.meta?.assigned_forms,
+    service?.meta?.assignedForms,
+  ];
+
+  for (const arr of arrayCandidates) {
+    if (!Array.isArray(arr)) continue;
+    for (const row of arr) {
+      const t = readRowType(row);
+      const tCompact = t.replace(/_/g, "");
+      const isWanted = want.has(t) || want.has(tCompact);
+      if (!isWanted) continue;
+
+      const id = readRowId(row);
+      if (id) return id;
+    }
+  }
+
+  // ✅ 2) Other map containers (rare, but keep)
+  const mapCandidates = [
+    service.forms,
+    service.form_map,
+    service.formMap,
+    service.assigned_forms_map,
+    service.assignedFormsMap,
+    service?.meta?.forms,
+    service?.meta?.form_map,
+    service?.meta?.formMap,
+  ];
+
+  for (const m of mapCandidates) {
+    const mm = parseMaybeJsonObject(m);
+    if (!mm) continue;
+
+    const keysToTry = [
+      "advice",
+      "pharmacist_advice",
+      "pharmacistAdvice",
+      "advice_form",
+      "adviceForm",
+      "pharmacist_advice_form",
+      "pharmacistAdviceForm",
+    ];
+
+    for (const k of keysToTry) {
+      const id = extractId((mm as any)[k]);
+      if (id) return id;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fallback slug fetch if you do not have a dedicated api helper.
+ * Tries a couple of common backend routes.
+ */
+async function fetchServiceBySlugFallback(slug: string) {
+  const base = getBackendBase();
+  const token =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("session_token")
+      : null;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const candidates = [
+    `${base}/services/slug/${encodeURIComponent(slug)}`,
+    `${base}/services/by-slug/${encodeURIComponent(slug)}`,
+  ];
+
+  let lastErr: any = null;
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { headers, cache: "no-store" });
+      if (!res.ok) {
+        lastErr = new Error(`Failed (${res.status})`);
+        continue;
+      }
+      const json = await res.json();
+      return json?.data ?? json;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr || new Error("Unable to resolve service by slug");
+}
 
 /** 👉 Helper to derive the "answer" string for an option.
  * Priority: option.help → field.help → option.label → option.value
@@ -43,6 +268,8 @@ function getOptionAnswer(field: any, opt: any, index: number): string {
 }
 
 export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
+  const [order, setOrder] = useState<OrderDto | null>(null);
+
   const [form, setForm] = useState<ClinicForm | null>(null);
   const [adviceState, setAdviceState] = useState<AdviceState>({});
   const [selectAll, setSelectAll] = useState(false);
@@ -55,58 +282,161 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
   });
   const [orderNotesLoading, setOrderNotesLoading] = useState(true);
 
-  const [hydrated, setHydrated] = useState(false); // 👈 for safe LS writes
+  const [hydrated, setHydrated] = useState(false);
 
-  const storageKey = `consultation_${orderId}_advice`;
+  const storageKey = useMemo(() => `consultation_${orderId}_advice`, [orderId]);
 
-  /* ------------ Load Pharmacist Advice form + LS ------------ */
+  /* ------------ Load order once (also sets notes) ------------ */
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      if (!serviceId) {
-        setError("Missing service id for advice form");
-        setLoading(false);
-        setHydrated(true);
+    async function loadOrder() {
+      if (!orderId) {
+        if (!cancelled) {
+          setOrder(null);
+          setOrderNotes({ admin: [], consultation: [] });
+          setOrderNotesLoading(false);
+        }
         return;
       }
 
-      setLoading(true);
-      setError(null);
+      setOrderNotesLoading(true);
 
       try {
-        const res = await getClinicFormsApi();
+        const o: OrderDto = await getOrderByIdApi(orderId);
+        const meta: any = (o as any).meta || {};
 
-        const forms: ClinicForm[] = Array.isArray(res)
-          ? res
-          : (res?.data as ClinicForm[]) || [];
+        const normalize = (raw: any): string[] => {
+          const arr = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+          return arr
+            .map((n) => String(n).trim())
+            .filter((n) => n.length > 0);
+        };
 
-        // Handle service_id being either a string or an object (ObjectId-like)
-        const adviceForm =
-          forms.find((f: any) => {
-            const sid =
-              typeof f.service_id === "object" && f.service_id
-                ? f.service_id._id || f.service_id.$oid || ""
-                : f.service_id;
+        const adminRaw =
+          (o as any).admin_notes ?? meta.admin_notes ?? meta.adminNotes ?? [];
+        const consultationRaw =
+          (o as any).consultation_notes ??
+          (o as any).consultant_notes ??
+          meta.consultation_notes ??
+          meta.consultationNotes ??
+          meta.consultant_notes ??
+          meta.consultantNotes ??
+          [];
 
-            const type = (f.form_type || "").toLowerCase();
+        if (!cancelled) {
+          setOrder(o);
+          setOrderNotes({
+            admin: normalize(adminRaw),
+            consultation: normalize(consultationRaw),
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setOrder(null);
+          setOrderNotes({ admin: [], consultation: [] });
+        }
+      } finally {
+        if (!cancelled) setOrderNotesLoading(false);
+      }
+    }
 
-            return (
-              sid === serviceId &&
-              (type === "advice" || type === "pharmacist_advice")
-            );
-          }) || null;
+    loadOrder();
 
-        if (!adviceForm) {
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
+
+  /* ------------ Load service → read form assignment → fetch that form → hydrate LS ------------ */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAssignedAdviceForm() {
+      setLoading(true);
+      setError(null);
+      setHydrated(false);
+
+      try {
+        const effectiveServiceId =
+          (serviceId && String(serviceId)) ||
+          extractId((order as any)?.service_id) ||
+          extractId((order as any)?.serviceId);
+
+        const effectiveSlug =
+          String((order as any)?.service_slug || "") ||
+          String((order as any)?.meta?.service_slug || "");
+
+        if (!effectiveServiceId && !effectiveSlug) {
           if (!cancelled) {
-            setError(
-              "No Pharmacist Advice form is configured for this service."
-            );
+            setForm(null);
+            setError("Missing service id/slug to resolve assigned Advice form.");
           }
           return;
         }
 
-        // LocalStorage
+        // Fetch service
+        let service: any = null;
+        if (effectiveServiceId) {
+          const sRes: any = await getServiceApi(effectiveServiceId);
+          service = sRes?.data ?? sRes;
+        } else {
+          service = await fetchServiceBySlugFallback(effectiveSlug);
+        }
+
+        // ✅ assigned form id from service.forms_assignment JSON string
+        let assignedAdviceFormId = pickAdviceFormIdFromService(service);
+
+        // (optional safety fallback) if service has no assignment, fallback to old logic
+        // to avoid blocking consultation UI completely
+        const res = await getClinicFormsApi();
+        const forms: ClinicForm[] = Array.isArray(res)
+          ? res
+          : (res?.data as ClinicForm[]) || [];
+
+        if (!assignedAdviceFormId) {
+          // fallback: match by service_id + form_type
+          const fallback =
+            forms.find((f: any) => {
+              const sid =
+                typeof f.service_id === "object" && f.service_id
+                  ? f.service_id._id || f.service_id.$oid || ""
+                  : f.service_id;
+
+              const type = (f.form_type || "").toLowerCase();
+              return (
+                sid === effectiveServiceId &&
+                (type === "advice" || type === "pharmacist_advice")
+              );
+            }) || null;
+
+          if (!fallback) {
+            if (!cancelled) {
+              setForm(null);
+              setError(
+                "No Pharmacist Advice form is assigned to this service (via Form Assignments)."
+              );
+            }
+            return;
+          }
+
+          // if fallback found, use it
+          assignedAdviceFormId = extractId((fallback as any)._id);
+        }
+
+        const assignedForm =
+          forms.find((f: any) => extractId(f?._id) === assignedAdviceFormId) ||
+          null;
+
+        if (!assignedForm) {
+          if (!cancelled) {
+            setForm(null);
+            setError("Assigned Pharmacist Advice form not found (or deleted).");
+          }
+          return;
+        }
+
+        // LocalStorage restore
         let initialState: AdviceState = {};
         let initialSelectAll = false;
 
@@ -120,108 +450,49 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
                 initialSelectAll = !!parsed.selectAll;
               }
             } catch {
-              // ignore parse error
+              // ignore
             }
           }
         }
 
-        // If no saved state, init with empty arrays for each checkbox field
-        if (!Object.keys(initialState).length) {
-          const fields = (adviceForm.schema || []).filter(
-            (f: any) => f.type === "checkbox"
-          );
-          fields.forEach((field: any) => {
-            const key = field.data?.key || field.data?.label;
-            if (!key) return;
-            initialState[key] = [];
-          });
-        }
+        // Normalize state to assigned form's checkbox fields
+        const checkboxFields = (assignedForm.schema || []).filter(
+          (f: any) => f.type === "checkbox"
+        );
+
+        const normalized: AdviceState = {};
+        checkboxFields.forEach((field: any, idx: number) => {
+          const key = field.data?.key || field.data?.label || `field_${idx}`;
+          const prev = (initialState as any)[key];
+          normalized[key] = Array.isArray(prev)
+            ? prev.filter((v) => typeof v === "string")
+            : [];
+        });
 
         if (!cancelled) {
-          setForm(adviceForm);
-          setAdviceState(initialState);
+          setForm(assignedForm);
+          setAdviceState(normalized);
           setSelectAll(initialSelectAll);
         }
       } catch (e: any) {
         if (!cancelled) {
-          setError(e?.message || "Failed to load advice form");
+          setForm(null);
+          setError(e?.message || "Failed to load assigned advice form");
         }
       } finally {
         if (!cancelled) {
           setLoading(false);
-          setHydrated(true); // ✅ done hydrating
+          setHydrated(true);
         }
       }
     }
 
-    load();
+    loadAssignedAdviceForm();
 
     return () => {
       cancelled = true;
     };
-  }, [serviceId, storageKey]);
-
-  /* ------------ Load order notes (admin / consultant) ------------ */
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadOrderNotes() {
-      if (!orderId) {
-        setOrderNotesLoading(false);
-        return;
-      }
-
-      setOrderNotesLoading(true);
-      try {
-        const order: OrderDto = await getOrderByIdApi(orderId);
-        const meta: any = order.meta || {};
-
-        const normalize = (raw: any): string[] => {
-          const arr = Array.isArray(raw)
-            ? raw
-            : raw == null
-            ? []
-            : [raw];
-          return arr
-            .map((n) => String(n).trim())
-            .filter((n) => n.length > 0);
-        };
-
-        const adminRaw =
-          (order as any).admin_notes ??
-          meta.admin_notes ??
-          meta.adminNotes ??
-          [];
-        const consultationRaw =
-          (order as any).consultation_notes ??
-          (order as any).consultant_notes ??
-          meta.consultation_notes ??
-          meta.consultationNotes ??
-          meta.consultant_notes ??
-          meta.consultantNotes ??
-          [];
-
-        if (!cancelled) {
-          setOrderNotes({
-            admin: normalize(adminRaw),
-            consultation: normalize(consultationRaw),
-          });
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setOrderNotes({ admin: [], consultation: [] });
-        }
-      } finally {
-        if (!cancelled) setOrderNotesLoading(false);
-      }
-    }
-
-    loadOrderNotes();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [orderId]);
+  }, [order, serviceId, storageKey]);
 
   // Persist advice selections (answers) to localStorage
   useEffect(() => {
@@ -230,7 +501,6 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
   }, [adviceState, selectAll, storageKey, hydrated]);
 
-  /** 🔁 Toggle a single option: store its help text as the answer */
   function toggleOption(fieldKey: string, answer: string) {
     setAdviceState((prev) => {
       const current = prev[fieldKey] || [];
@@ -242,28 +512,20 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
     });
   }
 
-  /** 🔁 Select / clear all options: store their help texts as answers */
   function handleSelectAllChange(checked: boolean) {
     setSelectAll(checked);
     if (!form) return;
 
-    const fields = (form.schema || []).filter(
-      (f: any) => f.type === "checkbox"
-    );
+    const fields = (form.schema || []).filter((f: any) => f.type === "checkbox");
 
     setAdviceState((prev) => {
       const next: AdviceState = { ...prev };
-      fields.forEach((field: any) => {
-        const key = field.data?.key || field.data?.label;
-        if (!key) return;
+      fields.forEach((field: any, idx: number) => {
+        const key = field.data?.key || field.data?.label || `field_${idx}`;
         const options = field.data?.options || [];
-        if (checked) {
-          next[key] = options.map((o: any, idx: number) =>
-            getOptionAnswer(field, o, idx)
-          );
-        } else {
-          next[key] = [];
-        }
+        next[key] = checked
+          ? options.map((o: any, i: number) => getOptionAnswer(field, o, i))
+          : [];
       });
       return next;
     });
@@ -300,10 +562,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
         {(orderNotes.admin.length > 0 ||
           orderNotes.consultation.length > 0 ||
           orderNotesLoading) && (
-          <OrderNotesBanner
-            notes={orderNotes}
-            loading={orderNotesLoading}
-          />
+          <OrderNotesBanner notes={orderNotes} loading={orderNotesLoading} />
         )}
 
         {textBlocks.length > 0 && (
@@ -332,6 +591,7 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
             ))}
           </div>
         )}
+
         <p>No checkbox fields found in this Pharmacist Advice form.</p>
       </div>
     );
@@ -354,15 +614,14 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
             <span className="font-medium text-neutral-200">{form.name}</span>
           </p>
           {form.description && (
-            <p className="text-[11px] text-neutral-500">
-              {form.description}
-            </p>
+            <p className="text-[11px] text-neutral-500">{form.description}</p>
           )}
           <p className="text-[11px] text-neutral-500">
-            Tick the options that apply. Help text is stored as the answer
-            for each ticked option.
+            Tick the options that apply. Help text is stored as the answer for
+            each ticked option.
           </p>
         </div>
+
         <label className="inline-flex items-center gap-2 text-xs text-neutral-100">
           <input
             type="checkbox"
@@ -470,9 +729,7 @@ function OrderNotesBanner({
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-3 py-2 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-neutral-200">
-          Order notes
-        </p>
+        <p className="text-xs font-semibold text-neutral-200">Order notes</p>
         {loading && (
           <span className="flex items-center gap-1 text-[10px] text-neutral-500">
             <Loader2 className="h-3 w-3 animate-spin" />
