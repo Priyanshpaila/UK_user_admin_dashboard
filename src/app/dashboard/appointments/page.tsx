@@ -191,17 +191,36 @@ export default function Page() {
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
 
-  async function loadAppointments(filter: StatusFilter = statusFilter) {
-    setLoading(true);
+  /* ----------------- pagination (NEW) ----------------- */
+
+  const [page, setPage] = useState<number>(1);
+  const [limit, setLimit] = useState<number>(20); // default stays 20, now user can change
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+
+  async function loadAppointments(
+    filter: StatusFilter = statusFilter,
+    opts?: { page?: number; limit?: number; append?: boolean }
+  ) {
+    const nextPage = typeof opts?.page === "number" ? opts.page : 1;
+    const nextLimit = typeof opts?.limit === "number" ? opts.limit : limit;
+    const append = !!opts?.append;
+
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+
     setError(null);
     setNotice(null);
 
     try {
-      // ✅ call backend with status when not "all"
+      // ✅ call backend with status when not "all", and pass page/limit
       const res =
         filter === "all"
-          ? await getAppointmentsApi()
-          : await getAppointmentsApi({ status: filter });
+          ? await getAppointmentsApi({ page: nextPage, limit: nextLimit })
+          : await getAppointmentsApi({ status: filter, page: nextPage, limit: nextLimit });
 
       const list: AppointmentDto[] = Array.isArray((res as any).data)
         ? (res as any).data
@@ -215,10 +234,29 @@ export default function Page() {
           ? list
           : list.filter((a) => (a.status || "").toLowerCase() === filter);
 
-      setAppointments(filtered);
+      // ✅ append vs replace
+      const nextAppointments = append ? [...appointments, ...filtered] : filtered;
+      setAppointments(nextAppointments);
 
+      // ✅ determine hasMore (prefer meta if available; fallback to "got less than limit")
+      const meta = (res as any)?.meta;
+      const metaHasMore =
+        meta && typeof meta === "object"
+          ? (typeof meta.hasMore === "boolean" ? meta.hasMore : undefined)
+          : undefined;
+
+      const computedHasMore =
+        typeof metaHasMore === "boolean" ? metaHasMore : list.length >= nextLimit;
+
+      setHasMore(computedHasMore);
+      setPage(nextPage);
+      setLimit(nextLimit);
+
+      // ✅ fetch users for the appointments we have (existing logic, but supports append)
       const uniqueUserIds = Array.from(
-        new Set(filtered.map((a) => a.user_id as string | undefined).filter(Boolean))
+        new Set(
+          nextAppointments.map((a) => a.user_id as string | undefined).filter(Boolean)
+        )
       ) as string[];
 
       if (uniqueUserIds.length) {
@@ -244,12 +282,15 @@ export default function Page() {
       setError(e?.message || "Failed to load appointments");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }
 
-  // initial + when filter changes
+  // initial + when filter changes (reset pagination)
   useEffect(() => {
-    void loadAppointments(statusFilter);
+    setPage(1);
+    setHasMore(true);
+    void loadAppointments(statusFilter, { page: 1, limit, append: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
 
@@ -380,10 +421,14 @@ export default function Page() {
             const serviceName = updated.service_name || editing.service_name || "Service";
 
             const prevParts = splitEmailDateTime(prevStartIso);
-            const newParts = splitEmailDateTime(updated.start_at || payload.start_at || prevStartIso);
+            const newParts = splitEmailDateTime(
+              updated.start_at || payload.start_at || prevStartIso
+            );
 
             const prevEndParts = splitEmailDateTime(prevEndIso);
-            const newEndParts = splitEmailDateTime(updated.end_at || payload.end_at || prevEndIso);
+            const newEndParts = splitEmailDateTime(
+              updated.end_at || payload.end_at || prevEndIso
+            );
 
             // appointment ref fallback
             const appointmentRef =
@@ -493,15 +538,46 @@ export default function Page() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => loadAppointments(statusFilter)}
-          disabled={loading}
-          className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-60"
-        >
-          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Rows per page (NEW) */}
+          <div className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200">
+            <span className="text-neutral-400">Rows</span>
+            <select
+              value={limit}
+              onChange={(e) => {
+                const v = Number(e.target.value || 20);
+                setLimit(v);
+                setPage(1);
+                setHasMore(true);
+                void loadAppointments(statusFilter, { page: 1, limit: v, append: false });
+              }}
+              className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setPage(1);
+              setHasMore(true);
+              void loadAppointments(statusFilter, { page: 1, limit, append: false });
+            }}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-60"
+          >
+            {loading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Notice */}
@@ -705,272 +781,292 @@ export default function Page() {
             </table>
           </div>
 
-          <div className="border-t border-neutral-800 bg-neutral-950/40 px-3 py-2 text-[11px] text-neutral-500">
-            Showing <span className="text-neutral-200">{rows.length}</span>{" "}
-            appointment{rows.length === 1 ? "" : "s"}
-            {statusFilter !== "all" ? (
-              <>
-                {" "}
-                in <span className="text-neutral-200">{activeFilterLabel}</span>
-              </>
-            ) : null}
-            .
+          <div className="border-t border-neutral-800 bg-neutral-950/40 px-3 py-2 text-[11px] text-neutral-500 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              Showing <span className="text-neutral-200">{rows.length}</span>{" "}
+              appointment{rows.length === 1 ? "" : "s"}
+              {statusFilter !== "all" ? (
+                <>
+                  {" "}
+                  in <span className="text-neutral-200">{activeFilterLabel}</span>
+                </>
+              ) : null}
+              .
+            </div>
+
+            {/* Load more (NEW) */}
+            <div className="flex items-center gap-2">
+              <span className="text-neutral-600">
+                Page <span className="text-neutral-300">{page}</span>
+              </span>
+
+              <button
+                type="button"
+                disabled={loadingMore || loading || !hasMore}
+                onClick={() =>
+                  loadAppointments(statusFilter, { page: page + 1, limit, append: true })
+                }
+                className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingMore ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                {hasMore ? (loadingMore ? "Loading…" : "Load more") : "No more"}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* Edit drawer */}
-{editing && (
-  <div className="fixed inset-0 z-40 flex items-stretch justify-end bg-black/40">
-    <div className="h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 px-4 py-5 flex flex-col gap-4 shadow-[0_0_40px_rgba(0,0,0,0.6)] overflow-hidden">
-      {/* ✅ SCROLL AREA START */}
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
-        {/* header */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="space-y-0.5">
-            <p className="text-[11px] text-neutral-400">Edit appointment</p>
-            <p className="text-sm font-semibold text-white">
-              {editing.order_id || "No order ID"}
-            </p>
-            {editingPatientName && (
-              <p className="mt-0.5 text-xs text-neutral-300 flex items-center gap-1">
-                <User className="h-3 w-3 text-emerald-400" />
-                {editingPatientName}
-              </p>
-            )}
-            {editingPatientDetails && (
-              <p className="ml-4 text-[11px] text-neutral-500">
-                {editingPatientDetails}
-              </p>
-            )}
-            {editing.service_name && (
-              <p className="mt-1 text-[11px] text-neutral-400 flex items-center gap-1">
-                <Stethoscope className="h-3 w-3 text-neutral-600" />
-                {editing.service_name}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={closeEdit}
-            className="inline-flex items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 p-1 text-neutral-300 hover:border-rose-500 hover:text-rose-300"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* time controls */}
-        <div className="space-y-2 text-xs text-neutral-300 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3">
-          <p className="text-[11px] font-semibold text-neutral-200 mb-1">
-            Date &amp; time
-          </p>
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="text-[11px] text-neutral-400">
-                Start (local)
-              </label>
-              <input
-                type="datetime-local"
-                value={editStart}
-                onChange={(e) => setEditStart(e.target.value)}
-                className="mt-1 w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-            <div>
-              <label className="text-[11px] text-neutral-400">End (local)</label>
-              <input
-                type="datetime-local"
-                value={editEnd}
-                onChange={(e) => setEditEnd(e.target.value)}
-                className="mt-1 w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-          </div>
-          {hasTimeChanged && (
-            <p className="mt-2 flex items-center gap-1 text-[11px] text-amber-300">
-              <Clock className="h-3 w-3" />
-              Time changed – this appointment will be marked as{" "}
-              <span className="font-semibold">Rescheduled</span>.
-            </p>
-          )}
-        </div>
-
-        {/* status */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-neutral-300">Status</label>
-            {hasTimeChanged && (
-              <span className="text-[10px] text-neutral-500">
-                Locked to <span className="font-semibold">Rescheduled</span>{" "}
-                due to time change
-              </span>
-            )}
-          </div>
-          <select
-            value={hasTimeChanged ? "rescheduled" : editStatus}
-            onChange={(e) => setEditStatus(e.target.value)}
-            disabled={hasTimeChanged}
-            className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500 disabled:opacity-60"
-          >
-            <option value="pending">Pending</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="completed">Completed</option>
-            <option value="no-show">No-show</option>
-            <option value="rescheduled">Rescheduled</option>
-          </select>
-        </div>
-
-        {/* URLs */}
-        <div className="space-y-2">
-          <label className="text-xs text-neutral-300 flex items-center gap-1">
-            <Link2 className="h-3 w-3 text-emerald-400" />
-            Join URL (for patient)
-          </label>
-          <input
-            type="url"
-            value={joinUrl}
-            onChange={(e) => setJoinUrl(e.target.value)}
-            className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
-            placeholder="https://zoom.us/j/..."
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-xs text-neutral-300 flex items-center gap-1">
-            <Link2 className="h-3 w-3 text-neutral-400" />
-            Host URL (for pharmacist)
-          </label>
-          <input
-            type="url"
-            value={hostUrl}
-            onChange={(e) => setHostUrl(e.target.value)}
-            className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
-            placeholder="https://zoom.us/s/..."
-          />
-        </div>
-
-        {/* Order details */}
-        <div className="space-y-2 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3 text-xs text-neutral-300">
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-[11px] font-semibold text-neutral-200">
-              Order details
-            </p>
-            {editingOrder?.reference && (
-              <span className="text-[11px] text-neutral-400">
-                Ref:{" "}
-                <span className="font-mono text-neutral-100">
-                  {editingOrder.reference}
-                </span>
-              </span>
-            )}
-          </div>
-
-          {orderLoading && (
-            <p className="flex items-center gap-2 text-[11px] text-neutral-400">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Loading order…
-            </p>
-          )}
-
-          {orderError && (
-            <p className="text-[11px] text-rose-300">{orderError}</p>
-          )}
-
-          {!orderLoading && !orderError && !editingOrder && (
-            <p className="text-[11px] text-neutral-500">
-              No linked order found for this appointment.
-            </p>
-          )}
-
-          {!orderLoading && !orderError && editingOrder && (
-            <>
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                {editingOrder.status && (
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 border ${appointmentStatusPillClass(
-                      editingOrder.status
-                    )}`}
-                  >
-                    {formatStatus(editingOrder.status)}
-                  </span>
-                )}
-                {editingOrder.payment_status && (
-                  <span className="inline-flex items-center rounded-full px-2 py-0.5 border border-neutral-600 bg-neutral-900 text-[11px] text-neutral-200">
-                    Payment: {formatStatus(editingOrder.payment_status)}
-                  </span>
-                )}
-              </div>
-
-              {editingOrder.meta?.items?.length ? (
-                <div className="mt-2 space-y-1 border-t border-neutral-800 pt-2">
-                  {editingOrder.meta.items.map((it: any, idx: number) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-800 last:border-none"
-                    >
-                      <div className="flex flex-col">
-                        <span className="font-medium text-neutral-100">
-                          {it.name}
-                        </span>
-                        <span className="text-[10px] text-neutral-400">
-                          {it.variation || it.variations || "Standard"}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="block text-[10px] text-neutral-400">
-                          Qty: {it.qty}
-                        </span>
-                        <span className="block text-[10px] text-neutral-300">
-                          {formatMoney(it.totalMinor)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
+      {editing && (
+        <div className="fixed inset-0 z-40 flex items-stretch justify-end bg-black/40">
+          <div className="h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 px-4 py-5 flex flex-col gap-4 shadow-[0_0_40px_rgba(0,0,0,0.6)] overflow-hidden">
+            {/* ✅ SCROLL AREA START */}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
+              {/* header */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="space-y-0.5">
+                  <p className="text-[11px] text-neutral-400">Edit appointment</p>
+                  <p className="text-sm font-semibold text-white">
+                    {editing.order_id || "No order ID"}
+                  </p>
+                  {editingPatientName && (
+                    <p className="mt-0.5 text-xs text-neutral-300 flex items-center gap-1">
+                      <User className="h-3 w-3 text-emerald-400" />
+                      {editingPatientName}
+                    </p>
+                  )}
+                  {editingPatientDetails && (
+                    <p className="ml-4 text-[11px] text-neutral-500">
+                      {editingPatientDetails}
+                    </p>
+                  )}
+                  {editing.service_name && (
+                    <p className="mt-1 text-[11px] text-neutral-400 flex items-center gap-1">
+                      <Stethoscope className="h-3 w-3 text-neutral-600" />
+                      {editing.service_name}
+                    </p>
+                  )}
                 </div>
-              ) : (
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  No line items on this order.
-                </p>
-              )}
-
-              <div className="mt-2 flex items-center justify-between border-t border-neutral-800 pt-2 text-[11px]">
-                <span className="text-neutral-400">Total amount</span>
-                <span className="font-semibold text-neutral-100">
-                  {formatMoney(editingOrder.meta?.totalMinor)}
-                </span>
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  className="inline-flex items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 p-1 text-neutral-300 hover:border-rose-500 hover:text-rose-300"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-            </>
-          )}
+
+              {/* time controls */}
+              <div className="space-y-2 text-xs text-neutral-300 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3">
+                <p className="text-[11px] font-semibold text-neutral-200 mb-1">
+                  Date &amp; time
+                </p>
+                <div className="grid grid-cols-1 gap-3">
+                  <div>
+                    <label className="text-[11px] text-neutral-400">
+                      Start (local)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={editStart}
+                      onChange={(e) => setEditStart(e.target.value)}
+                      className="mt-1 w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-neutral-400">End (local)</label>
+                    <input
+                      type="datetime-local"
+                      value={editEnd}
+                      onChange={(e) => setEditEnd(e.target.value)}
+                      className="mt-1 w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+                {hasTimeChanged && (
+                  <p className="mt-2 flex items-center gap-1 text-[11px] text-amber-300">
+                    <Clock className="h-3 w-3" />
+                    Time changed – this appointment will be marked as{" "}
+                    <span className="font-semibold">Rescheduled</span>.
+                  </p>
+                )}
+              </div>
+
+              {/* status */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-neutral-300">Status</label>
+                  {hasTimeChanged && (
+                    <span className="text-[10px] text-neutral-500">
+                      Locked to <span className="font-semibold">Rescheduled</span>{" "}
+                      due to time change
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={hasTimeChanged ? "rescheduled" : editStatus}
+                  onChange={(e) => setEditStatus(e.target.value)}
+                  disabled={hasTimeChanged}
+                  className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500 disabled:opacity-60"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="cancelled">Cancelled</option>
+                  <option value="completed">Completed</option>
+                  <option value="no-show">No-show</option>
+                  <option value="rescheduled">Rescheduled</option>
+                </select>
+              </div>
+
+              {/* URLs */}
+              <div className="space-y-2">
+                <label className="text-xs text-neutral-300 flex items-center gap-1">
+                  <Link2 className="h-3 w-3 text-emerald-400" />
+                  Join URL (for patient)
+                </label>
+                <input
+                  type="url"
+                  value={joinUrl}
+                  onChange={(e) => setJoinUrl(e.target.value)}
+                  className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
+                  placeholder="https://zoom.us/j/..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs text-neutral-300 flex items-center gap-1">
+                  <Link2 className="h-3 w-3 text-neutral-400" />
+                  Host URL (for pharmacist)
+                </label>
+                <input
+                  type="url"
+                  value={hostUrl}
+                  onChange={(e) => setHostUrl(e.target.value)}
+                  className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
+                  placeholder="https://zoom.us/s/..."
+                />
+              </div>
+
+              {/* Order details */}
+              <div className="space-y-2 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3 text-xs text-neutral-300">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[11px] font-semibold text-neutral-200">
+                    Order details
+                  </p>
+                  {editingOrder?.reference && (
+                    <span className="text-[11px] text-neutral-400">
+                      Ref:{" "}
+                      <span className="font-mono text-neutral-100">
+                        {editingOrder.reference}
+                      </span>
+                    </span>
+                  )}
+                </div>
+
+                {orderLoading && (
+                  <p className="flex items-center gap-2 text-[11px] text-neutral-400">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading order…
+                  </p>
+                )}
+
+                {orderError && (
+                  <p className="text-[11px] text-rose-300">{orderError}</p>
+                )}
+
+                {!orderLoading && !orderError && !editingOrder && (
+                  <p className="text-[11px] text-neutral-500">
+                    No linked order found for this appointment.
+                  </p>
+                )}
+
+                {!orderLoading && !orderError && editingOrder && (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      {editingOrder.status && (
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 border ${appointmentStatusPillClass(
+                            editingOrder.status
+                          )}`}
+                        >
+                          {formatStatus(editingOrder.status)}
+                        </span>
+                      )}
+                      {editingOrder.payment_status && (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 border border-neutral-600 bg-neutral-900 text-[11px] text-neutral-200">
+                          Payment: {formatStatus(editingOrder.payment_status)}
+                        </span>
+                      )}
+                    </div>
+
+                    {editingOrder.meta?.items?.length ? (
+                      <div className="mt-2 space-y-1 border-t border-neutral-800 pt-2">
+                        {editingOrder.meta.items.map((it: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-800 last:border-none"
+                          >
+                            <div className="flex flex-col">
+                              <span className="font-medium text-neutral-100">
+                                {it.name}
+                              </span>
+                              <span className="text-[10px] text-neutral-400">
+                                {it.variation || it.variations || "Standard"}
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="block text-[10px] text-neutral-400">
+                                Qty: {it.qty}
+                              </span>
+                              <span className="block text-[10px] text-neutral-300">
+                                {formatMoney(it.totalMinor)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[11px] text-neutral-500">
+                        No line items on this order.
+                      </p>
+                    )}
+
+                    <div className="mt-2 flex items-center justify-between border-t border-neutral-800 pt-2 text-[11px]">
+                      <span className="text-neutral-400">Total amount</span>
+                      <span className="font-semibold text-neutral-100">
+                        {formatMoney(editingOrder.meta?.totalMinor)}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {saveError && <div className="text-[11px] text-rose-300">{saveError}</div>}
+            </div>
+            {/* ✅ SCROLL AREA END */}
+
+            {/* footer (kept EXACT as you had it) */}
+            <div className="mt-auto flex items-center justify-end gap-2 pt-3 border-t border-neutral-800">
+              <button
+                type="button"
+                onClick={closeEdit}
+                className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-[11px] font-semibold text-neutral-200 hover:border-neutral-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-500/80 bg-emerald-500/10 px-4 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {saving && <Loader2 className="h-3 w-3 animate-spin" />}
+                {saving ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </div>
         </div>
-
-        {saveError && <div className="text-[11px] text-rose-300">{saveError}</div>}
-      </div>
-      {/* ✅ SCROLL AREA END */}
-
-      {/* footer (kept EXACT as you had it) */}
-      <div className="mt-auto flex items-center justify-end gap-2 pt-3 border-t border-neutral-800">
-        <button
-          type="button"
-          onClick={closeEdit}
-          className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-[11px] font-semibold text-neutral-200 hover:border-neutral-500"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="inline-flex items-center gap-2 rounded-full border border-emerald-500/80 bg-emerald-500/10 px-4 py-1.5 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {saving && <Loader2 className="h-3 w-3 animate-spin" />}
-          {saving ? "Saving…" : "Save changes"}
-        </button>
-      </div>
-    </div>
-  </div>
-)}
-
+      )}
     </div>
   );
 }

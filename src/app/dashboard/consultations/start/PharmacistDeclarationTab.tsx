@@ -16,7 +16,8 @@ interface Props {
 }
 
 type FieldsState = {
-  [fieldKey: string]: string;
+  // ✅ store by LABEL (what you want)
+  [fieldLabel: string]: string;
 };
 
 type DeclarationStorage = {
@@ -26,29 +27,26 @@ type DeclarationStorage = {
   signatureDataUrl?: string | null; // legacy base64 (backward compat)
 };
 
-// Helper to resolve stored path to full URL
+/* ---------------- helpers ---------------- */
+
 const resolveImageUrl = (imagePath: string) => {
   if (!imagePath) return "";
 
-  if (/^https?:\/\//i.test(imagePath)) {
-    return imagePath;
-  }
+  // already absolute
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
 
-  const normalizedPath = imagePath.startsWith("/")
-    ? imagePath
-    : `/${imagePath}`;
+  const normalizedPath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
 
+  // getBackendBase => https://domain/api
   const baseWithApi = getBackendBase();
   const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
 
   return `${cleanBase}${normalizedPath}`;
 };
 
-// Helper: get logged-in userId from localStorage (adjust keys if needed)
 function getLoggedInUserIdFromLocal(): string | null {
   if (typeof window === "undefined") return null;
 
-  // 1) Try if you stored full user JSON under "user"
   const rawUser = window.localStorage.getItem("user");
   if (rawUser) {
     try {
@@ -59,11 +57,10 @@ function getLoggedInUserIdFromLocal(): string | null {
         if (parsed.userId) return String(parsed.userId);
       }
     } catch {
-      // ignore JSON parse error
+      // ignore
     }
   }
 
-  // 2) Fallback: maybe you stored plain user id
   const idKeys = ["user_id", "userId", "pharmacist_id"];
   for (const key of idKeys) {
     const v = window.localStorage.getItem(key);
@@ -73,14 +70,60 @@ function getLoggedInUserIdFromLocal(): string | null {
   return null;
 }
 
-export default function PharmacistDeclarationTab({
-  orderId,
-  serviceId,
-}: Props) {
+function pickPharmacistName(user: UserDto): string {
+  const u: any = user;
+  return (
+    user.name ||
+    (user as any).fullName ||
+    `${(user as any).firstName || ""} ${(user as any).lastName || ""}`.trim() ||
+    u.email ||
+    ""
+  );
+}
+
+/**
+ * For backward-compat:
+ * If localStorage contains old fields keyed by schema `data.key` (like text_xxx),
+ * we migrate into label-keyed fields once on load.
+ */
+function migrateKeyedFieldsToLabelFields(
+  schema: any[],
+  stored: FieldsState
+): FieldsState {
+  if (!stored || typeof stored !== "object") return {};
+
+  const next: FieldsState = { ...stored };
+
+  // map data.key -> label
+  const keyToLabel: Record<string, string> = {};
+  for (const f of schema || []) {
+    const k = String(f?.data?.key || "").trim();
+    const l = String(f?.data?.label || "").trim();
+    if (k && l) keyToLabel[k] = l;
+  }
+
+  // if any old keys exist, migrate them to labels
+  let changed = false;
+  for (const [k, v] of Object.entries(stored)) {
+    // if k looks like old schema key and label exists
+    const label = keyToLabel[k];
+    if (label && !next[label]) {
+      next[label] = String(v ?? "");
+      delete next[k];
+      changed = true;
+    }
+  }
+
+  return changed ? next : next;
+}
+
+/* ---------------- component ---------------- */
+
+export default function PharmacistDeclarationTab({ orderId, serviceId }: Props) {
   const [form, setForm] = useState<ClinicForm | null>(null);
   const [fields, setFields] = useState<FieldsState>({});
-  const [signatureUrl, setSignatureUrl] = useState<string | null>(null); // what we render
-  const [signaturePath, setSignaturePath] = useState<string | null>(null); // what we save as path
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
+  const [signaturePath, setSignaturePath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,12 +160,12 @@ export default function PharmacistDeclarationTab({
 
         if (!declarationForm) {
           if (!cancelled) {
-            setError(
-              "No Pharmacist Declaration form is configured for this service."
-            );
+            setError("No Pharmacist Declaration form is configured for this service.");
           }
           return;
         }
+
+        const schema: any[] = (declarationForm as any).schema || [];
 
         let initialFields: FieldsState = {};
         let initialSignatureUrl: string | null = null;
@@ -134,7 +177,12 @@ export default function PharmacistDeclarationTab({
             try {
               const parsed: DeclarationStorage = JSON.parse(raw);
               if (parsed && typeof parsed === "object") {
-                initialFields = parsed.fields || {};
+                // ✅ migrate possible old keyed storage into label storage
+                initialFields = migrateKeyedFieldsToLabelFields(
+                  schema,
+                  parsed.fields || {}
+                );
+
                 if (parsed.signatureUrl) {
                   initialSignatureUrl = parsed.signatureUrl;
                 } else if (parsed.signaturePath) {
@@ -155,18 +203,25 @@ export default function PharmacistDeclarationTab({
           setFields(initialFields);
           setSignatureUrl(initialSignatureUrl);
           setSignaturePath(initialSignaturePath);
+
+          // persist migrated fields immediately (so old keys disappear)
+          if (typeof window !== "undefined") {
+            const payload: DeclarationStorage = {
+              fields: initialFields,
+              signatureUrl: initialSignatureUrl,
+              signaturePath: initialSignaturePath,
+            };
+            window.localStorage.setItem(storageKey, JSON.stringify(payload));
+          }
         }
       } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message || "Failed to load declaration form");
-        }
+        if (!cancelled) setError(e?.message || "Failed to load declaration form");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
     load();
-
     return () => {
       cancelled = true;
     };
@@ -175,91 +230,24 @@ export default function PharmacistDeclarationTab({
   /* ------------- Load current user (for name, GPhC, signature) ------------- */
   useEffect(() => {
     let cancelled = false;
+
     const userId = getLoggedInUserIdFromLocal();
     if (!userId) return;
 
     async function loadUser() {
       try {
         const user = await getUserByIdApi(userId as string);
-        if (!cancelled) {
-          setCurrentUser(user);
-        }
+        if (!cancelled) setCurrentUser(user);
       } catch (err) {
         console.error("Failed to load current user for declaration:", err);
       }
     }
 
     loadUser();
-
     return () => {
       cancelled = true;
     };
   }, []);
-
-  /* ------------- Auto-fill pharmacist name & GPhC number ------------- */
-  useEffect(() => {
-    if (!form || !currentUser) return;
-
-    const schema: any[] = (form as any).schema || [];
-
-    let pharmacistKey: string | null = null;
-    let gphcKey: string | null = null;
-
-    for (const field of schema) {
-      if (!["text", "textarea"].includes(field.type)) continue;
-      const label = (field.data?.label || "").toLowerCase();
-      const key = (field.data?.key || "").toLowerCase();
-      const combined = `${label} ${key}`;
-
-      if (
-        !pharmacistKey &&
-        combined.includes("pharmacist") &&
-        combined.includes("name")
-      ) {
-        pharmacistKey = field.data?.key || field.data?.label || null;
-      }
-
-      if (!gphcKey && combined.includes("gphc")) {
-        gphcKey = field.data?.key || field.data?.label || null;
-      }
-
-      if (pharmacistKey && gphcKey) break;
-    }
-
-    setFields((prev) => {
-      const next: FieldsState = { ...prev };
-
-      // Build pharmacist display name
-      const pharmacistName =
-        currentUser.name ||
-        currentUser.fullName ||
-        `${currentUser.firstName || ""} ${
-          currentUser.lastName || ""
-        }`.trim() ||
-        currentUser.email ||
-        "";
-
-      if (pharmacistKey && !next[pharmacistKey] && pharmacistName) {
-        next[pharmacistKey] = pharmacistName;
-      }
-
-      if (gphcKey && !next[gphcKey] && currentUser.gphc_number) {
-        next[gphcKey] = currentUser.gphc_number;
-      }
-
-      // 🔹 NEW: immediately persist auto-filled values into localStorage
-      if (typeof window !== "undefined") {
-        const payload: DeclarationStorage = {
-          fields: next,
-          signatureUrl,
-          signaturePath,
-        };
-        window.localStorage.setItem(storageKey, JSON.stringify(payload));
-      }
-
-      return next;
-    });
-  }, [form, currentUser, storageKey, signatureUrl, signaturePath]);
 
   /* ------------- Signature from profile (read-only) ------------- */
   useEffect(() => {
@@ -272,7 +260,50 @@ export default function PharmacistDeclarationTab({
     setSignatureUrl(url);
   }, [currentUser]);
 
-  /* ---------------- Persist to localStorage on any manual change ---------------- */
+  /* ------------- Auto-fill pharmacist name & GPhC number (STORE BY LABEL) ------------- */
+  useEffect(() => {
+    if (!form || !currentUser) return;
+
+    const schema: any[] = (form as any).schema || [];
+
+    let pharmacistLabel: string | null = null;
+    let gphcLabel: string | null = null;
+
+    for (const field of schema) {
+      if (!["text", "textarea"].includes(field.type)) continue;
+
+      const labelRaw = String(field.data?.label || "").trim();
+      const keyRaw = String(field.data?.key || "").trim();
+      const combined = `${labelRaw} ${keyRaw}`.toLowerCase();
+
+      if (!pharmacistLabel && combined.includes("pharmacist") && combined.includes("name")) {
+        pharmacistLabel = labelRaw || null;
+      }
+      if (!gphcLabel && combined.includes("gphc")) {
+        gphcLabel = labelRaw || null;
+      }
+
+      if (pharmacistLabel && gphcLabel) break;
+    }
+
+    setFields((prev) => {
+      const next: FieldsState = { ...prev };
+
+      const pharmacistName = pickPharmacistName(currentUser);
+
+      if (pharmacistLabel && !next[pharmacistLabel] && pharmacistName) {
+        next[pharmacistLabel] = pharmacistName;
+      }
+
+      if (gphcLabel && !next[gphcLabel] && (currentUser as any).gphc_number) {
+        next[gphcLabel] = String((currentUser as any).gphc_number);
+      }
+
+      return next;
+    });
+  }, [form, currentUser]);
+
+  /* ---------------- Persist to localStorage on any change ---------------- */
   useEffect(() => {
     if (typeof window === "undefined") return;
     const payload: DeclarationStorage = {
@@ -283,8 +314,8 @@ export default function PharmacistDeclarationTab({
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
   }, [fields, signatureUrl, signaturePath, storageKey]);
 
-  function handleFieldChange(key: string, value: string) {
-    setFields((prev) => ({ ...prev, [key]: value }));
+  function handleFieldChange(storageFieldKey: string, value: string) {
+    setFields((prev) => ({ ...prev, [storageFieldKey]: value }));
   }
 
   /* ---------------- Render ---------------- */
@@ -305,60 +336,61 @@ export default function PharmacistDeclarationTab({
     );
   }
 
-  const simpleFields =
-    ((form as any).schema || []).filter((f: any) =>
-      ["text", "textarea"].includes(f.type)
-    ) || [];
+  const schema: any[] = (form as any).schema || [];
 
-  const signatureField = ((form as any).schema || []).find(
-    (f: any) => f.type === "signature"
-  );
+  const simpleFields =
+    schema.filter((f: any) => ["text", "textarea"].includes(f.type)) || [];
+
+  const signatureField = schema.find((f: any) => f.type === "signature");
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-neutral-500">
-        Form:{" "}
-        <span className="font-medium text-neutral-200">
-          {form.name}
-        </span>
+        Form: <span className="font-medium text-neutral-200">{form.name}</span>
       </p>
 
       {simpleFields.length > 0 && (
         <div className="space-y-3">
           {simpleFields.map((field: any, idx: number) => {
-            const key =
-              field.data?.key || field.data?.label || `field_${idx}`;
-            const label = field.data?.label || `Field ${idx + 1}`;
-            const value = fields[key] || "";
+            // stable react key
+            const reactKey = field.data?.key || field.data?.label || `field_${idx}`;
+
+            // ✅ STORAGE KEY = LABEL (fallback to key if label missing)
+            const storageFieldKey =
+              String(field.data?.label || "").trim() ||
+              String(field.data?.key || "").trim() ||
+              `field_${idx}`;
+
+            const label = String(field.data?.label || "").trim() || `Field ${idx + 1}`;
+            const value = fields[storageFieldKey] || "";
             const help = field.data?.help;
 
+            const commonClass =
+              "w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
+
             return (
-              <div key={key} className="space-y-1">
-                <p className="text-xs font-medium text-neutral-200">
-                  {label}
-                </p>
+              <div key={reactKey} className="space-y-1">
+                <p className="text-xs font-medium text-neutral-200">{label}</p>
+
                 {help && (
                   <p className="text-[11px] text-neutral-500 whitespace-pre-line mb-1">
                     {help}
                   </p>
                 )}
+
                 {field.type === "textarea" ? (
                   <textarea
                     value={value}
-                    onChange={(e) =>
-                      handleFieldChange(key, e.target.value)
-                    }
-                    className="w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500 min-h-[60px]"
+                    onChange={(e) => handleFieldChange(storageFieldKey, e.target.value)}
+                    className={`${commonClass} min-h-[60px]`}
                     placeholder={label}
                   />
                 ) : (
                   <input
                     type="text"
                     value={value}
-                    onChange={(e) =>
-                      handleFieldChange(key, e.target.value)
-                    }
-                    className="w-full rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500"
+                    onChange={(e) => handleFieldChange(storageFieldKey, e.target.value)}
+                    className={commonClass}
                     placeholder={label}
                   />
                 )}
@@ -373,17 +405,17 @@ export default function PharmacistDeclarationTab({
           <p className="text-xs font-medium text-neutral-200">
             {signatureField.data?.label || "Pharmacist Signature"}
           </p>
+
           {signatureField.data?.help && (
             <p className="text-[11px] text-neutral-500 whitespace-pre-line">
               {signatureField.data.help}
             </p>
           )}
+
           <p className="text-[11px] text-neutral-500">
             This signature is loaded from your profile and{" "}
-            <span className="font-semibold text-neutral-300">
-              cannot be changed here
-            </span>
-            . To update it, please edit your Profile.
+            <span className="font-semibold text-neutral-300">cannot be changed here</span>. To
+            update it, please edit your Profile.
           </p>
 
           <div className="border border-neutral-700 rounded-lg bg-neutral-950/70 p-3">
@@ -394,12 +426,13 @@ export default function PharmacistDeclarationTab({
                   src={signatureUrl}
                   alt="Pharmacist signature"
                   className="max-h-32 max-w-full object-contain"
+                  onError={() => setSignatureUrl(null)}
                 />
               </div>
             ) : (
               <div className="flex items-center justify-center h-40 bg-neutral-900 rounded-md border border-neutral-700 text-[11px] text-neutral-500 text-center px-4">
-                No signature is configured for your profile. Please contact
-                your admin or update your Profile to add a signature.
+                No signature is configured for your profile. Please contact your admin or update
+                your Profile to add a signature.
               </div>
             )}
           </div>

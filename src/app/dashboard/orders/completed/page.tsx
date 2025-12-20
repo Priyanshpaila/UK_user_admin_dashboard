@@ -45,6 +45,124 @@ function formatDateTime(value?: string | null) {
   });
 }
 
+function buildRemainingRecordRows(recordFields: Record<string, any>) {
+  const shouldSkipKey = (k: string) => {
+    const key = String(k || "")
+      .trim()
+      .toLowerCase();
+
+    // Skip date (already shown)
+    if (key === "date provided") return true;
+
+    // Skip A/B/C item patterns (already shown in Items supplied table)
+    if (/^(item|medicine)\s*[a-z]$/.test(key)) return true;
+    if (/^item\s*variation\s*[a-z]$/.test(key)) return true;
+    if (/^(quantity|qty)\s*[a-z]$/.test(key)) return true;
+    if (/^(strength|dose)\s*[a-z]$/.test(key)) return true;
+
+    return false;
+  };
+
+  return Object.entries(recordFields || {})
+    .filter(([k]) => !shouldSkipKey(k))
+    .map(([k, v]) => ({
+      label: String(k || "—"),
+      value: formatFieldValue(v),
+    }))
+    .filter((r) => r.value !== "—"); // optional: keep only meaningful rows
+}
+
+function drawKeyValueTable(
+  doc: jsPDF,
+  cursor: PdfCursor,
+  title: string,
+  rows: { label: string; value: string }[]
+) {
+  const pageWidth = getPageWidth(doc);
+  const x = MARGIN_X;
+  const w = pageWidth - 2 * MARGIN_X;
+
+  const colLabelW = w * 0.38;
+  const colValueW = w - colLabelW;
+
+  const headerH = 8;
+  const lineH = 4.2;
+  const padY = 2.5;
+  const padX = 2.2;
+
+  const drawHeader = () => {
+    ensureSpace(doc, cursor, headerH);
+
+    doc.setDrawColor(PDF_BORDER.r, PDF_BORDER.g, PDF_BORDER.b);
+    doc.setFillColor(PDF_CARD_BG.r, PDF_CARD_BG.g, PDF_CARD_BG.b);
+    doc.rect(x, cursor.y, w, headerH, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+
+    const ty = cursor.y + 5.4;
+    doc.text(title, x + padX, ty);
+
+    // vertical separator between label/value
+    doc.setLineWidth(0.3);
+    doc.line(x + colLabelW, cursor.y, x + colLabelW, cursor.y + headerH);
+
+    cursor.y += headerH;
+  };
+
+  if (!rows.length) return;
+
+  drawHeader();
+
+  rows.forEach((r, idx) => {
+    const label = String(r.label || "—");
+    const value = String(r.value || "—");
+
+    const labelLines = doc.splitTextToSize(label, colLabelW - padX * 2);
+    const valueLines = doc.splitTextToSize(value, colValueW - padX * 2);
+
+    const maxLines = Math.max(labelLines.length, valueLines.length);
+    const rowH = padY + maxLines * lineH + padY;
+
+    const pageHeight = getPageHeight(doc);
+    if (cursor.y + rowH > pageHeight - 18) {
+      addPageWithHeader(doc, cursor);
+      drawHeader();
+    }
+
+    // zebra background
+    doc.setDrawColor(PDF_BORDER.r, PDF_BORDER.g, PDF_BORDER.b);
+    if (idx % 2 === 0) doc.setFillColor(255, 255, 255);
+    else doc.setFillColor(248, 250, 252);
+
+    doc.rect(x, cursor.y, w, rowH, "FD");
+
+    // vertical separator
+    doc.setLineWidth(0.3);
+    doc.line(x + colLabelW, cursor.y, x + colLabelW, cursor.y + rowH);
+
+    // text
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+
+    const textTop = cursor.y + padY + 3.2;
+
+    labelLines.forEach((ln: string, i: number) => {
+      doc.text(ln, x + padX, textTop + i * lineH);
+    });
+
+    valueLines.forEach((ln: string, i: number) => {
+      doc.text(ln, x + colLabelW + padX, textTop + i * lineH);
+    });
+
+    cursor.y += rowH;
+  });
+
+  cursor.y += 6;
+}
+
 type PdfHeaderState = {
   title: string;
   subtitle?: string;
@@ -1466,42 +1584,83 @@ function writeRecordSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
     return;
   }
 
-  const fields: Record<string, string> = record.fields || {};
-  const entries = Object.entries(fields);
+  const recordFields: Record<string, any> = (record?.fields as any) || {};
 
-  if (!entries.length) {
-    ensureSpace(doc, cursor);
-    doc.text("Record of Supply fields are empty.", MARGIN_X, cursor.y);
-    cursor.y += 6;
-    return;
-  }
-
-  entries.forEach(([key, value]) => {
-    const labelLines = doc.splitTextToSize(`${key}:`, 60);
-    const valueLines = doc.splitTextToSize(
-      value || "—",
-      getPageWidth(doc) - MARGIN_X - 60 - 10
+  // Date provided (match exportRecordPdf logic)
+  const recordDateStr =
+    recordFields["Date provided"] ||
+    recordFields["Date Provided"] ||
+    formatDateOnly(
+      (order as any).completed_at ||
+        (order as any).completedAt ||
+        (order as any).createdAt ||
+        (order as any).created_at ||
+        new Date().toISOString()
     );
-    const numLines = Math.max(labelLines.length, valueLines.length);
 
-    for (let i = 0; i < numLines; i++) {
-      ensureSpace(doc, cursor);
-      const l = labelLines[i] || "";
-      const v = valueLines[i] || "";
-      if (l) {
-        doc.setFontSize(9);
-        doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
-        doc.text(l, MARGIN_X, cursor.y);
-      }
-      if (v) {
-        doc.setFontSize(10);
-        doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-        doc.text(v, MARGIN_X + 60, cursor.y);
-      }
-      cursor.y += 4.2;
-    }
-    cursor.y += 2;
-  });
+  // ✅ Items: prefer recordFields; fallback to order/meta
+  const itemsFromRecordFields =
+    extractItemsFromRecordFieldsForPdf(recordFields);
+  const orderedItems = itemsFromRecordFields.length
+    ? itemsFromRecordFields
+    : getOrderedItemsForPdf(order);
+
+  // --- Date provided line ---
+  ensureSpace(doc, cursor, 8);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+  doc.text(
+    `Date provided: ${String(recordDateStr || "—")}`,
+    MARGIN_X,
+    cursor.y
+  );
+  cursor.y += 8;
+
+  // --- Items supplied table (same as Record of Supply PDF) ---
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
+  doc.text("Items supplied", MARGIN_X, cursor.y);
+  cursor.y += 5;
+
+  drawItemsSuppliedTable(doc, cursor, orderedItems);
+
+  // --- Remaining Record of Supply fields (table format) ---
+  const shouldSkipKey = (k: string) => {
+    const key = String(k || "")
+      .trim()
+      .toLowerCase();
+
+    // Skip date provided because we already printed it above
+    if (key === "date provided") return true;
+
+    // Skip Item A / Item variation A / Quantity A patterns (already in items table)
+    if (/^(item|medicine)\s*[a-z]$/.test(key)) return true;
+    if (/^item\s*variation\s*[a-z]$/.test(key)) return true;
+    if (/^(quantity|qty)\s*[a-z]$/.test(key)) return true;
+    if (/^(strength|dose)\s*[a-z]$/.test(key)) return true;
+
+    return false;
+  };
+
+  const remainingRows = Object.entries(recordFields)
+    .filter(([k, v]) => !shouldSkipKey(k))
+    .map(([k, v]) => ({
+      label: String(k || "—"),
+      value: formatFieldValue(v),
+    }))
+    .filter((r) => r.value !== "—"); // optional: drop empty-ish rows
+
+  if (remainingRows.length) {
+    drawKeyValueTable(doc, cursor, "Additional details", remainingRows);
+  } else {
+    ensureSpace(doc, cursor, 6);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.text("No additional record details were captured.", MARGIN_X, cursor.y);
+    cursor.y += 6;
+  }
 }
 
 function finalisePdf(
@@ -1885,6 +2044,12 @@ async function exportRecordPdf(
 
   // ✅ Proper table
   drawItemsSuppliedTable(doc, cursor, orderedItems);
+
+  const remainingRows = buildRemainingRecordRows(recordFields);
+
+  if (remainingRows.length) {
+    drawKeyValueTable(doc, cursor, "Additional details", remainingRows);
+  }
 
   /* ----------------- Pharmacist Declaration ----------------- */
 
@@ -2504,6 +2669,51 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
   );
 }
 
+function OrderItemsListCard({ order }: { order: OrderDto }) {
+  const items = useMemo(() => getOrderedItemsForPdf(order), [order]);
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+      <p className="mb-2 text-xs font-semibold text-neutral-200">
+        Items in this order
+      </p>
+
+      {items.length === 0 ? (
+        <p className="text-[11px] text-neutral-500">
+          No items were recorded for this order.
+        </p>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-neutral-800">
+          <div className="grid grid-cols-12 bg-neutral-900/70 px-2 py-2 text-[10px] uppercase tracking-wide text-neutral-500">
+            <div className="col-span-6">Item</div>
+            <div className="col-span-4">Variation</div>
+            <div className="col-span-2 text-right">Qty</div>
+          </div>
+
+          <div className="divide-y divide-neutral-800 bg-neutral-950/40">
+            {items.map((it, idx) => (
+              <div
+                key={`${it.name}-${it.variation || ""}-${it.qty}-${idx}`}
+                className="grid grid-cols-12 px-2 py-2 text-[11px] text-neutral-200"
+              >
+                <div className="col-span-6 pr-2">
+                  <p className="line-clamp-2 text-neutral-100">{it.name}</p>
+                </div>
+                <div className="col-span-4 pr-2 text-neutral-300">
+                  {it.variation || "—"}
+                </div>
+                <div className="col-span-2 text-right text-neutral-100">
+                  {it.qty || "—"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ----------------- Types for clinical section tabs ----------------- */
 
 type DetailSection = "raf" | "advice" | "declaration" | "record";
@@ -2593,9 +2803,6 @@ export default function Page() {
     });
     return counts;
   }, [orders]);
-
- 
-
 
   useEffect(() => {
     let cancelled = false;
@@ -3190,6 +3397,7 @@ export default function Page() {
 
       const fields: Record<string, any> = record.fields || {};
       const entries = Object.entries(fields);
+
       if (!entries.length)
         return (
           <p className="text-xs text-neutral-400">
@@ -3198,14 +3406,28 @@ export default function Page() {
         );
 
       return (
-        <dl className="space-y-2 text-[11px] text-neutral-200">
-          {entries.map(([key, value]) => (
-            <div key={key} className="flex gap-2">
-              <dt className="w-32 shrink-0 text-neutral-400">{key}</dt>
-              <dd className="flex-1">{formatFieldValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="overflow-hidden rounded-lg border border-neutral-800">
+          <div className="grid grid-cols-12 bg-neutral-900/70 px-2 py-2 text-[10px] uppercase tracking-wide text-neutral-500">
+            <div className="col-span-5">Field</div>
+            <div className="col-span-7">Value</div>
+          </div>
+          <div className="divide-y divide-neutral-800 bg-neutral-950/40">
+            {entries.map(([key, value], idx) => (
+              <div
+                key={key}
+                className={[
+                  "grid grid-cols-12 px-2 py-2 text-[11px]",
+                  idx % 2 === 0 ? "bg-transparent" : "bg-neutral-900/20",
+                ].join(" ")}
+              >
+                <div className="col-span-5 pr-2 text-neutral-400">{key}</div>
+                <div className="col-span-7 text-neutral-200 break-words">
+                  {formatFieldValue(value)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       );
     }
 
@@ -3247,9 +3469,7 @@ export default function Page() {
         )}
 
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative w-full sm:max-w-xs">
-
-          </div>
+          <div className="relative w-full sm:max-w-xs"></div>
           <div className="flex items-center gap-2 text-[11px] text-neutral-400">
             <span>
               Page{" "}
@@ -3635,6 +3855,7 @@ export default function Page() {
 
             <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
               <PatientProfileCard user={orderedByUser} />
+              <OrderItemsListCard order={selectedOrder} />
 
               <div className="rounded-xl border border-neutral-800 bg-neutral-900/40">
                 <div className="flex gap-1 border-b border-neutral-800 px-3 pt-2">
