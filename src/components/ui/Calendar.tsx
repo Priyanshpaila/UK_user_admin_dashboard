@@ -57,6 +57,10 @@ const localizer = dateFnsLocalizer({
 
 /* ----------------- small helpers ----------------- */
 
+function isPendingStatus(status?: string | null) {
+  return String(status || "").toLowerCase() === "pending";
+}
+
 function formatDateTime(value?: string | Date | null) {
   if (!value) return "—";
   const d = value instanceof Date ? value : new Date(value);
@@ -126,7 +130,6 @@ function statusPillClass(status: string) {
     return "bg-orange-500/15 text-orange-300 border-orange-500/40";
   if (s === "rescheduled")
     return "bg-violet-500/15 text-violet-300 border-violet-500/40";
-
   if (s === "approved")
     return "bg-emerald-500/15 text-emerald-300 border-emerald-500/40";
 
@@ -305,7 +308,7 @@ const CustomToolbar: React.FC<
   );
 };
 
-/* ------------------- Month Date Header (LESS MESSY) ------------------- */
+/* ------------------- Month Date Header (PENDING ONLY) ------------------- */
 
 type MonthHeaderProps = {
   label: string;
@@ -320,13 +323,9 @@ const MonthDateHeaderCompact: React.FC<MonthHeaderProps> = ({
 }) => {
   const key = format(date, "yyyy-MM-dd");
   const day = summaryByDate[key];
-  const total = day?.total || 0;
-  const byStatus = (day?.byStatus || {}) as Record<string, number>;
 
-  const top = Object.entries(byStatus)
-    .filter(([, c]) => (c || 0) > 0)
-    .sort((a, b) => (b[1] as number) - (a[1] as number))
-    .slice(0, 3);
+  // We are already storing ONLY pending in monthSummary, so this is pending-only.
+  const total = day?.total || 0;
 
   return (
     <div className="pt-1 px-1">
@@ -335,36 +334,26 @@ const MonthDateHeaderCompact: React.FC<MonthHeaderProps> = ({
           {label}
         </span>
 
-        {total > 0 && (
-          <span className="text-[10px] text-neutral-400">{total}</span>
-        )}
+        {total > 0 && <span className="text-[10px] text-neutral-400">{total}</span>}
       </div>
 
       {total > 0 && (
         <div className="mt-1 flex flex-wrap items-center gap-1">
-          {top.map(([st, c]) => (
+          <span
+            title={`pending: ${total}`}
+            className="inline-flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/30 px-1.5 py-0.5 text-[9px] text-neutral-300"
+          >
             <span
-              key={st}
-              title={`${st.replace(/[-_]/g, " ")}: ${c}`}
-              className="inline-flex items-center gap-1 rounded-full border border-neutral-800 bg-neutral-950/30 px-1.5 py-0.5 text-[9px] text-neutral-300"
-            >
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: getStatusColorHex(st) }}
-              />
-              {c}
-            </span>
-          ))}
-
-          {Object.entries(byStatus).filter(([, c]) => (c || 0) > 0).length >
-            3 && <span className="text-[9px] text-neutral-500">…</span>}
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: getStatusColorHex("pending") }}
+            />
+            {total}
+          </span>
         </div>
       )}
 
       {total > 0 && (
-        <div className="mt-1 text-[10px] text-neutral-500">
-          Click day to open list
-        </div>
+        <div className="mt-1 text-[10px] text-neutral-500">Click day to open list</div>
       )}
     </div>
   );
@@ -382,16 +371,16 @@ export default function CalendarWidget() {
   const [currentView, setCurrentView] = useState<View>(Views.MONTH);
   const [visible, setVisible] = useState(true);
 
-  // month summary
+  // month summary (pending only)
   const [monthSummary, setMonthSummary] = useState<AppointmentsCalendarSummaryDay[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // day list popup (new)
+  // day list popup
   const [dayListOpen, setDayListOpen] = useState(false);
   const [dayListDate, setDayListDate] = useState<Date | null>(null);
 
-  // detail modal state (YOUR OLD MODAL)
+  // detail modal
   const [selectedEvent, setSelectedEvent] = useState<Appointment | null>(null);
   const [selectedAppointment, setSelectedAppointment] =
     useState<AppointmentDto | null>(null);
@@ -409,7 +398,7 @@ export default function CalendarWidget() {
     return map;
   }, [monthSummary]);
 
-  // 🔄 Refetch appointments when month changes
+  // 🔄 Refetch appointments when month changes (PENDING ONLY)
   useEffect(() => {
     let cancelled = false;
 
@@ -426,13 +415,36 @@ export default function CalendarWidget() {
         const res = await getAppointmentsCalendarSummaryApi({ from, to });
         if (cancelled) return;
 
-        const summary = res.data || [];
-        setMonthSummary(summary);
+        const rawSummary = res.data || [];
 
-        // map to react-big-calendar events (for week/day/agenda)
+        // ✅ FILTER TO PENDING ONLY (both month summary + events)
+        const pendingSummary: AppointmentsCalendarSummaryDay[] = rawSummary
+          .map((day: AppointmentsCalendarSummaryDay) => {
+            const pendingAppointments = (day.appointments || []).filter((a) =>
+              isPendingStatus(a.status)
+            );
+
+            const pendingCount = pendingAppointments.length;
+
+            return {
+              ...day,
+              total: pendingCount,
+              byStatus: { pending: pendingCount },
+              appointments: pendingAppointments,
+            };
+          })
+          // optional: keep empty days too (for month grid), but it's okay either way.
+          // If you want to keep all days so headers show 0 naturally, keep them.
+          // If you want to hide days with 0 in summary array, uncomment next line:
+          // .filter((d) => (d.total || 0) > 0)
+          ;
+
+        setMonthSummary(pendingSummary);
+
+        // map to react-big-calendar events (for week/day/agenda) - pending only
         const mapped: Appointment[] = [];
 
-        summary.forEach((day: AppointmentsCalendarSummaryDay) => {
+        pendingSummary.forEach((day: AppointmentsCalendarSummaryDay) => {
           const appointmentsForDay = day.appointments || [];
           appointmentsForDay.forEach((appt) => {
             const start = new Date(appt.start_at);
@@ -446,7 +458,7 @@ export default function CalendarWidget() {
               start,
               end,
               doctor: undefined,
-              type: appt.status,
+              type: "pending", // enforce pending
               notes: undefined,
               appointmentId: appt._id,
             } as Appointment & { appointmentId: string });
@@ -502,9 +514,7 @@ export default function CalendarWidget() {
 
         const [user, order] = await Promise.all([
           appt.user_id ? getUserByIdApi(appt.user_id) : Promise.resolve(null),
-          appt.order_id
-            ? getOrderByIdApi(appt.order_id)
-            : Promise.resolve(null),
+          appt.order_id ? getOrderByIdApi(appt.order_id) : Promise.resolve(null),
         ]);
 
         setSelectedUser(user);
@@ -517,7 +527,7 @@ export default function CalendarWidget() {
     })();
   };
 
-  // Month: clicking a day opens the list dialog (instead of showing pills)
+  // Month: clicking a day opens the list dialog
   const onSelectSlot = (slot: SlotInfo) => {
     if (!isMonth) return;
     const d = new Date(slot.start);
@@ -529,12 +539,9 @@ export default function CalendarWidget() {
   const daySummary = dayKey ? summaryByDate[dayKey] : undefined;
   const dayAppointments = daySummary?.appointments || [];
 
-  // 💅 Style events by status (ONLY for week/day/agenda; month has no events)
+  // style events by status (pending only)
   const eventStyleGetter = (event: Appointment) => {
-    const e: any = event;
-    const status: string = (e.type as string) || "pending";
-    const accent = getStatusColorHex(status);
-
+    const accent = getStatusColorHex("pending");
     return {
       style: {
         borderRadius: 10,
@@ -552,31 +559,21 @@ export default function CalendarWidget() {
   // Month view shows summary-only, so hide events
   const visibleEvents = isMonth ? [] : events;
 
-  // 📊 header summary
-  const { totalAppointments, statusTotals } = useMemo(() => {
+  // 📊 header summary (pending only)
+  const { totalAppointments, pendingCount } = useMemo(() => {
     let total = 0;
-    const statusMap: Record<string, number> = {};
+    let pending = 0;
 
     monthSummary.forEach((day) => {
-      total += typeof day.total === "number" ? day.total : 0;
-
-      const by = (day.byStatus || {}) as Record<string, number>;
-      Object.entries(by).forEach(([status, count]) => {
-        statusMap[status] = (statusMap[status] ?? 0) + (count || 0);
-      });
+      const t = typeof day.total === "number" ? day.total : 0;
+      total += t;
+      pending += t;
     });
 
-    return { totalAppointments: total, statusTotals: statusMap };
+    return { totalAppointments: total, pendingCount: pending };
   }, [monthSummary]);
 
-  const legend = [
-    { label: "Pending", color: getStatusColorHex("pending") },
-    { label: "Confirmed", color: getStatusColorHex("confirmed") },
-    { label: "Cancelled", color: getStatusColorHex("cancelled") },
-    { label: "Completed", color: getStatusColorHex("completed") },
-    { label: "No-show", color: getStatusColorHex("no-show") },
-    { label: "Rescheduled", color: getStatusColorHex("rescheduled") },
-  ];
+  const legend = [{ label: "Pending", color: getStatusColorHex("pending") }];
 
   return (
     <div className="w-full">
@@ -589,26 +586,25 @@ export default function CalendarWidget() {
               <span>Appointments Calendar</span>
             </div>
             <span className="text-xs text-neutral-400">
-              {format(currentDate, "MMMM yyyy")}
+              {format(currentDate, "MMMM yyyy")} (Pending only)
             </span>
           </div>
 
           <div className="flex flex-wrap items-center justify-start sm:justify-end gap-2 text-[11px] sm:text-xs">
             <span className="inline-flex items-center gap-1 rounded-full bg-neutral-900/80 border border-neutral-700 px-3 py-1 text-neutral-200">
-              <span className="h-2 w-2 rounded-full bg-blue-400" />
-              {totalAppointments} appointments this month
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+              {totalAppointments} pending this month
             </span>
-            {Object.entries(statusTotals).map(([status, count]) => (
-              <span
-                key={status}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 ${statusPillClass(
-                  status
-                )}`}
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                {status.replace(/[-_]/g, " ")} · {count}
-              </span>
-            ))}
+
+            {/* ✅ Show only pending chip */}
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 ${statusPillClass(
+                "pending"
+              )}`}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              pending · {pendingCount}
+            </span>
           </div>
         </div>
 
@@ -621,7 +617,7 @@ export default function CalendarWidget() {
 
         {loading && (
           <div className="mb-3 text-[11px] sm:text-xs text-neutral-400">
-            Loading appointments for {format(currentDate, "MMMM yyyy")}…
+            Loading pending appointments for {format(currentDate, "MMMM yyyy")}…
           </div>
         )}
 
@@ -644,7 +640,7 @@ export default function CalendarWidget() {
               onSelectEvent={handleSelectEvent}
               selectable={isMonth}
               onSelectSlot={onSelectSlot}
-              popup={!isMonth} // ✅ no +more in month
+              popup={!isMonth}
               length={1}
               eventPropGetter={(evt) => eventStyleGetter(evt as Appointment)}
               components={{
@@ -657,10 +653,7 @@ export default function CalendarWidget() {
                 ),
                 month: {
                   dateHeader: (props: any) => (
-                    <MonthDateHeaderCompact
-                      {...props}
-                      summaryByDate={summaryByDate}
-                    />
+                    <MonthDateHeaderCompact {...props} summaryByDate={summaryByDate} />
                   ),
                 },
               }}
@@ -681,7 +674,7 @@ export default function CalendarWidget() {
           </div>
         </div>
 
-        {/* Legend */}
+        {/* Legend (pending only) */}
         <div className="mt-3 flex flex-wrap gap-3 text-[10px] sm:text-[11px] text-neutral-400">
           {legend.map((item) => (
             <div key={item.label} className="flex items-center gap-1.5">
@@ -696,12 +689,12 @@ export default function CalendarWidget() {
 
         {isMonth && (
           <div className="mt-2 text-[11px] text-neutral-500">
-            Month view is summary-only. Click any day to open the day list.
+            Month view is summary-only (pending). Click any day to open the day list.
           </div>
         )}
       </div>
 
-      {/* ---------------- Day List Popup (NEW, simple) ---------------- */}
+      {/* ---------------- Day List Popup (pending only by data) ---------------- */}
       <Dialog
         open={dayListOpen}
         onOpenChange={(open: boolean) => {
@@ -730,46 +723,42 @@ export default function CalendarWidget() {
                     {format(dayListDate, "dd MMM yyyy")}
                   </p>
                   <p className="text-[11px] text-neutral-400 mt-1">
-                    {(daySummary?.total || 0)} appointments
+                    {(daySummary?.total || 0)} pending appointments
                   </p>
                 </div>
 
+                {/* only pending chip */}
                 <div className="flex flex-wrap gap-2 text-[11px]">
-                  {Object.entries((daySummary?.byStatus || {}) as any)
-                    .filter(([, c]) => (c as number) > 0)
-                    .sort((a, b) => (b[1] as number) - (a[1] as number))
-                    .map(([st, c]) => (
+                  {(daySummary?.total || 0) > 0 && (
+                    <span
+                      className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${statusPillClass(
+                        "pending"
+                      )}`}
+                    >
                       <span
-                        key={st}
-                        className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 ${statusPillClass(
-                          st
-                        )}`}
-                      >
-                        <span
-                          className="h-1.5 w-1.5 rounded-full"
-                          style={{ backgroundColor: getStatusColorHex(st) }}
-                        />
-                        {st.replace(/[-_]/g, " ")} · {c as number}
-                      </span>
-                    ))}
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: getStatusColorHex("pending") }}
+                      />
+                      pending · {daySummary?.total || 0}
+                    </span>
+                  )}
                 </div>
               </div>
 
               <div className="mt-4 space-y-2">
                 {dayAppointments.length === 0 ? (
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-sm text-neutral-400">
-                    No appointments on this day.
+                    No pending appointments on this day.
                   </div>
                 ) : (
                   dayAppointments
                     .slice()
                     .sort(
                       (a, b) =>
-                        new Date(a.start_at).getTime() -
-                        new Date(b.start_at).getTime()
+                        new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
                     )
                     .map((appt) => {
-                      const st = appt.status || "pending";
+                      const st = "pending";
                       const start = new Date(appt.start_at);
                       const end = new Date(start.getTime() + 15 * 60 * 1000);
 
@@ -778,7 +767,6 @@ export default function CalendarWidget() {
                           key={appt._id}
                           type="button"
                           onClick={() => {
-                            // close day list and open your existing modal
                             setDayListOpen(false);
                             setDayListDate(null);
 
@@ -799,7 +787,7 @@ export default function CalendarWidget() {
                             <div className="flex items-center gap-2">
                               <span
                                 className="h-2.5 w-2.5 rounded-full"
-                                style={{ backgroundColor: getStatusColorHex(st) }}
+                                style={{ backgroundColor: getStatusColorHex("pending") }}
                               />
                               <span className="text-white font-semibold text-sm">
                                 {formatTime(appt.start_at)}
@@ -829,7 +817,7 @@ export default function CalendarWidget() {
         )}
       </Dialog>
 
-      {/* --------- BIG DETAIL MODAL (YOUR OLD MODAL - UNCHANGED) --------- */}
+      {/* --------- BIG DETAIL MODAL (UNCHANGED) --------- */}
       <Dialog
         open={!!selectedEvent}
         onOpenChange={(open: boolean) => {
@@ -985,9 +973,7 @@ export default function CalendarWidget() {
                             </p>
                             <p className="text-[10px] sm:text-[11px] text-neutral-400 flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
                               {selectedUser.gender && (
-                                <span className="capitalize">
-                                  {selectedUser.gender}
-                                </span>
+                                <span className="capitalize">{selectedUser.gender}</span>
                               )}
                               {selectedUser._id && (
                                 <>
@@ -1006,18 +992,14 @@ export default function CalendarWidget() {
                           {selectedUser.email && (
                             <div className="inline-flex items-center gap-1">
                               <Mail className="h-3 w-3 text-neutral-500" />
-                              <span className="break-all">
-                                {selectedUser.email}
-                              </span>
+                              <span className="break-all">{selectedUser.email}</span>
                             </div>
                           )}
-                          {(selectedUser.phone ||
-                            (selectedUser as any).phoneNumber) && (
+                          {(selectedUser.phone || (selectedUser as any).phoneNumber) && (
                             <div className="inline-flex items-center gap-1">
                               <Phone className="h-3 w-3 text-neutral-500" />
                               <span>
-                                {selectedUser.phone ||
-                                  (selectedUser as any).phoneNumber}
+                                {selectedUser.phone || (selectedUser as any).phoneNumber}
                               </span>
                             </div>
                           )}
@@ -1043,7 +1025,7 @@ export default function CalendarWidget() {
                           <div>
                             <dt className="text-neutral-500">City</dt>
                             <dd className="text-neutral-100">
-                             { (selectedUser as any).city || "—"}
+                              {(selectedUser as any).city || "—"}
                             </dd>
                           </div>
                           <div>
@@ -1093,25 +1075,14 @@ export default function CalendarWidget() {
 
                     <div className="text-[10px] sm:text-[11px] text-neutral-300 pt-1 space-y-1">
                       <p>
-                        <span className="font-semibold text-neutral-400">
-                          Date:
-                        </span>{" "}
-                        {formatDateOnly(
-                          selectedAppointment?.start_at || selectedEvent.start
-                        )}
+                        <span className="font-semibold text-neutral-400">Date:</span>{" "}
+                        {formatDateOnly(selectedAppointment?.start_at || selectedEvent.start)}
                       </p>
                       <p className="flex items-center gap-1">
                         <Clock className="h-3 w-3 text-neutral-500" />
-                        <span className="font-semibold text-neutral-400">
-                          Time:
-                        </span>{" "}
-                        {formatTime(
-                          selectedAppointment?.start_at || selectedEvent.start
-                        )}{" "}
-                        –{" "}
-                        {formatTime(
-                          selectedAppointment?.end_at || selectedEvent.end
-                        )}
+                        <span className="font-semibold text-neutral-400">Time:</span>{" "}
+                        {formatTime(selectedAppointment?.start_at || selectedEvent.start)} –{" "}
+                        {formatTime(selectedAppointment?.end_at || selectedEvent.end)}
                       </p>
                       {selectedAppointment && (
                         <>
@@ -1131,8 +1102,7 @@ export default function CalendarWidget() {
                       )}
                     </div>
 
-                    {(selectedAppointment?.join_url ||
-                      selectedAppointment?.host_url) && (
+                    {(selectedAppointment?.join_url || selectedAppointment?.host_url) && (
                       <div className="pt-3 flex flex-wrap gap-2">
                         {selectedAppointment?.join_url && (
                           <Button
@@ -1220,10 +1190,7 @@ export default function CalendarWidget() {
                             )}`}
                           >
                             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                            {String((selectedOrder as any).status).replace(
-                              /[-_]/g,
-                              " "
-                            )}
+                            {String((selectedOrder as any).status).replace(/[-_]/g, " ")}
                           </span>
                         )}
                       </div>
@@ -1231,33 +1198,27 @@ export default function CalendarWidget() {
                       <div className="mt-3">
                         {(selectedOrder as any).meta?.items?.length ? (
                           <div className="space-y-1">
-                            {(selectedOrder as any).meta.items.map(
-                              (it: any, idx: number) => (
-                                <div
-                                  key={idx}
-                                  className="flex items-center justify-between text-[11px] py-1.5 border-b border-neutral-800/70 last:border-none"
-                                >
-                                  <div className="flex flex-col">
-                                    <span className="font-medium text-white">
-                                      {it.name}
-                                    </span>
-                                    <span className="text-[10px] sm:text-[11px] text-neutral-400">
-                                      {it.variation ||
-                                        it.variations ||
-                                        "Standard"}
-                                    </span>
-                                  </div>
-                                  <div className="text-right">
-                                    <span className="block text-[10px] sm:text-[11px] text-neutral-400">
-                                      Qty: {it.qty}
-                                    </span>
-                                    <span className="block text-[10px] sm:text-[11px] text-neutral-300">
-                                      {formatMoney(it.totalMinor)}
-                                    </span>
-                                  </div>
+                            {(selectedOrder as any).meta.items.map((it: any, idx: number) => (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between text-[11px] py-1.5 border-b border-neutral-800/70 last:border-none"
+                              >
+                                <div className="flex flex-col">
+                                  <span className="font-medium text-white">{it.name}</span>
+                                  <span className="text-[10px] sm:text-[11px] text-neutral-400">
+                                    {it.variation || it.variations || "Standard"}
+                                  </span>
                                 </div>
-                              )
-                            )}
+                                <div className="text-right">
+                                  <span className="block text-[10px] sm:text-[11px] text-neutral-400">
+                                    Qty: {it.qty}
+                                  </span>
+                                  <span className="block text-[10px] sm:text-[11px] text-neutral-300">
+                                    {formatMoney(it.totalMinor)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         ) : (
                           <p className="text-[10px] sm:text-xs text-neutral-500">
