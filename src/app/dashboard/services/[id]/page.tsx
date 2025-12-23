@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { useRouter, useParams } from "next/navigation";
 import {
   Loader2,
@@ -11,13 +17,14 @@ import {
   ArrowLeft,
   GripVertical,
   Trash2,
+  ChevronDown,
 } from "lucide-react";
 import {
   getServiceApi,
   getBackendBase,
   getMedicinesApi,
   createServiceMedicineApi,
-  getServiceMedicinesByServiceApi,
+  deleteServiceMedicineApi, // ✅ unlink
 } from "../../../../api";
 import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { toast, ToastContainer } from "react-toastify";
@@ -135,6 +142,20 @@ function humanizeType(value: string) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function unwrapArray<T = any>(res: any): T[] {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+
+  // common shapes:
+  if (Array.isArray(res.data)) return res.data;
+  if (Array.isArray(res.data?.data)) return res.data.data; // { data: { data: [] } }
+  if (Array.isArray(res.data?.docs)) return res.data.docs; // paginate libs
+  if (Array.isArray(res.docs)) return res.docs;
+  if (Array.isArray(res.items)) return res.items;
+
+  return [];
 }
 
 /* --------------------- Shared UI components ---------------------- */
@@ -334,6 +355,265 @@ type ServiceMedicineRow = {
   active: boolean;
 };
 
+/**
+ * ✅ Linked mapping normalized:
+ * We need BOTH medicineId and service_medicine_id (linkId) for unlink.
+ */
+type LinkedServiceMedicine = {
+  medicineId: string;
+  linkId: string; // service_medicine_id
+  name?: string;
+  sku?: string;
+  strength?: string | null;
+};
+
+/**
+ * ✅ Robust normalizer for linked API response.
+ * Works with common shapes.
+ */
+function normalizeLinkedServiceMedicines(input: any): LinkedServiceMedicine[] {
+  const arr = Array.isArray(input) ? input : input?.data || [];
+  if (!Array.isArray(arr)) return [];
+
+  const out: LinkedServiceMedicine[] = [];
+
+  for (const item of arr) {
+    const serviceMedicineId =
+      typeof item?.service_medicine_id === "string"
+        ? item.service_medicine_id
+        : typeof item?.serviceMedicineId === "string"
+        ? item.serviceMedicineId
+        : "";
+
+    const medicineIdFromExplicit =
+      typeof item?.medicine_id === "string"
+        ? item.medicine_id
+        : typeof item?.medicineId === "string"
+        ? item.medicineId
+        : "";
+
+    const medicineIdFromNested =
+      typeof item?.medicine?._id === "string" ? item.medicine._id : "";
+
+    const rawId = typeof item?._id === "string" ? item._id : "";
+
+    let medicineId = "";
+    let linkId = "";
+
+    if (serviceMedicineId) {
+      linkId = serviceMedicineId;
+      medicineId = medicineIdFromExplicit || rawId || medicineIdFromNested;
+    } else if (medicineIdFromExplicit) {
+      medicineId = medicineIdFromExplicit;
+      linkId = rawId;
+    } else if (medicineIdFromNested) {
+      medicineId = medicineIdFromNested;
+      linkId = rawId;
+    } else {
+      medicineId = rawId;
+      linkId = "";
+    }
+
+    const name =
+      (typeof item?.name === "string" && item.name) ||
+      (typeof item?.medicine?.name === "string" && item.medicine.name) ||
+      undefined;
+
+    const sku =
+      (typeof item?.sku === "string" && item.sku) ||
+      (typeof item?.medicine?.sku === "string" && item.medicine.sku) ||
+      undefined;
+
+    const strength =
+      typeof item?.strength === "string"
+        ? item.strength
+        : typeof item?.medicine?.strength === "string"
+        ? item.medicine.strength
+        : null;
+
+    if (medicineId) {
+      out.push({
+        medicineId,
+        linkId,
+        name,
+        sku,
+        strength,
+      });
+    }
+  }
+
+  // de-dupe by medicineId (prefer one with linkId)
+  const map = new Map<string, LinkedServiceMedicine>();
+  for (const row of out) {
+    const prev = map.get(row.medicineId);
+    if (!prev) {
+      map.set(row.medicineId, row);
+      continue;
+    }
+    if (!prev.linkId && row.linkId) {
+      map.set(row.medicineId, row);
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/* -------------------- Custom Dropdown (supports Unlink button) -------------------- */
+
+function MedicineDropdown({
+  value,
+  onChange,
+  allMedicines,
+  linkedByMedicineId,
+  linkedIdsNoLinkId,
+  selectedIds,
+  onRequestUnlink,
+  unlinkingMedicineId,
+}: {
+  value: string;
+  onChange: (medicineId: string) => void;
+  allMedicines: Medicine[];
+  linkedByMedicineId: Map<string, string>;
+  linkedIdsNoLinkId: Set<string>;
+  selectedIds: Set<string>;
+  onRequestUnlink: (medicineId: string) => void;
+  unlinkingMedicineId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const selected = useMemo(
+    () => allMedicines.find((m) => m._id === value) || null,
+    [allMedicines, value]
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const el = rootRef.current;
+      if (!el) return;
+      if (!el.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const renderLabel = (m: Medicine) =>
+    `${m.name}${m.strength ? ` (${m.strength})` : ""} – ${m.sku}`;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 flex items-center justify-between gap-2"
+      >
+        <span
+          className={`truncate ${
+            selected ? "text-neutral-100" : "text-neutral-500"
+          }`}
+        >
+          {selected ? renderLabel(selected) : "Select product…"}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 text-neutral-400 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute z-[55] mt-2 w-full rounded-xl border border-neutral-800 bg-neutral-950 shadow-[0_18px_55px_rgba(0,0,0,0.9)] overflow-hidden">
+          <div className="max-h-64 overflow-auto py-1">
+            {allMedicines.length === 0 ? (
+              <div className="px-3 py-2 text-xs text-neutral-500">
+                No products found.
+              </div>
+            ) : (
+              allMedicines.map((m) => {
+                const isLinked =
+                  linkedByMedicineId.has(m._id) || linkedIdsNoLinkId.has(m._id);
+
+                const isSelectedElsewhere =
+                  selectedIds.has(m._id) && m._id !== value;
+
+                const disabledSelect =
+                  (isLinked && m._id !== value) || isSelectedElsewhere;
+
+                const canUnlink = linkedByMedicineId.has(m._id);
+                const unlinkBusy = unlinkingMedicineId === m._id;
+
+                return (
+                  <div
+                    key={m._id}
+                    className={`px-3 py-2 flex items-center justify-between gap-3 border-b border-neutral-900 last:border-b-0 ${
+                      disabledSelect ? "opacity-70" : ""
+                    } hover:bg-neutral-900/70`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (disabledSelect) return;
+                        onChange(m._id);
+                        setOpen(false);
+                      }}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <div className="text-sm text-neutral-100 truncate">
+                        {m.name}
+                        {m.strength ? (
+                          <span className="text-neutral-400">
+                            {" "}
+                            · {m.strength}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-[11px] text-neutral-500 truncate">
+                        {m.sku}
+                        {isLinked ? " · already linked" : ""}
+                        {isSelectedElsewhere ? " · selected above" : ""}
+                      </div>
+                    </button>
+
+                    {isLinked ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          onRequestUnlink(m._id);
+                        }}
+                        disabled={unlinkBusy}
+                        className={`shrink-0 inline-flex items-center gap-2 rounded-lg px-2.5 py-1 text-[11px] font-medium border transition-colors ${
+                          canUnlink
+                            ? "border-red-500/50 bg-red-500/15 text-red-200 hover:bg-red-500/25"
+                            : "border-neutral-700 bg-neutral-900 text-neutral-400"
+                        } ${unlinkBusy ? "opacity-70" : ""}`}
+                        title={
+                          canUnlink
+                            ? "Unlink this product from service"
+                            : "Link mapping missing. Will auto-refresh on confirm."
+                        }
+                      >
+                        {unlinkBusy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <X className="h-3.5 w-3.5" />
+                        )}
+                        Unlink
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function EditServicePage() {
   const router = useRouter();
   const params = useParams();
@@ -372,6 +652,9 @@ export default function EditServicePage() {
   // ---- Medicines for this service ----
   const [allMedicines, setAllMedicines] = useState<Medicine[]>([]);
   const [linkedMedicines, setLinkedMedicines] = useState<MedicineOption[]>([]);
+  const [linkedServiceMedicines, setLinkedServiceMedicines] = useState<
+    LinkedServiceMedicine[]
+  >([]);
   const [loadingMeds, setLoadingMeds] = useState(true);
   const [savingMeds, setSavingMeds] = useState(false);
   const [serviceMedicineRows, setServiceMedicineRows] = useState<
@@ -389,6 +672,31 @@ export default function EditServicePage() {
   const [onlyActiveForms, setOnlyActiveForms] = useState(true);
   const [assignmentRows, setAssignmentRows] = useState<FormAssignmentRow[]>([]);
 
+  const [medsLoadError, setMedsLoadError] = useState<string | null>(null);
+
+  /**
+   * ✅ Fix continuous requests:
+   * - Keep latest allMedicines in a ref for fallback usage without putting allMedicines in loadMeds deps.
+   * - Abort in-flight calls and ignore stale responses.
+   * - Circuit-break linked endpoint if it returns 404 once.
+   */
+  const allMedsRef = useRef<Medicine[]>([]);
+  useEffect(() => {
+    allMedsRef.current = allMedicines;
+  }, [allMedicines]);
+
+  const medsAbortRef = useRef<AbortController | null>(null);
+  const medsReqSeqRef = useRef(0);
+
+  const linkedEndpointMissingRef = useRef(false);
+  const loggedLinked404Ref = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      medsAbortRef.current?.abort();
+    };
+  }, []);
+
   const reloadClinicForms = useCallback(async () => {
     try {
       setClinicFormsLoading(true);
@@ -399,7 +707,9 @@ export default function EditServicePage() {
           ? localStorage.getItem("session_token")
           : null;
 
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
 
       const res = await fetch(`${base}/clinic-forms`, { headers });
       if (!res.ok) {
@@ -446,9 +756,13 @@ export default function EditServicePage() {
       if (t) set.add(t);
     }
     if (set.size === 0) {
-      ["raf", "advice", "reorder", "clinical_notes", "pharmacist_declaration"].forEach(
-        (t) => set.add(t)
-      );
+      [
+        "raf",
+        "advice",
+        "reorder",
+        "clinical_notes",
+        "pharmacist_declaration",
+      ].forEach((t) => set.add(t));
     }
     return Array.from(set);
   }, [clinicFormsFiltered]);
@@ -515,6 +829,32 @@ export default function EditServicePage() {
   const [medError, setMedError] = useState<string | null>(null);
   const [medAllowReorder, setMedAllowReorder] = useState<boolean>(true);
 
+  // ✅ unlink popup state
+  const [unlinkingMedicineId, setUnlinkingMedicineId] = useState<string | null>(
+    null
+  );
+  const [unlinkConfirm, setUnlinkConfirm] = useState<{
+    open: boolean;
+    medicineId: string;
+    medicineName: string;
+  }>({ open: false, medicineId: "", medicineName: "" });
+
+  const openUnlinkConfirm = useCallback(
+    (medicineId: string) => {
+      const med = allMedicines.find((m) => m._id === medicineId);
+      setUnlinkConfirm({
+        open: true,
+        medicineId,
+        medicineName: med?.name || "this product",
+      });
+    },
+    [allMedicines]
+  );
+
+  const closeUnlinkConfirm = useCallback(() => {
+    setUnlinkConfirm({ open: false, medicineId: "", medicineName: "" });
+  }, []);
+
   // ---------- Load service core data ----------
   useEffect(() => {
     if (!id) return;
@@ -533,6 +873,7 @@ export default function EditServicePage() {
           | "private"
           | "nhs";
         setServiceType(st === "nhs" ? "nhs" : "private");
+
         const am = String(
           data.appointment_medium || data.appointmentMedium || "offline"
         );
@@ -637,32 +978,144 @@ export default function EditServicePage() {
     reloadClinicForms();
   }, [reloadClinicForms]);
 
-  // ---------- Load medicines + service medicines ----------
-  const loadMeds = useCallback(async () => {
-    if (!id) return;
-    try {
+  /**
+   * ✅ Load medicines + service medicines without infinite loop.
+   * - deps: only [id]
+   * - useEffect: only [id] (NOT [id, loadMeds]) to avoid callback identity loops
+   * - 404 linked endpoint -> disable linked fetch to stop hammering server
+   */
+  const loadMeds = useCallback(
+    async (opts?: { forceLinked?: boolean }) => {
+      if (!id) return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+
+      // abort previous
+      medsAbortRef.current?.abort();
+      const ac = new AbortController();
+      medsAbortRef.current = ac;
+
+      const mySeq = ++medsReqSeqRef.current;
+
       setLoadingMeds(true);
+      setMedsLoadError(null);
 
-      const [medsRes, linkedRes] = await Promise.all([
-        getMedicinesApi(),
-        getServiceMedicinesByServiceApi(id),
-      ]);
+      try {
+        // 1) always load all medicines
+        let allList: Medicine[] = [];
+        try {
+          const medsRes = await getMedicinesApi();
+          if (mySeq !== medsReqSeqRef.current) {
+            return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+          }
+          allList = unwrapArray<Medicine>(medsRes);
+          setAllMedicines(allList);
+        } catch (e) {
+          console.error("getMedicinesApi failed:", e);
+          setMedsLoadError("Failed to load products. Please refresh.");
+          allList = allMedsRef.current || [];
+        }
 
-      const all = (medsRes as any)?.data || medsRes;
-      setAllMedicines((all || []) as Medicine[]);
-      setLinkedMedicines(((linkedRes as any) || []) as MedicineOption[]);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to load medicines for this service");
-    } finally {
-      setLoadingMeds(false);
-    }
-  }, [id]);
+        // 2) load linked medicines (circuit-break on 404)
+        let normalized: LinkedServiceMedicine[] = [];
+
+        const shouldTryLinked =
+          opts?.forceLinked === true ? true : !linkedEndpointMissingRef.current;
+
+        if (shouldTryLinked) {
+          try {
+            const base = getBackendBase();
+            const token =
+              typeof window !== "undefined"
+                ? localStorage.getItem("session_token")
+                : null;
+
+            const headers: HeadersInit = token
+              ? { Authorization: `Bearer ${token}` }
+              : {};
+
+            const url = `${base}/service-medicines/service/${id}`;
+
+            const res = await fetch(url, {
+              method: "GET",
+              headers,
+              signal: ac.signal,
+            });
+
+            if (mySeq !== medsReqSeqRef.current) {
+              return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+            }
+
+            if (res.status === 404) {
+              linkedEndpointMissingRef.current = true;
+              if (!loggedLinked404Ref.current) {
+                loggedLinked404Ref.current = true;
+                console.warn(
+                  "Linked products endpoint returned 404. Disabling automatic linked fetch.",
+                  url
+                );
+              }
+              setMedsLoadError(
+                (prev) =>
+                  prev ??
+                  "No product is linked to this service."
+              );
+              normalized = [];
+            } else if (!res.ok) {
+              const txt = await res.text().catch(() => "");
+              console.error("Linked products fetch failed:", res.status, txt);
+              setMedsLoadError(
+                (prev) => prev ?? "Product links could not be loaded."
+              );
+              normalized = [];
+            } else {
+              const json = await res.json().catch(() => null);
+              normalized = normalizeLinkedServiceMedicines(json);
+            }
+          } catch (e: any) {
+            if (e?.name !== "AbortError") {
+              console.error("Linked products fetch error:", e);
+              setMedsLoadError(
+                (prev) => prev ?? "Product links could not be loaded."
+              );
+            }
+            normalized = [];
+          }
+        }
+
+        setLinkedServiceMedicines(normalized);
+
+        const source = allList.length ? allList : (allMedsRef.current || []);
+
+        setLinkedMedicines(
+          normalized.map((x) => ({
+            _id: x.medicineId,
+            name:
+              x.name ||
+              source.find((m) => m._id === x.medicineId)?.name ||
+              "Unknown",
+            sku:
+              x.sku ||
+              source.find((m) => m._id === x.medicineId)?.sku ||
+              "",
+            strength:
+              x.strength ??
+              source.find((m) => m._id === x.medicineId)?.strength ??
+              null,
+          }))
+        );
+
+        return { all: source, linked: normalized };
+      } finally {
+        if (mySeq === medsReqSeqRef.current) setLoadingMeds(false);
+      }
+    },
+    [id]
+  );
 
   useEffect(() => {
     if (!id) return;
     void loadMeds();
-  }, [id, loadMeds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // ---------- Save service (core details) ----------
   const saveService = async () => {
@@ -792,7 +1245,7 @@ export default function EditServicePage() {
       toast.success("Medicines linked to service successfully");
 
       setServiceMedicineRows([]);
-      await loadMeds();
+      await loadMeds({ forceLinked: true }); // try refresh after creating links
     } catch (err) {
       console.error(err);
       toast.error("Failed to link medicines to this service");
@@ -801,8 +1254,86 @@ export default function EditServicePage() {
     }
   };
 
-  // ---------- Inline Medicine Modal handlers ----------
+  // ✅ Build mapping: medicineId -> service_medicine_id
+  const linkedByMedicineId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of linkedServiceMedicines) {
+      if (row.medicineId && row.linkId) map.set(row.medicineId, row.linkId);
+    }
+    return map;
+  }, [linkedServiceMedicines]);
 
+  // Linked items that appear linked but missing linkId (rare backend shape)
+  const linkedIdsNoLinkId = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of linkedServiceMedicines) {
+      if (row.medicineId && !row.linkId) set.add(row.medicineId);
+    }
+    return set;
+  }, [linkedServiceMedicines]);
+
+  const selectedIds = useMemo(() => {
+    return new Set(serviceMedicineRows.map((r) => r.medicineId).filter(Boolean));
+  }, [serviceMedicineRows]);
+
+  // ✅ Confirm unlink (intelligent handling)
+  const confirmUnlinkMedicine = useCallback(async () => {
+    const medicineId = unlinkConfirm.medicineId;
+    if (!medicineId) return;
+
+    let linkId = linkedByMedicineId.get(medicineId);
+
+    // Intelligent recovery: refresh once if mapping missing
+    if (!linkId) {
+      toast.info("Refreshing product links…");
+      const refreshed = await loadMeds({ forceLinked: true });
+      linkId =
+        refreshed.linked.find((x) => x.medicineId === medicineId)?.linkId || "";
+    }
+
+    if (!linkId) {
+      toast.error(
+        "Unable to unlink: service_medicine_id not available from backend. Please refresh and try again."
+      );
+      closeUnlinkConfirm();
+      return;
+    }
+
+    try {
+      setUnlinkingMedicineId(medicineId);
+      await deleteServiceMedicineApi(linkId);
+      toast.success("Product unlinked successfully");
+      closeUnlinkConfirm();
+      await loadMeds({ forceLinked: true });
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || "Failed to unlink product");
+    } finally {
+      setUnlinkingMedicineId(null);
+    }
+  }, [
+    unlinkConfirm.medicineId,
+    linkedByMedicineId,
+    loadMeds,
+    closeUnlinkConfirm,
+  ]);
+
+  // If popup is open but item becomes unlinked (after reload), close it
+  useEffect(() => {
+    if (!unlinkConfirm.open) return;
+    const stillLinked =
+      linkedByMedicineId.has(unlinkConfirm.medicineId) ||
+      linkedIdsNoLinkId.has(unlinkConfirm.medicineId);
+    if (!stillLinked) closeUnlinkConfirm();
+  }, [
+    unlinkConfirm.open,
+    unlinkConfirm.medicineId,
+    linkedByMedicineId,
+    linkedIdsNoLinkId,
+    closeUnlinkConfirm,
+  ]);
+
+  // ---------- Inline Medicine Modal handlers ----------
   const openMedCreate = () => {
     setEditingMed(null);
     setMedForm({
@@ -1036,7 +1567,7 @@ export default function EditServicePage() {
         throw new Error(txt || "Failed to save medicine");
       }
 
-      await loadMeds();
+      await loadMeds({ forceLinked: true });
       toast.success(editingMed ? "Medicine updated" : "Medicine created");
       closeMedModal();
     } catch (err: any) {
@@ -1046,12 +1577,6 @@ export default function EditServicePage() {
       setMedSubmitting(false);
     }
   };
-
-  // Helpers for UI options
-  const linkedIds = new Set(linkedMedicines.map((m) => m._id));
-  const selectedIds = new Set(
-    serviceMedicineRows.map((r) => r.medicineId).filter(Boolean)
-  );
 
   if (loading) {
     return (
@@ -1312,7 +1837,9 @@ export default function EditServicePage() {
                 );
 
                 const availableTypes = Array.from(
-                  new Set([...(formTypeOptions || []), row.form_type].filter(Boolean))
+                  new Set(
+                    [...(formTypeOptions || []), row.form_type].filter(Boolean)
+                  )
                 );
 
                 const list = formsByType[row.form_type] || [];
@@ -1388,9 +1915,13 @@ export default function EditServicePage() {
                           {list.map((f) => {
                             const metaBits: string[] = [];
                             if (f.raf_status) metaBits.push(f.raf_status);
-                            if (f.service_slug) metaBits.push(`svc:${f.service_slug}`);
-                            if (f.treatment_slug) metaBits.push(`trt:${f.treatment_slug}`);
-                            const meta = metaBits.length ? ` • ${metaBits.join(" • ")}` : "";
+                            if (f.service_slug)
+                              metaBits.push(`svc:${f.service_slug}`);
+                            if (f.treatment_slug)
+                              metaBits.push(`trt:${f.treatment_slug}`);
+                            const meta = metaBits.length
+                              ? ` • ${metaBits.join(" • ")}`
+                              : "";
 
                             return (
                               <option key={f._id} value={f._id}>
@@ -1424,37 +1955,13 @@ export default function EditServicePage() {
           {/* Service Medicines */}
           <SectionCard title="Service Products">
             <div className="space-y-5">
-              {/* Already linked medicines */}
-              {/* <div className="space-y-2">
-              
-                {loadingMeds ? (
-                  <div className="text-xs text-neutral-500 flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-                  </div>
-                ) : linkedMedicines.length === 0 ? (
-                  <div className="text-xs text-neutral-500">
-                    No medicines linked to this service yet.
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {linkedMedicines.map((m) => (
-                      <span
-                        key={m._id}
-                        className="inline-flex items-center gap-1 rounded-full bg-neutral-900 px-3 py-1 text-xs text-neutral-100 border border-neutral-700 shadow-sm"
-                      >
-                        {m.name}
-                        {m.strength && (
-                          <span className="text-neutral-400">
-                            · {m.strength}
-                          </span>
-                        )}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div> */}
-
               <div className="h-px bg-neutral-800" />
+
+              {medsLoadError && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  {medsLoadError}
+                </div>
+              )}
 
               {/* New mapping rows */}
               <div className="space-y-3">
@@ -1549,44 +2056,31 @@ export default function EditServicePage() {
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))_auto] items-end">
-                        {/* Medicine select */}
+                        {/* ✅ Product dropdown (supports unlink for linked items) */}
                         <div className="sm:col-span-1">
                           <label className="mb-1 block text-xs font-medium text-neutral-300">
                             Product
                           </label>
-                          <select
-                            className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-2 text-sm text-neutral-100 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30"
-                            value={row.medicineId}
-                            onChange={(e) =>
-                              updateMedicineRow(row.key, {
-                                medicineId: e.target.value,
-                              })
-                            }
-                          >
-                            <option value="">Select product…</option>
-                            {allMedicines.map((m) => {
-                              const disabled =
-                                linkedIds.has(m._id) &&
-                                m._id !== row.medicineId;
 
-                              const selectedElsewhere =
-                                selectedIds.has(m._id) &&
-                                m._id !== row.medicineId;
-
-                              return (
-                                <option
-                                  key={m._id}
-                                  value={m._id}
-                                  disabled={disabled || selectedElsewhere}
-                                >
-                                  {m.name} {m.strength ? `(${m.strength})` : ""}{" "}
-                                  – {m.sku}
-                                  {disabled ? " (already linked)" : ""}
-                                  {selectedElsewhere ? " (selected above)" : ""}
-                                </option>
-                              );
-                            })}
-                          </select>
+                          {loadingMeds ? (
+                            <div className="w-full rounded-md bg-neutral-900 border border-neutral-700 px-2.5 py-2 text-sm text-neutral-400 flex items-center gap-2">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading products…
+                            </div>
+                          ) : (
+                            <MedicineDropdown
+                              value={row.medicineId}
+                              onChange={(medicineId) =>
+                                updateMedicineRow(row.key, { medicineId })
+                              }
+                              allMedicines={allMedicines}
+                              linkedByMedicineId={linkedByMedicineId}
+                              linkedIdsNoLinkId={linkedIdsNoLinkId}
+                              selectedIds={selectedIds}
+                              onRequestUnlink={openUnlinkConfirm}
+                              unlinkingMedicineId={unlinkingMedicineId}
+                            />
+                          )}
                         </div>
 
                         {/* min_qty */}
@@ -1790,6 +2284,72 @@ export default function EditServicePage() {
         </div>
       </div>
 
+      {/* ✅ In-app Confirm Popup for Unlink */}
+      {unlinkConfirm.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="w-full max-w-md rounded-2xl border border-neutral-800/80 bg-gradient-to-b from-neutral-900 to-neutral-950 shadow-[0_18px_60px_rgba(0,0,0,0.85)]">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-5 py-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-neutral-500">
+                  Confirm action
+                </p>
+                <h3 className="mt-1 text-base font-semibold text-neutral-50">
+                  Unlink product?
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeUnlinkConfirm}
+                disabled={!!unlinkingMedicineId}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-neutral-700/70 bg-neutral-900/80 text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/90 hover:border-neutral-600 transition-colors disabled:opacity-60"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-neutral-300">
+                This will remove{" "}
+                <span className="font-semibold text-neutral-100">
+                  {unlinkConfirm.medicineName}
+                </span>{" "}
+                from this service.
+              </p>
+              <p className="text-xs text-neutral-500">
+                You can link it again later if needed.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-neutral-800 bg-neutral-900/70 px-5 py-4 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={closeUnlinkConfirm}
+                disabled={!!unlinkingMedicineId}
+                className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 hover:bg-neutral-800 transition-colors disabled:opacity-60"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmUnlinkMedicine}
+                disabled={!!unlinkingMedicineId}
+                className="inline-flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/15 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-500/25 transition-colors disabled:opacity-60"
+              >
+                {unlinkingMedicineId ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <X className="h-4 w-4" />
+                )}
+                {unlinkingMedicineId ? "Unlinking..." : "Unlink"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --------- Inline Medicine Modal (create + edit) --------- */}
       {isMedModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
@@ -1874,8 +2434,7 @@ export default function EditServicePage() {
                         placeholder="mounjaro-tirzepatide"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Auto-generated from name, but you can override if
-                        needed.
+                        Auto-generated from name, but you can override if needed.
                       </p>
                     </div>
 
