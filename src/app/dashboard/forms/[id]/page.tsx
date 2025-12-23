@@ -40,6 +40,9 @@ type Option = {
   id: string;
   label: string;
   value: string;
+
+  // ✅ UI-only: once user edits value manually, we stop auto-syncing label -> value
+  valueTouched?: boolean;
 };
 
 type ShowIf = {
@@ -116,6 +119,15 @@ function defaultShowIf(): ShowIf {
     truthy: false,
     notEquals: null,
   };
+}
+
+// ✅ Label -> value helper (preserves casing as typed; only sanitizes separators)
+function optionLabelToValue(label: string) {
+  return label
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 // humanize snake_case → "Title Case"
@@ -234,15 +246,9 @@ export default function EditClinicFormPage() {
     const type: string = f.type;
     const data = f.data || {};
 
-    const rawShowIf = data.showIf || {};
-    const rawIn = rawShowIf.in;
-
-    const inArray: string[] = Array.isArray(data.showIf?.in)
-      ? data.showIf.in
-      : [];
+    const rawIn = data.showIf?.in;
 
     let inArr: string[] = [];
-
     if (Array.isArray(rawIn)) {
       inArr = rawIn
         .filter((v: any) => typeof v === "string")
@@ -251,7 +257,7 @@ export default function EditClinicFormPage() {
     } else if (typeof rawIn === "string") {
       inArr = rawIn
         .split(",")
-        .map((v) => v.trim())
+        .map((v: string) => v.trim())
         .filter(Boolean);
     }
 
@@ -259,8 +265,8 @@ export default function EditClinicFormPage() {
       enabled: !!data.showIf?.enabled,
       field: data.showIf?.field ?? null,
       equals: data.showIf?.equals ?? null,
-      in: inArray,
-      inRaw: inArray.join(", "),
+      in: inArr,
+      inRaw: inArr.join(", "),
       truthy: !!data.showIf?.truthy,
       notEquals: data.showIf?.notEquals ?? null,
     };
@@ -302,12 +308,24 @@ export default function EditClinicFormPage() {
     }
 
     if (type === "select") {
-      const optsArray =
-        data.options?.map((o: any) => ({
-          id: createId(),
-          label: o.label,
-          value: o.value,
-        })) || [];
+      const optsArray: Option[] =
+        data.options?.map((o: any) => {
+          const label = String(o.label ?? "");
+          const value = String(o.value ?? "");
+
+          // ✅ For edit page: if backend value doesn't match derived value,
+          // treat it as "custom" and lock auto-sync by setting valueTouched = true.
+          const derived = optionLabelToValue(label);
+          const valueTouched = value !== derived;
+
+          return {
+            id: createId(),
+            label,
+            value,
+            valueTouched,
+          };
+        }) || [];
+
       const multiple = !!data.multiple;
       return {
         ...base,
@@ -318,12 +336,20 @@ export default function EditClinicFormPage() {
     }
 
     if (type === "radio") {
-      const optsArray =
-        data.options?.map((o: any) => ({
-          id: createId(),
-          label: o.label,
-          value: o.value,
-        })) || [];
+      const optsArray: Option[] =
+        data.options?.map((o: any) => {
+          const label = String(o.label ?? "");
+          const value = String(o.value ?? "");
+          const derived = optionLabelToValue(label);
+          const valueTouched = value !== derived;
+
+          return {
+            id: createId(),
+            label,
+            value,
+            valueTouched,
+          };
+        }) || [];
       return {
         ...base,
         type: "radio",
@@ -332,12 +358,20 @@ export default function EditClinicFormPage() {
     }
 
     if (type === "checkbox") {
-      const optsArray =
-        data.options?.map((o: any) => ({
-          id: createId(),
-          label: o.label,
-          value: o.value,
-        })) || [];
+      const optsArray: Option[] =
+        data.options?.map((o: any) => {
+          const label = String(o.label ?? "");
+          const value = String(o.value ?? "");
+          const derived = optionLabelToValue(label);
+          const valueTouched = value !== derived;
+
+          return {
+            id: createId(),
+            label,
+            value,
+            valueTouched,
+          };
+        }) || [];
       return {
         ...base,
         type: "checkbox",
@@ -526,11 +560,15 @@ export default function EditClinicFormPage() {
         if (f.id !== fieldId) return f;
         const opts = f.options || [];
         const nextIndex = opts.length + 1;
+
+        const label = `Option ${nextIndex}`;
         const newOption: Option = {
           id: createId(),
-          label: `Option ${nextIndex}`,
-          value: `option_${nextIndex}`,
+          label,
+          value: optionLabelToValue(label), // ✅ auto-fill from label
+          valueTouched: false,
         };
+
         return { ...f, options: [...opts, newOption] };
       })
     );
@@ -545,11 +583,31 @@ export default function EditClinicFormPage() {
       prev.map((f) => {
         if (f.id !== fieldId) return f;
         const opts = f.options || [];
+
         return {
           ...f,
-          options: opts.map((o) =>
-            o.id === optionId ? { ...o, ...patch } : o
-          ),
+          options: opts.map((o) => {
+            if (o.id !== optionId) return o;
+
+            // ✅ Requirement: when label changes, auto-fill value (same casing),
+            // unless the user manually edited value (valueTouched === true),
+            // or caller explicitly sets patch.value.
+            if (typeof patch.label === "string") {
+              const nextLabel = patch.label;
+              const explicitValueProvided = patch.value != null;
+              const shouldAutoSync = !o.valueTouched && !explicitValueProvided;
+
+              if (shouldAutoSync) {
+                return {
+                  ...o,
+                  ...patch,
+                  value: optionLabelToValue(nextLabel),
+                };
+              }
+            }
+
+            return { ...o, ...patch };
+          }),
         };
       })
     );
@@ -566,7 +624,10 @@ export default function EditClinicFormPage() {
   };
 
   // ✅ Create a new field using your EXISTING palette-add logic (kept same defaults)
-  const buildNewFieldFromPalette = (type: FieldType, label: string): FormField => {
+  const buildNewFieldFromPalette = (
+    type: FieldType,
+    label: string
+  ): FormField => {
     const base: BaseField = {
       id: createId(),
       type,
@@ -576,12 +637,30 @@ export default function EditClinicFormPage() {
       showIf: defaultShowIf(),
     };
 
-    if (type === "select" || type === "dropdown" || type === "radio" || type === "checkbox") {
+    if (
+      type === "select" ||
+      type === "dropdown" ||
+      type === "radio" ||
+      type === "checkbox"
+    ) {
+      const l1 = "Option 1";
+      const l2 = "Option 2";
+
       return {
         ...base,
         options: [
-          { id: createId(), label: "Option 1", value: "option_1" },
-          { id: createId(), label: "Option 2", value: "option_2" },
+          {
+            id: createId(),
+            label: l1,
+            value: optionLabelToValue(l1),
+            valueTouched: false,
+          },
+          {
+            id: createId(),
+            label: l2,
+            value: optionLabelToValue(l2),
+            valueTouched: false,
+          },
         ],
         multiple: type === "select",
       };
@@ -624,7 +703,11 @@ export default function EditClinicFormPage() {
   };
 
   // ✅ Add field at any index (defaults bottom)
-  const handleAddField = (type: FieldType, label: string, insertIndex?: number) => {
+  const handleAddField = (
+    type: FieldType,
+    label: string,
+    insertIndex?: number
+  ) => {
     const newField = buildNewFieldFromPalette(type, label);
 
     setFields((prev) => {
@@ -1356,7 +1439,6 @@ export default function EditClinicFormPage() {
                           <span className="text-[11px] px-1.5 py-[1px] rounded-full bg-neutral-800 text-neutral-400 border border-neutral-700">
                             {field.type}
                           </span>
-                         
                         </div>
                         <button
                           type="button"
@@ -1689,6 +1771,7 @@ export default function EditClinicFormPage() {
                           <input
                             value={opt.label}
                             onChange={(e) =>
+                              // ✅ label change auto-fills value unless valueTouched
                               updateOption(selectedField.id, opt.id, {
                                 label: e.target.value,
                               })
@@ -1699,8 +1782,10 @@ export default function EditClinicFormPage() {
                           <input
                             value={opt.value}
                             onChange={(e) =>
+                              // ✅ manual value edit => lock auto-sync
                               updateOption(selectedField.id, opt.id, {
                                 value: e.target.value,
+                                valueTouched: true,
                               })
                             }
                             placeholder="value_key"

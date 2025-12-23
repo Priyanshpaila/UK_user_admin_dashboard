@@ -2,7 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getClinicFormsApi, type ClinicForm } from "../../../api";
+import {
+  getClinicFormsApi,
+  deleteClinicFormApi,
+  type ClinicForm,
+} from "../../../api";
 import {
   Loader2,
   Plus,
@@ -10,7 +14,11 @@ import {
   ChevronRight,
   Filter,
   Activity,
+  Trash2,
+  X,
 } from "lucide-react";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 
 type FormsListItem = ClinicForm & {
   updatedAt?: string;
@@ -24,6 +32,12 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [showOnlyActive, setShowOnlyActive] = useState(false);
+
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // ✅ in-app confirm modal state
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState<FormsListItem | null>(null);
 
   const loadForms = async () => {
     try {
@@ -44,12 +58,57 @@ export default function Page() {
     loadForms();
   }, []);
 
+  // ✅ close modal on ESC
+  useEffect(() => {
+    if (!confirmOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setConfirmOpen(false);
+        setConfirmTarget(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [confirmOpen]);
+
   const handleCreate = () => {
     router.push("/dashboard/forms/create");
   };
 
   const handleRowClick = (id: string) => {
     router.push(`/dashboard/forms/${id}`);
+  };
+
+  const requestDelete = (form: FormsListItem) => {
+    setConfirmTarget(form);
+    setConfirmOpen(true);
+  };
+
+  const closeConfirm = () => {
+    if (deletingId) return; // prevent closing while deleting
+    setConfirmOpen(false);
+    setConfirmTarget(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!confirmTarget?._id) return;
+
+    try {
+      setDeletingId(confirmTarget._id);
+      await deleteClinicFormApi(confirmTarget._id);
+
+      // ✅ remove from UI immediately
+      setForms((prev) => prev.filter((f) => f._id !== confirmTarget._id));
+      toast.success("Form deleted");
+
+      setConfirmOpen(false);
+      setConfirmTarget(null);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message || "Failed to delete form");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const filteredForms = forms.filter((f) => {
@@ -66,8 +125,89 @@ export default function Page() {
   const total = forms.length;
   const activeCount = forms.filter((f) => f.is_active !== false).length;
 
+  const confirmName = confirmTarget?.name || "Untitled form";
+  const isConfirmDeleting = !!deletingId && deletingId === confirmTarget?._id;
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 text-neutral-50">
+      <ToastContainer position="top-right" autoClose={2500} />
+
+      {/* ✅ In-app Delete Confirmation Modal */}
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          {/* overlay */}
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={closeConfirm}
+          />
+
+          {/* modal */}
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-md rounded-2xl border border-neutral-800 bg-neutral-950 shadow-[0_30px_90px_rgba(0,0,0,0.75)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 p-4 border-b border-neutral-800">
+              <div>
+                <h3 className="text-base font-semibold text-neutral-100">
+                  Delete this form?
+                </h3>
+                <p className="mt-1 text-sm text-neutral-400">
+                  You are about to delete{" "}
+                  <span className="font-semibold text-neutral-200">
+                    “{confirmName}”
+                  </span>
+                  . This action cannot be undone.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeConfirm}
+                disabled={!!deletingId}
+                className="rounded-lg border border-neutral-800 bg-neutral-900/60 p-2 text-neutral-300 hover:bg-neutral-800 disabled:opacity-60"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeConfirm}
+                  disabled={!!deletingId}
+                  className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm font-medium text-neutral-200 hover:bg-neutral-800 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={confirmDelete}
+                  disabled={!!deletingId}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-60"
+                >
+                  {isConfirmDeleting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Delete
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-2">
@@ -78,8 +218,8 @@ export default function Page() {
             </h1>
           </div>
           <p className="text-sm text-neutral-400">
-            Manage dynamic forms used across services (RAF, consent, intake
-            and more).
+            Manage dynamic forms used across services (RAF, consent, intake and
+            more).
           </p>
 
           {/* Small stats row */}
@@ -196,24 +336,26 @@ export default function Page() {
                   Updated
                 </th>
                 <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Status
+                  Status / Actions
                 </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-neutral-800">
               {filteredForms.map((form) => {
                 const updated =
-                  form.updatedAt ||
-                  (form as any).updated_at ||
-                  form.createdAt;
+                  form.updatedAt || (form as any).updated_at || form.createdAt;
 
                 const updatedDisplay = updated
                   ? new Date(updated).toLocaleString()
                   : "—";
 
                 const isActive = form.is_active !== false;
-                const formType =
-                  (form.form_type || "general").toString().toUpperCase();
+                const formType = (form.form_type || "general")
+                  .toString()
+                  .toUpperCase();
+
+                const isDeletingRow = deletingId === form._id;
 
                 return (
                   <tr
@@ -264,7 +406,7 @@ export default function Page() {
                       <span className="text-xs">{updatedDisplay}</span>
                     </td>
 
-                    {/* Status / action */}
+                    {/* Status / actions */}
                     <td className="px-4 py-3 align-middle text-right">
                       <div className="flex items-center justify-end gap-2">
                         <span
@@ -276,14 +418,13 @@ export default function Page() {
                         >
                           <span
                             className={`mr-1 h-1.5 w-1.5 rounded-full ${
-                              isActive
-                                ? "bg-emerald-400"
-                                : "bg-neutral-500"
+                              isActive ? "bg-emerald-400" : "bg-neutral-500"
                             }`}
                           />
                           {isActive ? "Active" : "Inactive"}
                         </span>
 
+                        {/* Edit */}
                         <button
                           type="button"
                           onClick={(e) => {
@@ -294,6 +435,29 @@ export default function Page() {
                         >
                           Edit
                           <ChevronRight className="h-3 w-3" />
+                        </button>
+
+                        {/* ✅ Delete (opens modal) */}
+                        <button
+                          type="button"
+                          disabled={isDeletingRow}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            requestDelete(form);
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs font-medium transition ${
+                            isDeletingRow
+                              ? "border-red-500/30 bg-red-500/10 text-red-200 opacity-70 cursor-not-allowed"
+                              : "border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
+                          }`}
+                          title="Delete form"
+                        >
+                          {isDeletingRow ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          Delete
                         </button>
                       </div>
                     </td>

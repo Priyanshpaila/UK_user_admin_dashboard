@@ -837,6 +837,13 @@ export async function getClinicFormByIdApi(id: string) {
   });
 }
 
+export async function deleteClinicFormApi(id: string) {
+  const base = getBackendBase();
+  return jsonFetch<any>(`${base}/clinic-forms/${id}`, {
+    method: "DELETE",
+  });
+}
+
 /* ------------------- Pages APIs (with FormData for images) ------------------- */
 
 export async function getPagesApi() {
@@ -934,6 +941,28 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
 
   return res.json();
 }
+
+export async function deletePageApi(id: string) {
+  const base = getBackendBase();
+  const url = `${base}/pages/${id}`;
+  const token = getSessionToken();
+
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(txt || "Failed to delete page");
+  }
+
+  // Some backends return JSON, some return empty 204. Handle both safely.
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) return res.json();
+  return { success: true };
+}
+
 
 export async function uploadPageImageApi(
   file: File

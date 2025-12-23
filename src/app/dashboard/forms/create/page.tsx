@@ -39,6 +39,9 @@ type Option = {
   id: string;
   label: string;
   value: string;
+
+  // ✅ UI-only: once user edits the value manually, we stop auto-syncing label -> value.
+  valueTouched?: boolean;
 };
 
 type ShowIf = {
@@ -160,6 +163,17 @@ function defaultShowIf(): ShowIf {
   };
 }
 
+// ✅ Label -> value helper for OPTIONS (preserves casing as typed)
+// - Keeps uppercase/lowercase/camel case EXACTLY as provided
+// - Converts spaces/special chars to underscores for safe values
+function optionLabelToValue(label: string) {
+  return label
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_") // spaces & special chars -> "_"
+    .replace(/_+/g, "_") // collapse
+    .replace(/^_+|_+$/g, ""); // trim underscores
+}
+
 function createDefaultField(type: FieldType): FormField {
   const id = createId();
   const base: BaseField = {
@@ -172,9 +186,21 @@ function createDefaultField(type: FieldType): FormField {
   };
 
   if (["select", "dropdown", "radio", "checkbox"].includes(type)) {
+    const l1 = "Option 1";
+    const l2 = "Option 2";
     const opts: Option[] = [
-      { id: createId(), label: "Option 1", value: "option_1" },
-      { id: createId(), label: "Option 2", value: "option_2" },
+      {
+        id: createId(),
+        label: l1,
+        value: optionLabelToValue(l1),
+        valueTouched: false,
+      },
+      {
+        id: createId(),
+        label: l2,
+        value: optionLabelToValue(l2),
+        valueTouched: false,
+      },
     ];
     return {
       ...base,
@@ -400,10 +426,12 @@ export default function Page() {
         if (f.id !== fieldId) return f;
         const opts = f.options || [];
         const nextIndex = opts.length + 1;
+        const label = `Option ${nextIndex}`;
         const newOption: Option = {
           id: createId(),
-          label: `Option ${nextIndex}`,
-          value: `option_${nextIndex}`,
+          label,
+          value: optionLabelToValue(label), // ✅ auto-fill value (preserve case)
+          valueTouched: false,
         };
         return { ...f, options: [...opts, newOption] };
       })
@@ -421,9 +449,26 @@ export default function Page() {
         const opts = f.options || [];
         return {
           ...f,
-          options: opts.map((o) =>
-            o.id === optionId ? { ...o, ...patch } : o
-          ),
+          options: opts.map((o) => {
+            if (o.id !== optionId) return o;
+
+            // ✅ Requirement: when label changes, auto-fill value with same casing/format
+            // Only auto-sync if user has NOT manually edited value (valueTouched !== true)
+            if (typeof patch.label === "string") {
+              const nextLabel = patch.label;
+              const shouldAutoSyncValue = !o.valueTouched && patch.value == null;
+
+              if (shouldAutoSyncValue) {
+                return {
+                  ...o,
+                  ...patch,
+                  value: optionLabelToValue(nextLabel),
+                };
+              }
+            }
+
+            return { ...o, ...patch };
+          }),
         };
       })
     );
@@ -761,11 +806,7 @@ export default function Page() {
         onDragOver={(e) => onDragOverInsert(e, index)}
         onDrop={(e) => onDropInsert(e, index)}
       >
-        <div
-          className={`flex items-center justify-center gap-3 ${
-            compact ? "" : ""
-          }`}
-        >
+        <div className={`flex items-center justify-center gap-3 ${compact ? "" : ""}`}>
           <div className="h-px flex-1 bg-neutral-800" />
           <button
             type="button"
@@ -1081,7 +1122,6 @@ export default function Page() {
               <h2 className="text-sm font-semibold text-neutral-200">
                 Form layout
               </h2>
-
             </div>
             <span className="text-[11px] text-neutral-500">
               Click a field to edit its properties
@@ -1481,6 +1521,7 @@ export default function Page() {
                           <input
                             value={opt.label}
                             onChange={(e) =>
+                              // ✅ label change auto-fills value (preserve case) unless user edited value manually
                               updateOption(selectedField.id, opt.id, {
                                 label: e.target.value,
                               })
@@ -1491,8 +1532,10 @@ export default function Page() {
                           <input
                             value={opt.value}
                             onChange={(e) =>
+                              // ✅ if user edits value manually, stop auto-sync for this option
                               updateOption(selectedField.id, opt.id, {
                                 value: e.target.value,
+                                valueTouched: true,
                               })
                             }
                             placeholder="value_key"
