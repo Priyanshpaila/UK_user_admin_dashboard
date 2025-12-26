@@ -15,12 +15,8 @@ import {
 } from "../../../api";
 import {
   Loader2,
-  CheckCircle2,
-  Clock,
-  XCircle,
   CreditCard,
   CalendarDays,
-  User as UserIcon,
   ArrowRight,
   Filter,
   X,
@@ -240,6 +236,179 @@ function extractProductName(order: any): string {
     order?.service_name ||
     "Order"
   );
+}
+
+/* ----------------- Items editing (safe meta update) ----------------- */
+
+type EditableOrderItem = {
+  sku?: string;
+  name: string;
+  qty: number;
+  variation?: string;
+  strength?: string | null;
+
+  unitMinor?: number | null;
+  totalMinor?: number | null;
+
+  // keep extra fields safely
+  [key: string]: any;
+};
+
+function toInt(v: any, fallback: number) {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+function toMoneyMinorFromPoundsInput(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+
+function toPoundsFromMinor(minor?: number | null): string {
+  if (minor == null) return "";
+  return (minor / 100).toFixed(2);
+}
+
+function extractEditableItems(order: any): EditableOrderItem[] {
+  const meta: any = order?.meta || {};
+  const raw = meta?.items ?? meta?.lines ?? order?.items ?? [];
+  const arr = Array.isArray(raw) ? raw : [];
+  if (!arr.length) return [];
+
+  return arr.map((it: any) => {
+    const qty = Math.max(1, toInt(it?.qty ?? it?.quantity ?? 1, 1));
+    const unitMinor =
+      typeof it?.unitMinor === "number"
+        ? it.unitMinor
+        : typeof it?.unit_minor === "number"
+        ? it.unit_minor
+        : typeof it?.priceMinor === "number"
+        ? it.priceMinor
+        : typeof it?.price_minor === "number"
+        ? it.price_minor
+        : typeof it?.totalMinor === "number"
+        ? Math.round(it.totalMinor / qty)
+        : null;
+
+    const totalMinorExplicit =
+      typeof it?.totalMinor === "number"
+        ? it.totalMinor
+        : typeof it?.total_minor === "number"
+        ? it.total_minor
+        : null;
+
+    const totalMinor =
+      totalMinorExplicit != null
+        ? totalMinorExplicit
+        : unitMinor != null
+        ? unitMinor * qty
+        : null;
+
+    return {
+      ...it,
+      sku: it?.sku,
+      name: String(it?.name || it?.title || it?.medicine_name || "Item"),
+      qty,
+      variation: String(it?.variation || it?.variations || it?.strength || ""),
+      strength: it?.strength ?? null,
+      unitMinor,
+      totalMinor,
+    } as EditableOrderItem;
+  });
+}
+
+function buildUpdatedMetaFromItems(oldMeta: any, draft: EditableOrderItem[]) {
+  const feesMinor =
+    typeof oldMeta?.feesMinor === "number"
+      ? oldMeta.feesMinor
+      : typeof oldMeta?.fees_minor === "number"
+      ? oldMeta.fees_minor
+      : 0;
+
+  const items = draft.map((it) => {
+    const qty = Math.max(1, toInt(it.qty, 1));
+
+    const unitMinor =
+      typeof it.unitMinor === "number" && Number.isFinite(it.unitMinor)
+        ? Math.max(0, Math.trunc(it.unitMinor))
+        : 0;
+
+    const totalMinor = unitMinor * qty;
+
+    const price = +(unitMinor / 100).toFixed(2);
+    const line_total = +(totalMinor / 100).toFixed(2);
+
+    return {
+      ...it,
+      name: String(it.name || "Item").trim(),
+      qty,
+      variation: String(it.variation || "").trim(),
+      unitMinor,
+      totalMinor,
+      price,
+      line_total,
+      strength: it.strength ?? null,
+    };
+  });
+
+  const lines = items.map((it, idx) => ({
+    index: idx,
+    name: it.name,
+    qty: it.qty,
+    variation: it.variation,
+    unitMinor: it.unitMinor,
+    totalMinor: it.totalMinor,
+    price: it.price,
+    line_total: it.line_total,
+    sku: it.sku,
+  }));
+
+  const subtotalMinor = items.reduce(
+    (sum, it) => sum + (typeof it.totalMinor === "number" ? it.totalMinor : 0),
+    0
+  );
+  const totalMinor = subtotalMinor + (Number.isFinite(feesMinor) ? feesMinor : 0);
+
+  const subtotal = +(subtotalMinor / 100).toFixed(2);
+  const fees = +((Number.isFinite(feesMinor) ? feesMinor : 0) / 100).toFixed(2);
+  const total = +(totalMinor / 100).toFixed(2);
+
+  const nextMeta: any = {
+    ...oldMeta,
+    items,
+    lines,
+    subtotalMinor,
+    totalMinor,
+    subtotal,
+    feesMinor: Number.isFinite(feesMinor) ? feesMinor : 0,
+    fees,
+    total,
+  };
+
+  // keep selectedProduct aligned (common in your schema)
+  if (nextMeta?.selectedProduct && items.length) {
+    const first = items[0];
+    nextMeta.selectedProduct = {
+      ...nextMeta.selectedProduct,
+      name: first.name,
+      variation: first.variation,
+      strength:
+        first.strength ??
+        nextMeta.selectedProduct?.strength ??
+        first.variation ??
+        null,
+      qty: first.qty,
+      unitMinor: first.unitMinor,
+      totalMinor: first.totalMinor,
+      price: first.price,
+      line_total: first.line_total,
+      currency: nextMeta.selectedProduct?.currency ?? nextMeta.currency,
+    };
+  }
+
+  return nextMeta;
 }
 
 /* ----------------- RAF extraction + render (supports files) ----------------- */
@@ -591,6 +760,12 @@ export default function Page() {
 
   const [savingNotes, setSavingNotes] = useState(false);
 
+  // ✅ items edit state (NEW)
+  const [itemsEditMode, setItemsEditMode] = useState(false);
+  const [itemsDraft, setItemsDraft] = useState<EditableOrderItem[]>([]);
+  const [itemsSaving, setItemsSaving] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+
   // selected order user
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
@@ -708,9 +883,7 @@ export default function Page() {
       const u = userId ? orderUsers[userId] : null;
 
       const appointmentAt = extractAppointmentStart(o);
-      const appointmentTs = appointmentAt
-        ? new Date(appointmentAt).getTime()
-        : 0;
+      const appointmentTs = appointmentAt ? new Date(appointmentAt).getTime() : 0;
 
       const patientName = getDisplayPatientName(o, u);
       const productName = extractProductName(o);
@@ -773,6 +946,12 @@ export default function Page() {
     setPriorityError(null);
     setPrioritySaving(false);
 
+    // items edit reset
+    setItemsEditMode(false);
+    setItemsDraft([]);
+    setItemsSaving(false);
+    setItemsError(null);
+
     try {
       const oRes: any = await getOrderByIdApi(id);
       const order = unwrapOrder(oRes);
@@ -780,6 +959,9 @@ export default function Page() {
       setSelectedOrder(order);
       setAdminNotes(((order as any).admin_notes as string[]) || []);
       setConsultationNotesEdit(extractConsultationNotes(order));
+
+      // init items draft from order.meta.items (safe)
+      setItemsDraft(extractEditableItems(order));
 
       const userId = extractUserIdFromOrder(order);
       if (userId) {
@@ -835,6 +1017,58 @@ export default function Page() {
     } finally {
       setSavingNotes(false);
     }
+  }
+
+  // ✅ Save edited items without losing meta keys
+  async function handleSaveItems() {
+    if (!selectedOrder) return;
+
+    setItemsSaving(true);
+    setItemsError(null);
+
+    try {
+      const orderId = String((selectedOrder as any)._id);
+      const oldMeta: any = (selectedOrder as any).meta || {};
+      const nextMeta = buildUpdatedMetaFromItems(oldMeta, itemsDraft);
+
+      // IMPORTANT: send full meta object to avoid losing keys on backend
+      const payload: any = {
+        status: (selectedOrder as any).status,
+        admin_notes: adminNotes,
+        consultation_notes: consultationNotesEdit,
+        consultant_notes: consultationNotesEdit,
+        meta: nextMeta,
+      };
+
+      const updatedRes: any = await updateOrderStatusApi(orderId, payload);
+      const updated = unwrapOrder(updatedRes);
+
+      setSelectedOrder(updated);
+
+      // refresh draft from latest saved order (prevents drift)
+      setItemsDraft(extractEditableItems(updated));
+      setItemsEditMode(false);
+
+      // keep list in sync
+      setOrders((prev) =>
+        prev.map((o: any) => (idOf(o) === idOf(updated) ? updated : o))
+      );
+    } catch (e: any) {
+      setItemsError(e?.message || "Failed to save items");
+    } finally {
+      setItemsSaving(false);
+    }
+  }
+
+  function handleCancelItemsEdit() {
+    if (!selectedOrder) {
+      setItemsEditMode(false);
+      setItemsDraft([]);
+      return;
+    }
+    setItemsDraft(extractEditableItems(selectedOrder));
+    setItemsEditMode(false);
+    setItemsError(null);
   }
 
   async function handlePriorityChange(newPriority: string) {
@@ -896,13 +1130,9 @@ export default function Page() {
       try {
         const patientName = getDisplayPatientName(selectedOrder, orderedByUser);
         const patientEmail =
-          (orderedByUser as any)?.email ||
-          (selectedOrder as any)?.email ||
-          null;
+          (orderedByUser as any)?.email || (selectedOrder as any)?.email || null;
         const patientPhone =
-          (orderedByUser as any)?.phone ||
-          (orderedByUser as any)?.phoneNumber ||
-          null;
+          (orderedByUser as any)?.phone || (orderedByUser as any)?.phoneNumber || null;
 
         const payload = {
           orderId,
@@ -976,9 +1206,7 @@ export default function Page() {
           </div>
           <span className="text-xs text-neutral-500">
             {totalCount} {STATUS_LABEL.toLowerCase()}{" "}
-            {meta
-              ? `• page ${(meta as any).page} of ${(meta as any).totalPages}`
-              : ""}
+            {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
           </span>
         </div>
       </div>
@@ -1039,193 +1267,193 @@ export default function Page() {
               </thead>
 
               <tbody>
-                {filteredOrders.map(
-                  ({
-                    order,
-                    user,
-                    patientName,
-                    productName,
-                    appointmentAt,
-                  }) => {
-                    const o: any = order;
-                    const totalMinor = extractTotalMinor(o);
-                    const priority =
-                      ((user as any)?.user_priority as string | undefined) ||
-                      undefined;
+                {filteredOrders.map(({ order, user, patientName, productName }) => {
+                  const o: any = order;
+                  const totalMinor = extractTotalMinor(o);
+                  const priority =
+                    ((user as any)?.user_priority as string | undefined) || undefined;
 
-                    const status = String(o?.status || STATUS);
-                    const payment = String(o?.payment_status || "pending");
+                  const status = String(o?.status || STATUS);
+                  const payment = String(o?.payment_status || "pending");
 
-                    return (
-                      <tr
-                        key={idOf(o)}
-                        className="border-b border-neutral-900/70 hover:bg-neutral-900/40"
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900">
-                              <span className="text-xs font-semibold text-neutral-100">
-                                {getUserInitials(user)}
-                              </span>
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="truncate font-semibold text-white">
-                                  {patientName}
-                                </p>
-                                {priority && (
-                                  <span
-                                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
-                                      priority
-                                    )}`}
-                                  >
-                                    <span className="h-2 w-2 rounded-full bg-current" />
-                                    {priority}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-[11px] text-neutral-400">
-                                Ref:{" "}
-                                <span className="font-mono">
-                                  {o?.reference || o?._id}
-                                </span>
-                                {(o?.email || (user as any)?.email) && (
-                                  <>
-                                    {" "}
-                                    •{" "}
-                                    <span className="truncate">
-                                      {o?.email || (user as any)?.email}
-                                    </span>
-                                  </>
-                                )}
-                              </p>
-                            </div>
+                  return (
+                    <tr
+                      key={idOf(o)}
+                      className="border-b border-neutral-900/70 hover:bg-neutral-900/40"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900">
+                            <span className="text-xs font-semibold text-neutral-100">
+                              {getUserInitials(user)}
+                            </span>
                           </div>
-                        </td>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate font-semibold text-white">
+                                {patientName}
+                              </p>
+                              {priority && (
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                                    priority
+                                  )}`}
+                                >
+                                  <span className="h-2 w-2 rounded-full bg-current" />
+                                  {priority}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-neutral-400">
+                              Ref:{" "}
+                              <span className="font-mono">
+                                {o?.reference || o?._id}
+                              </span>
+                              {(o?.email || (user as any)?.email) && (
+                                <>
+                                  {" "}
+                                  •{" "}
+                                  <span className="truncate">
+                                    {o?.email || (user as any)?.email}
+                                  </span>
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
 
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-neutral-100">
-                            {o?.service_name || "—"}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-neutral-400">
-                            {productName}
-                          </p>
-                        </td>
-
-                        <td className="px-4 py-3">
-                          <p className="font-semibold text-white">
-                            {formatMoney(totalMinor)}
-                          </p>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-neutral-100">
+                          {o?.service_name || "—"}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-neutral-400">
+                          {productName}
+                        </p>
+                        <div className="mt-1 flex gap-2">
                           <span
                             className={
-                              "mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                              statusBadgeClasses(status)
+                            }
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                            {status.toUpperCase()}
+                          </span>
+
+                          <span
+                            className={
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
                               paymentBadgeClasses(payment)
                             }
                           >
                             <CreditCard className="h-3 w-3" />
                             {payment.toUpperCase()}
                           </span>
-                        </td>
+                        </div>
+                      </td>
 
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleViewDetails(String(o?._id))}
-                            className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300"
-                          >
-                            View
-                            <ArrowRight className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }
-                )}
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-white">
+                          {formatMoney(totalMinor)}
+                        </p>
+                      </td>
+
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleViewDetails(String(o?._id))}
+                          className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300"
+                        >
+                          View
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           {/* Mobile list */}
           <div className="md:hidden">
-            {filteredOrders.map(
-              ({ order, user, patientName, productName, appointmentAt }) => {
-                const o: any = order;
-                const totalMinor = extractTotalMinor(o);
-                const priority =
-                  ((user as any)?.user_priority as string | undefined) ||
-                  undefined;
+            {filteredOrders.map(({ order, user, patientName, productName, appointmentAt }) => {
+              const o: any = order;
+              const totalMinor = extractTotalMinor(o);
+              const priority =
+                ((user as any)?.user_priority as string | undefined) || undefined;
 
-                const status = String(o?.status || STATUS);
-                const payment = String(o?.payment_status || "pending");
+              const status = String(o?.status || STATUS);
+              const payment = String(o?.payment_status || "pending");
 
-                return (
-                  <button
-                    key={idOf(o)}
-                    type="button"
-                    onClick={() => handleViewDetails(String(o?._id))}
-                    className="w-full border-b border-neutral-900/70 px-4 py-3 text-left hover:bg-neutral-900/40"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-white">
-                          {patientName}
-                        </p>
-                        <p className="mt-0.5 truncate text-[11px] text-neutral-400">
-                          {productName} • Ref:{" "}
-                          <span className="font-mono">
-                            {o?.reference || o?._id}
-                          </span>
-                        </p>
-
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-300">
-                          <span className="inline-flex items-center gap-1">
-                            <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
-                            {formatDateTime(appointmentAt)}
-                          </span>
-                          <span className="text-neutral-600">•</span>
-                          <span className="font-semibold text-white">
-                            {formatMoney(totalMinor)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col items-end gap-1">
-                        {priority && (
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
-                              priority
-                            )}`}
-                          >
-                            <span className="h-2 w-2 rounded-full bg-current" />
-                            {priority}
-                          </span>
-                        )}
-
-                        <span
-                          className={
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                            statusBadgeClasses(status)
-                          }
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                          {status.toUpperCase()}
+              return (
+                <button
+                  key={idOf(o)}
+                  type="button"
+                  onClick={() => handleViewDetails(String(o?._id))}
+                  className="w-full border-b border-neutral-900/70 px-4 py-3 text-left hover:bg-neutral-900/40"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-white">
+                        {patientName}
+                      </p>
+                      <p className="mt-0.5 truncate text-[11px] text-neutral-400">
+                        {productName} • Ref:{" "}
+                        <span className="font-mono">
+                          {o?.reference || o?._id}
                         </span>
+                      </p>
 
-                        <span
-                          className={
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                            paymentBadgeClasses(payment)
-                          }
-                        >
-                          <CreditCard className="h-3 w-3" />
-                          {payment.toUpperCase()}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-300">
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarDays className="h-3.5 w-3.5 text-neutral-500" />
+                          {formatDateTime(appointmentAt)}
+                        </span>
+                        <span className="text-neutral-600">•</span>
+                        <span className="font-semibold text-white">
+                          {formatMoney(totalMinor)}
                         </span>
                       </div>
                     </div>
-                  </button>
-                );
-              }
-            )}
+
+                    <div className="flex flex-col items-end gap-1">
+                      {priority && (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${priorityBadgeClasses(
+                            priority
+                          )}`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-current" />
+                          {priority}
+                        </span>
+                      )}
+
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                          statusBadgeClasses(status)
+                        }
+                      >
+                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+                        {status.toUpperCase()}
+                      </span>
+
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
+                          paymentBadgeClasses(payment)
+                        }
+                      >
+                        <CreditCard className="h-3 w-3" />
+                        {payment.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1267,25 +1495,19 @@ export default function Page() {
                       }
                     >
                       <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                      {String(
-                        (selectedOrder as any).status || STATUS
-                      ).toUpperCase()}
+                      {String((selectedOrder as any).status || STATUS).toUpperCase()}
                     </span>
 
                     <span
                       className={
                         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
                         paymentBadgeClasses(
-                          String(
-                            (selectedOrder as any).payment_status || "pending"
-                          )
+                          String((selectedOrder as any).payment_status || "pending")
                         )
                       }
                     >
                       <CreditCard className="h-3 w-3" />
-                      {String(
-                        (selectedOrder as any).payment_status || "pending"
-                      ).toUpperCase()}
+                      {String((selectedOrder as any).payment_status || "pending").toUpperCase()}
                     </span>
                   </div>
                 )}
@@ -1320,9 +1542,7 @@ export default function Page() {
                   {/* Top summary */}
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="mb-0.5 text-xs text-neutral-400">
-                        Reference
-                      </p>
+                      <p className="mb-0.5 text-xs text-neutral-400">Reference</p>
                       <p className="font-mono text-sm text-white">
                         {(selectedOrder as any).reference}
                       </p>
@@ -1341,9 +1561,8 @@ export default function Page() {
                     <PatientProfileCard
                       user={orderedByUser}
                       priority={
-                        ((orderedByUser as any)?.user_priority as
-                          | string
-                          | undefined) || "yellow"
+                        ((orderedByUser as any)?.user_priority as string | undefined) ||
+                        "yellow"
                       }
                       onPriorityChange={handlePriorityChange}
                       prioritySaving={prioritySaving}
@@ -1351,9 +1570,7 @@ export default function Page() {
                     />
 
                     <div className="space-y-2 rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-4">
-                      <p className="mb-0.5 text-xs text-neutral-400">
-                        Appointment
-                      </p>
+                      <p className="mb-0.5 text-xs text-neutral-400">Appointment</p>
                       <p className="text-sm text-white">
                         {formatDateTime(extractAppointmentStart(selectedOrder))}
                       </p>
@@ -1366,50 +1583,208 @@ export default function Page() {
                     </div>
                   </div>
 
-                  {/* Items */}
+                  {/* Items (EDITABLE) */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-4 py-3">
-                    <div className="mb-2 flex items-center justify-between">
+                    <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
                         <p className="text-xs font-semibold text-neutral-200">
                           Items
                         </p>
-                      </div>
-                      <p className="text-xs text-neutral-400">
-                        Total:{" "}
-                        <span className="font-semibold text-white">
-                          {formatMoney(extractTotalMinor(selectedOrder))}
+                        <span className="rounded-full border border-neutral-800 bg-neutral-950/60 px-2 py-0.5 text-[10px] text-neutral-400">
+                          {itemsDraft.length}
                         </span>
-                      </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-neutral-400">
+                          Total:{" "}
+                          <span className="font-semibold text-white">
+                            {formatMoney(extractTotalMinor(selectedOrder))}
+                          </span>
+                        </p>
+
+                        {!itemsEditMode ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setItemsError(null);
+                              setItemsEditMode(true);
+                            }}
+                            className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900/60 px-3 py-1 text-[11px] font-semibold text-neutral-200 hover:border-emerald-500/70 hover:text-emerald-200"
+                          >
+                            Edit items
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleCancelItemsEdit}
+                              disabled={itemsSaving}
+                              className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900/60 px-3 py-1 text-[11px] font-semibold text-neutral-200 hover:border-neutral-500 disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveItems}
+                              disabled={itemsSaving}
+                              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/70 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-60"
+                            >
+                              {itemsSaving && (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              )}
+                              {itemsSaving ? "Saving…" : "Save items"}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
 
-                    {(selectedOrder as any)?.meta?.items?.length ? (
-                      <div className="space-y-1">
-                        {(selectedOrder as any).meta.items.map(
-                          (it: any, idx: number) => (
+                    {itemsError && (
+                      <div className="mb-2 rounded-lg border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-100">
+                        {itemsError}
+                      </div>
+                    )}
+
+                    {itemsDraft.length ? (
+                      <div className="space-y-2">
+                        {itemsDraft.map((it, idx) => {
+                          const qty = Math.max(1, toInt(it.qty, 1));
+                          const unitMinor =
+                            typeof it.unitMinor === "number" ? it.unitMinor : 0;
+                          const lineMinor = unitMinor * qty;
+
+                          return (
                             <div
                               key={idx}
-                              className="flex items-center justify-between border-b border-neutral-800/60 py-1 text-xs last:border-none"
+                              className="rounded-lg border border-neutral-800 bg-neutral-950/50 px-3 py-2"
                             >
-                              <div className="flex flex-col">
-                                <span className="font-medium text-white">
-                                  {it.name}
-                                </span>
-                                <span className="text-[11px] text-neutral-400">
-                                  {it.variation || it.variations || "Standard"}
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="block text-[11px] text-neutral-400">
-                                  Qty: {it.qty}
-                                </span>
-                                <span className="block text-[11px] text-neutral-300">
-                                  {formatMoney(it.totalMinor)}
-                                </span>
-                              </div>
+                              {!itemsEditMode ? (
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[12px] font-semibold text-white">
+                                      {it.name}
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] text-neutral-400">
+                                      {it.variation || "Standard"}
+                                    </p>
+                                  </div>
+
+                                  <div className="shrink-0 text-right">
+                                    <p className="text-[11px] text-neutral-400">
+                                      Qty: {qty}
+                                    </p>
+                                    <p className="mt-0.5 text-[12px] font-semibold text-neutral-100">
+                                      {formatMoney(
+                                        typeof it.totalMinor === "number"
+                                          ? it.totalMinor
+                                          : lineMinor
+                                      )}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 gap-2 md:grid-cols-12 md:items-end">
+                                  <div className="md:col-span-5">
+                                    <label className="block text-[10px] text-neutral-500">
+                                      Name
+                                    </label>
+                                    <input
+                                      value={String(it.name ?? "")}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setItemsDraft((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], name: v };
+                                          return next;
+                                        });
+                                      }}
+                                      className="mt-1 h-9 highlight-none w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 text-[12px] text-neutral-100 outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+
+                                  <div className="md:col-span-3">
+                                    <label className="block text-[10px] text-neutral-500">
+                                      Variation
+                                    </label>
+                                    <input
+                                      value={String(it.variation ?? "")}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setItemsDraft((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = {
+                                            ...next[idx],
+                                            variation: v,
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      className="mt-1 h-9 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 text-[12px] text-neutral-100 outline-none focus:border-emerald-500"
+                                      placeholder="e.g. 100 mg"
+                                    />
+                                  </div>
+
+                                  <div className="md:col-span-2">
+                                    <label className="block text-[10px] text-neutral-500">
+                                      Qty
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={qty}
+                                      onChange={(e) => {
+                                        const v = Math.max(1, toInt(e.target.value, 1));
+                                        setItemsDraft((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], qty: v };
+                                          return next;
+                                        });
+                                      }}
+                                      className="mt-1 h-9 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 text-[12px] text-neutral-100 outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+
+                                  <div className="md:col-span-2">
+                                    <label className="block text-[10px] text-neutral-500">
+                                      Unit price (£)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min={0}
+                                      value={toPoundsFromMinor(unitMinor)}
+                                      onChange={(e) => {
+                                        const minor = toMoneyMinorFromPoundsInput(
+                                          e.target.value
+                                        );
+                                        setItemsDraft((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = {
+                                            ...next[idx],
+                                            unitMinor: minor ?? 0,
+                                          };
+                                          return next;
+                                        });
+                                      }}
+                                      className="mt-1 h-9 w-full rounded-md border border-neutral-800 bg-neutral-950 px-2 text-[12px] text-neutral-100 outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+
+                                  <div className="md:col-span-12">
+                                    <p className="text-[11px] text-neutral-400">
+                                      Line total:{" "}
+                                      <span className="font-semibold text-neutral-100">
+                                        {formatMoney(lineMinor)}
+                                      </span>
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          )
-                        )}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="text-xs text-neutral-500">
@@ -1471,10 +1846,7 @@ export default function Page() {
                     {adminNotes.length > 0 && (
                       <ul className="mb-3 space-y-2">
                         {adminNotes.map((note, idx) => (
-                          <li
-                            key={idx}
-                            className="flex items-start gap-2 text-xs"
-                          >
+                          <li key={idx} className="flex items-start gap-2 text-xs">
                             <span className="mt-1 text-[10px] text-neutral-500">
                               #{idx + 1}
                             </span>
@@ -1517,6 +1889,37 @@ export default function Page() {
                         Add
                       </button>
                     </div>
+
+                    {/* Consultation notes (kept from your state, minimal UI if you want later) */}
+                    {consultationNotesEdit.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                        <p className="text-[11px] font-semibold text-neutral-200">
+                          Consultation notes
+                        </p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-neutral-200">
+                          {consultationNotesEdit.map((n, idx) => (
+                            <li key={idx} className="break-words">
+                              {n}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {rejectionNotes.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-rose-700/40 bg-rose-950/20 p-3">
+                        <p className="text-[11px] font-semibold text-rose-200">
+                          Rejection notes
+                        </p>
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-rose-100">
+                          {rejectionNotes.map((n, idx) => (
+                            <li key={idx} className="break-words">
+                              {n}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   {/* Start consultancy */}

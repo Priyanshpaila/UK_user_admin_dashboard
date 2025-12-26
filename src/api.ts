@@ -963,7 +963,6 @@ export async function deletePageApi(id: string) {
   return { success: true };
 }
 
-
 export async function uploadPageImageApi(
   file: File
 ): Promise<PageImageUploadResponse> {
@@ -1134,9 +1133,30 @@ export async function getOrderByIdApi(id: string) {
 }
 
 export type UpdateOrderPayload = {
-  status?: string; // "approved" | "rejected" | "completed" | etc.
-  admin_notes?: string[]; // our notes array
-  [key: string]: any; // allow future fields if needed
+  // status
+  status?: string; // "approved" | "rejected" | "completed" | "pending" | etc.
+
+  // notes
+  admin_notes?: string[];
+  consultation_notes?: string[]; // (your UI uses this)
+  consultant_notes?: string[]; // (backend may store this)
+  rejection_notes?: string[];
+
+  // audit fields
+  approved_by?: string;
+  approved_at?: string; // ISO string
+  rejected_by?: string;
+  rejected_at?: string; // ISO string
+
+  // common order fields you may update
+  payment_status?: string;
+  appointment_status?: string;
+
+  // ✅ important for items edit: update full meta without losing keys
+  meta?: any;
+
+  // allow future fields if needed
+  [key: string]: any;
 };
 
 export async function updateOrderStatusApi(
@@ -1144,8 +1164,20 @@ export async function updateOrderStatusApi(
   payload: UpdateOrderPayload
 ) {
   const base = getBackendBase();
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("session_token")
+      : null;
+
+  const headers: HeadersInit = {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
   return jsonFetch<OrderDto>(`${base}/orders/${id}`, {
     method: "PUT",
+    headers,
     body: JSON.stringify(payload),
   });
 }
@@ -1718,7 +1750,6 @@ export async function getRevenueBookingsAnalyticsApi(
   return jsonFetch<RevenueBookingsAnalyticsResponse>(url);
 }
 
-
 /* ------------------- Analytics APIs ------------------- */
 
 export type AnalyticsCommonParams = {
@@ -1828,8 +1859,6 @@ export type AnalyticsByServiceResponse = {
   data: AnalyticsByServiceRow[];
 };
 
-
-
 export async function getAnalyticsByServiceApi(
   params: AnalyticsCommonParams = {}
 ): Promise<AnalyticsByServiceResponse> {
@@ -1858,7 +1887,6 @@ export async function getAnalyticsByServiceApi(
 
   return jsonFetch<AnalyticsByServiceResponse>(url);
 }
-
 
 // ✅ Backward-compatible alias (some components import this name)
 export type RevenueBookingsResponse = RevenueBookingsAnalyticsResponse;

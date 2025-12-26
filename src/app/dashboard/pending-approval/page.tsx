@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
-  updateOrderStatusApi,
+  updateOrderStatusApi, // ✅ use same API as approve/reject
   getUserByIdApi,
   updateUserApi,
   getBackendBase,
@@ -19,7 +19,6 @@ import {
   Clock,
   XCircle,
   CreditCard,
-  CalendarDays,
   User as UserIcon,
   ArrowRight,
   Filter,
@@ -33,6 +32,8 @@ import {
   ShieldAlert,
   MapPin,
   Hash,
+  Pencil,
+  Save,
 } from "lucide-react";
 import { useOrdersStats } from "../orders-badge-context";
 
@@ -160,9 +161,7 @@ function resolveImageUrl(imagePath?: string | null): string {
   if (!imagePath) return "";
   if (/^https?:\/\//i.test(imagePath)) return imagePath;
 
-  const normalizedPath = imagePath.startsWith("/")
-    ? imagePath
-    : `/${imagePath}`;
+  const normalizedPath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
 
   const baseWithApi = getBackendBase();
   const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
@@ -236,6 +235,7 @@ function extractProductName(order: any): string {
     "Order"
   );
 }
+
 type OrderItemRow = {
   name: string;
   qty: number;
@@ -252,12 +252,9 @@ function toNumberOrNull(v: any): number | null {
 function extractOrderItems(order: any): OrderItemRow[] {
   const meta: any = order?.meta || {};
 
-  // primary (same as your approved page logic)
   const raw =
     meta?.items ??
-    // fallback used in some orders
     meta?.lines ??
-    // last resort
     order?.items ??
     [];
 
@@ -266,9 +263,7 @@ function extractOrderItems(order: any): OrderItemRow[] {
 
   return arr
     .map((it: any) => {
-      const name = String(
-        it?.name || it?.title || it?.medicine_name || "Item"
-      ).trim();
+      const name = String(it?.name || it?.title || it?.medicine_name || "Item").trim();
 
       const qtyRaw = it?.qty ?? it?.quantity ?? it?.count ?? 1;
       const qty = Math.max(1, toNumberOrNull(qtyRaw) ?? 1);
@@ -277,7 +272,6 @@ function extractOrderItems(order: any): OrderItemRow[] {
         it?.variation || it?.variations || it?.strength || "Standard"
       ).trim();
 
-      // prefer explicit minor fields
       const unitMinor =
         toNumberOrNull(it?.unitMinor) ??
         toNumberOrNull(it?.unit_minor) ??
@@ -290,7 +284,6 @@ function extractOrderItems(order: any): OrderItemRow[] {
         toNumberOrNull(it?.total_minor) ??
         null;
 
-      // compute if missing and unitMinor exists
       const totalMinor =
         totalMinorExplicit != null
           ? totalMinorExplicit
@@ -305,12 +298,9 @@ function extractOrderItems(order: any): OrderItemRow[] {
 
 /* ----------------- RAF extraction + render (SAME AS APPROVED PAGE) ----------------- */
 
-function getRafQAs(
-  order: any
-): Array<{ question: string; answer: string; raw?: any }> {
+function getRafQAs(order: any): Array<{ question: string; answer: string; raw?: any }> {
   const meta: any = order?.meta || {};
 
-  // preferred: meta.formsQA.raf.qa
   const forms = meta?.formsQA?.raf?.qa;
   if (Array.isArray(forms) && forms.length) {
     return forms.map((qa: any, idx: number) => ({
@@ -341,11 +331,7 @@ function getRafQAs(
       );
       const value = it?.value ?? it?.answer ?? it?.raw ?? it?.response ?? it;
 
-      if (
-        Array.isArray(value) &&
-        value.length &&
-        typeof value[0] === "object"
-      ) {
+      if (Array.isArray(value) && value.length && typeof value[0] === "object") {
         return {
           question,
           answer: `${value.length} attachment${value.length === 1 ? "" : "s"}`,
@@ -498,6 +484,92 @@ function extractRejectionNotes(order: any): string[] {
   return normaliseStringArray(raw);
 }
 
+/* ----------------- NEW: Safe meta item editing helpers ----------------- */
+
+function deepClone<T>(v: T): T {
+  if (v == null) return v;
+  try {
+    return JSON.parse(JSON.stringify(v));
+  } catch {
+    return v;
+  }
+}
+
+function computeUnitMinorFallback(it: any): number {
+  const qty = Math.max(1, Math.floor(toNumberOrNull(it?.qty ?? it?.quantity) ?? 1));
+  const totalMinor =
+    toNumberOrNull(it?.totalMinor) ??
+    toNumberOrNull(it?.total_minor) ??
+    null;
+  if (totalMinor != null) return Math.max(0, Math.round(totalMinor / qty));
+  const priceMajor = toNumberOrNull(it?.price) ?? null;
+  if (priceMajor != null) return Math.max(0, Math.round(priceMajor * 100));
+  return 0;
+}
+
+function normalizeEditableItem(it: any, idx: number) {
+  const qty = Math.max(1, Math.floor(toNumberOrNull(it?.qty ?? it?.quantity) ?? 1));
+  const unitMinor =
+    Math.max(
+      0,
+      Math.floor(
+        toNumberOrNull(it?.unitMinor ?? it?.unit_minor ?? it?.priceMinor ?? it?.price_minor) ??
+          computeUnitMinorFallback(it)
+      )
+    ) || 0;
+
+  const totalMinor = unitMinor * qty;
+  const variation = String(it?.variation || it?.strength || "Standard").trim();
+  const name = String(it?.name || it?.title || it?.medicine_name || "Item").trim();
+
+  return {
+    ...it,
+    __key: String(it?.sku || it?._id || it?.id || idx),
+    name,
+    variation,
+    qty,
+    unitMinor,
+    totalMinor,
+    unit_minor: unitMinor,
+    total_minor: totalMinor,
+    price: unitMinor / 100,
+    line_total: totalMinor / 100,
+  };
+}
+
+function getMetaItemsSource(order: any): { source: "items" | "lines" | "none"; arr: any[] } {
+  const meta: any = order?.meta || {};
+  const items = Array.isArray(meta?.items) ? meta.items : [];
+  const lines = Array.isArray(meta?.lines) ? meta.lines : [];
+  if (items.length) return { source: "items", arr: items };
+  if (lines.length) return { source: "lines", arr: lines };
+  return { source: "none", arr: [] };
+}
+
+function calcTotalsFromEditableItems(items: any[], baseMeta: any) {
+  const subtotalMinor = items.reduce((sum, it) => {
+    const qty = Math.max(1, Math.floor(toNumberOrNull(it?.qty) ?? 1));
+    const unitMinor = Math.max(0, Math.floor(toNumberOrNull(it?.unitMinor) ?? 0));
+    return sum + qty * unitMinor;
+  }, 0);
+
+  const feesMinor =
+    toNumberOrNull(baseMeta?.feesMinor) ??
+    toNumberOrNull(baseMeta?.fees_minor) ??
+    0;
+
+  const totalMinor = subtotalMinor + feesMinor;
+
+  return {
+    subtotalMinor,
+    feesMinor,
+    totalMinor,
+    subtotal: subtotalMinor / 100,
+    fees: feesMinor / 100,
+    total: totalMinor / 100,
+  };
+}
+
 /* ----------------------------- Page ----------------------------- */
 
 export default function Page() {
@@ -508,9 +580,7 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   // cache of users for list: user_id -> user
-  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>(
-    {}
-  );
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>({});
   const orderUsersRef = useRef<Record<string, UserDto | null>>({});
   useEffect(() => {
     orderUsersRef.current = orderUsers;
@@ -532,39 +602,34 @@ export default function Page() {
   const [newConsultationNote, setNewConsultationNote] = useState("");
 
   // rejection notes
-  const [existingRejectionNotes, setExistingRejectionNotes] = useState<
-    string[]
-  >([]);
+  const [existingRejectionNotes, setExistingRejectionNotes] = useState<string[]>([]);
   const [newRejectionNotes, setNewRejectionNotes] = useState<string[]>([]);
   const [rejectionNoteInput, setRejectionNoteInput] = useState("");
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
 
   // approve / reject action state
-  const [statusAction, setStatusAction] = useState<
-    "approved" | "rejected" | null
-  >(null);
+  const [statusAction, setStatusAction] = useState<"approved" | "rejected" | null>(null);
 
   // verification buttons state
-  const [verifyingField, setVerifyingField] = useState<
-    "scr_verified" | "id_verified" | null
-  >(null);
-  const [verificationError, setVerificationError] = useState<string | null>(
-    null
-  );
+  const [verifyingField, setVerifyingField] = useState<"scr_verified" | "id_verified" | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   // priority editing state
   const [prioritySaving, setPrioritySaving] = useState(false);
   const [priorityError, setPriorityError] = useState<string | null>(null);
 
-  // previous orders state (NEW)
+  // previous orders state
   const [previousOrders, setPreviousOrders] = useState<OrderDto[]>([]);
-  const [previousOrdersMeta, setPreviousOrdersMeta] =
-    useState<OrdersListMeta | null>(null);
+  const [previousOrdersMeta, setPreviousOrdersMeta] = useState<OrdersListMeta | null>(null);
   const [previousOrdersLoading, setPreviousOrdersLoading] = useState(false);
-  const [previousOrdersError, setPreviousOrdersError] = useState<string | null>(
-    null
-  );
+  const [previousOrdersError, setPreviousOrdersError] = useState<string | null>(null);
+
+  // ✅ NEW: item editing state (safe meta merge)
+  const [itemsEditing, setItemsEditing] = useState(false);
+  const [itemsDraft, setItemsDraft] = useState<any[]>([]);
+  const [itemsSaveLoading, setItemsSaveLoading] = useState(false);
+  const [itemsSaveError, setItemsSaveError] = useState<string | null>(null);
 
   // global stats actions (for sidebar badges)
   const { applyStatusChange, refresh: refreshStats } = useOrdersStats();
@@ -615,9 +680,7 @@ export default function Page() {
         ) as string[];
 
         const currentUsers = orderUsersRef.current;
-        const missingIds = uniqueUserIds.filter(
-          (id) => currentUsers[id] === undefined
-        );
+        const missingIds = uniqueUserIds.filter((id) => currentUsers[id] === undefined);
 
         if (missingIds.length) {
           const results = await Promise.all(
@@ -672,10 +735,20 @@ export default function Page() {
     setRejectError(null);
   }
 
-  async function fetchPreviousOrdersForUser(
-    userId: string,
-    excludeId?: string
-  ) {
+  // ✅ NEW: hydrate items draft (from meta.items or meta.lines), preserving full object fields
+  function hydrateItems(order: OrderDto) {
+    const { arr } = getMetaItemsSource(order);
+    const cloned = deepClone(arr);
+    const normalized = (Array.isArray(cloned) ? cloned : []).map((it: any, idx: number) =>
+      normalizeEditableItem(it, idx)
+    );
+    setItemsDraft(normalized);
+    setItemsEditing(false);
+    setItemsSaveError(null);
+    setItemsSaveLoading(false);
+  }
+
+  async function fetchPreviousOrdersForUser(userId: string, excludeId?: string) {
     setPreviousOrdersLoading(true);
     setPreviousOrdersError(null);
     setPreviousOrders([]);
@@ -690,9 +763,7 @@ export default function Page() {
 
       const { orders: list, meta: m } = unwrapOrdersList(res);
 
-      const filtered = excludeId
-        ? list.filter((o) => idOf(o) !== excludeId)
-        : list;
+      const filtered = excludeId ? list.filter((o) => idOf(o) !== excludeId) : list;
 
       filtered.sort((a: any, b: any) => {
         const ta = new Date(
@@ -731,16 +802,22 @@ export default function Page() {
     setPreviousOrdersError(null);
     setPreviousOrdersLoading(false);
 
+    // ✅ reset item editing state
+    setItemsEditing(false);
+    setItemsDraft([]);
+    setItemsSaveError(null);
+    setItemsSaveLoading(false);
+
     try {
       const orderRes = await getOrderByIdApi(id);
       const order = unwrapOrder(orderRes);
 
       setSelectedOrder(order);
       hydrateNotes(order);
+      hydrateItems(order);
 
       const userId = extractUserIdFromOrder(order);
       if (userId) {
-        // use cache first for patient
         if (orderUsersRef.current[userId] !== undefined) {
           setOrderedByUser(orderUsersRef.current[userId] || null);
         } else {
@@ -754,7 +831,6 @@ export default function Page() {
           }
         }
 
-        // load user's previous orders (NEW)
         await fetchPreviousOrdersForUser(userId, idOf(order));
       }
     } catch (e: any) {
@@ -777,6 +853,12 @@ export default function Page() {
     setPreviousOrdersMeta(null);
     setPreviousOrdersError(null);
     setPreviousOrdersLoading(false);
+
+    // ✅ reset item editing state
+    setItemsEditing(false);
+    setItemsDraft([]);
+    setItemsSaveError(null);
+    setItemsSaveLoading(false);
   }
 
   // helpers for notes
@@ -817,17 +899,169 @@ export default function Page() {
     setMeta((prev) => {
       if (!prev) return prev;
       const next: any = { ...prev };
-      if (typeof next.total === "number")
-        next.total = Math.max(0, next.total - 1);
+      if (typeof next.total === "number") next.total = Math.max(0, next.total - 1);
       if (typeof next.totalItems === "number")
         next.totalItems = Math.max(0, next.totalItems - 1);
       return next;
     });
   }
 
+  // ✅ NEW: start/cancel item edit
+  function startItemsEdit() {
+    if (!selectedOrder) return;
+    const { arr } = getMetaItemsSource(selectedOrder);
+    if (!arr.length) return;
+    setItemsSaveError(null);
+    setItemsEditing(true);
+  }
+
+  function cancelItemsEdit() {
+    if (!selectedOrder) {
+      setItemsEditing(false);
+      setItemsDraft([]);
+      return;
+    }
+    hydrateItems(selectedOrder);
+  }
+
+  // ✅ NEW: update draft row helpers
+  function updateDraftRow(idx: number, patch: Partial<any>) {
+    setItemsDraft((prev) => {
+      const next = [...prev];
+      const current = next[idx] || {};
+      const merged = { ...current, ...patch };
+      next[idx] = normalizeEditableItem(merged, idx);
+      return next;
+    });
+  }
+
+  function removeDraftRow(idx: number) {
+    setItemsDraft((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // ✅ NEW: save edited items safely into meta WITHOUT losing other meta keys
+  async function saveItemsEdit() {
+    if (!selectedOrder) return;
+
+    const selectedId = idOf(selectedOrder);
+    const baseMeta: any = deepClone((selectedOrder as any)?.meta || {});
+    const baseItems: any[] = Array.isArray(baseMeta?.items) ? deepClone(baseMeta.items) : [];
+    const baseLines: any[] = Array.isArray(baseMeta?.lines) ? deepClone(baseMeta.lines) : [];
+
+    if (!itemsDraft.length) {
+      setItemsSaveError("No items to save.");
+      return;
+    }
+
+    setItemsSaveLoading(true);
+    setItemsSaveError(null);
+    setDetailError(null);
+
+    try {
+      // normalize each draft item (keeps unknown fields), and ensure totals
+      const normalizedDraft = itemsDraft.map((it: any, idx: number) =>
+        normalizeEditableItem(it, idx)
+      );
+
+      // update meta.items by index (preserve existing fields where possible)
+      const updatedItems = normalizedDraft.map((it: any, idx: number) => {
+        const prev = baseItems[idx] || {};
+        const merged = { ...prev, ...it };
+        // strip internal key
+        const { __key, ...clean } = merged;
+        return clean;
+      });
+
+      // update meta.lines by index (preserve existing fields where possible)
+      const updatedLines = normalizedDraft.map((it: any, idx: number) => {
+        const prev = baseLines[idx] || {};
+        const merged = {
+          ...prev,
+          index: prev?.index ?? idx,
+          name: it.name,
+          qty: it.qty,
+          variation: it.variation,
+          unitMinor: it.unitMinor,
+          totalMinor: it.totalMinor,
+          unit_minor: it.unitMinor,
+          total_minor: it.totalMinor,
+          price: it.unitMinor / 100,
+          line_total: it.totalMinor / 100,
+          sku: it?.sku || prev?.sku,
+        };
+        const { __key, ...clean } = merged as any;
+        return clean;
+      });
+
+      // recompute totals (subtotal/total) but keep feesMinor untouched
+      const totals = calcTotalsFromEditableItems(normalizedDraft, baseMeta);
+
+      // update selectedProduct (keep other keys)
+      const first = normalizedDraft[0];
+      const nextSelectedProduct = {
+        ...(baseMeta?.selectedProduct || {}),
+        name: first?.name,
+        variation: first?.variation,
+        strength: (first?.strength ?? first?.variation) || (baseMeta?.selectedProduct?.strength ?? null),
+        qty: first?.qty,
+        unitMinor: first?.unitMinor,
+        totalMinor: first?.totalMinor,
+        price: first?.unitMinor / 100,
+        line_total: first?.totalMinor / 100,
+        currency: baseMeta?.currency || (baseMeta?.selectedProduct?.currency ?? "GBP"),
+      };
+
+      // ✅ IMPORTANT: send FULL meta object so nothing vanishes
+      const nextMeta = {
+        ...baseMeta,
+        items: updatedItems,
+        lines: updatedLines,
+        subtotalMinor: totals.subtotalMinor,
+        totalMinor: totals.totalMinor,
+        subtotal: totals.subtotal,
+        total: totals.total,
+        // keep feesMinor/fees as-is, but also normalize if missing
+        feesMinor:
+          toNumberOrNull(baseMeta?.feesMinor) ??
+          toNumberOrNull(baseMeta?.fees_minor) ??
+          totals.feesMinor,
+        fees:
+          toNumberOrNull(baseMeta?.fees) ??
+          (toNumberOrNull(baseMeta?.feesMinor) ?? toNumberOrNull(baseMeta?.fees_minor) ?? totals.feesMinor) / 100,
+        selectedProduct: nextSelectedProduct,
+      };
+
+      // ✅ Use SAME update API
+      const updatedRes = await updateOrderStatusApi(selectedId, {
+        meta: nextMeta,
+      });
+
+      const updated = unwrapOrder(updatedRes);
+
+      // update drawer order + list row
+      setSelectedOrder(updated);
+      setOrders((prev) => prev.map((o: any) => (idOf(o) === selectedId ? updated : o)));
+
+      // refresh draft from returned order
+      hydrateItems(updated);
+
+      setItemsEditing(false);
+    } catch (e: any) {
+      setItemsSaveError(e?.message || "Failed to save items.");
+    } finally {
+      setItemsSaveLoading(false);
+    }
+  }
+
   // approve (FIXED: only remove selected order, not all)
   async function handleApprove() {
     if (!selectedOrder) return;
+
+    // ✅ prevent approving while items edit is open (avoids accidental losing edits)
+    if (itemsEditing) {
+      setDetailError("Please save or cancel item edits before approving.");
+      return;
+    }
 
     const selectedId = idOf(selectedOrder);
     const prevStatus = String((selectedOrder as any).status || "pending");
@@ -849,12 +1083,8 @@ export default function Page() {
       const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(
-        prevStatus,
-        String((updated as any).status || "approved")
-      );
+      applyStatusChange(prevStatus, String((updated as any).status || "approved"));
 
-      // ✅ remove only this order from pending list
       setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
       bumpMetaAfterRemove();
 
@@ -869,11 +1099,16 @@ export default function Page() {
 
   // open reject dialog
   function openRejectDialog() {
+    // ✅ prevent reject while items edit is open
+    if (itemsEditing) {
+      setDetailError("Please save or cancel item edits before rejecting.");
+      return;
+    }
     setShowRejectDialog(true);
     setRejectError(null);
   }
 
-  // confirm reject (with rejection notes) (FIXED: only remove selected order, not all)
+  // confirm reject (with rejection notes)
   async function confirmReject() {
     if (!selectedOrder) return;
 
@@ -909,12 +1144,8 @@ export default function Page() {
       const updatedRes = await updateOrderStatusApi(selectedId, payload);
       const updated = unwrapOrder(updatedRes);
 
-      applyStatusChange(
-        prevStatus,
-        String((updated as any).status || "rejected")
-      );
+      applyStatusChange(prevStatus, String((updated as any).status || "rejected"));
 
-      // ✅ remove only this order from pending list
       setOrders((prev) => prev.filter((o: any) => idOf(o) !== selectedId));
       bumpMetaAfterRemove();
 
@@ -932,11 +1163,9 @@ export default function Page() {
   const isWeightManagement =
     selectedOrder &&
     (((selectedOrder as any).service_slug &&
-      String((selectedOrder as any).service_slug).toLowerCase() ===
-        "weight-management") ||
+      String((selectedOrder as any).service_slug).toLowerCase() === "weight-management") ||
       ((selectedOrder as any).service_name &&
-        String((selectedOrder as any).service_name).toLowerCase() ===
-          "weight management"));
+        String((selectedOrder as any).service_name).toLowerCase() === "weight management"));
 
   // priority change
   async function handlePriorityChange(newPriority: string) {
@@ -951,7 +1180,6 @@ export default function Page() {
     setPriorityError(null);
 
     try {
-      // optimistic local update
       setOrderedByUser({
         ...(orderedByUser as any),
         user_priority: newPriority,
@@ -972,7 +1200,6 @@ export default function Page() {
     } catch (e: any) {
       console.error("Failed to update priority", e);
       setPriorityError(e?.message || "Failed to update priority status.");
-      // revert
       setOrderedByUser((prev) =>
         prev
           ? ({
@@ -1051,6 +1278,12 @@ export default function Page() {
     });
   }, [orders, orderUsers]);
 
+  // ✅ computed totals for draft (used in edit UI)
+  const itemsDraftTotals = useMemo(() => {
+    const baseMeta: any = (selectedOrder as any)?.meta || {};
+    return calcTotalsFromEditableItems(itemsDraft, baseMeta);
+  }, [itemsDraft, selectedOrder]);
+
   return (
     <>
       <div className="mx-auto max-w-7xl px-4 py-6">
@@ -1074,14 +1307,12 @@ export default function Page() {
             </div>
             <span className="text-xs text-neutral-500">
               {totalPending} pending{" "}
-              {meta
-                ? `• page ${(meta as any).page} of ${(meta as any).totalPages}`
-                : ""}
+              {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
             </span>
           </div>
         </div>
 
-        {/* List content (LIST FORM) */}
+        {/* List content */}
         {loading ? (
           <div className="flex items-center justify-center py-20 text-neutral-300">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -1101,18 +1332,12 @@ export default function Page() {
               <table className="min-w-full text-xs">
                 <thead className="bg-neutral-900/80 text-[11px] uppercase tracking-wide text-neutral-500">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium">
-                      Reference
-                    </th>
+                    <th className="px-3 py-2 text-left font-medium">Reference</th>
                     <th className="px-3 py-2 text-left font-medium">Patient</th>
                     <th className="px-3 py-2 text-left font-medium">
                       Product / Service
                     </th>
-
-                    <th className="px-3 py-2 text-left font-medium">
-                      Priority
-                    </th>
-
+                    <th className="px-3 py-2 text-left font-medium">Priority</th>
                     <th className="px-3 py-2 text-right font-medium">Total</th>
                     <th className="px-3 py-2 text-right font-medium"></th>
                   </tr>
@@ -1127,13 +1352,8 @@ export default function Page() {
                       listUser,
                       priority,
                       totalMinor,
-                      appointmentAt,
                       productName,
                     }) => {
-                      const status = String(order?.status || "pending");
-                      const payment = String(
-                        order?.payment_status || "pending"
-                      );
                       const email =
                         (listUser as any)?.email ||
                         (order as any)?.email ||
@@ -1232,16 +1452,13 @@ export default function Page() {
                 </p>
                 <p className="text-sm font-semibold text-white">
                   {selectedOrder
-                    ? (selectedOrder as any).reference ||
-                      (selectedOrder as any)._id
+                    ? (selectedOrder as any).reference || (selectedOrder as any)._id
                     : "—"}
                 </p>
                 <p className="mt-1 flex items-center gap-1 text-[11px] text-neutral-400">
                   <ClipboardList className="h-3 w-3" />
                   <span>
-                    {selectedOrder
-                      ? (selectedOrder as any).service_name || "Service"
-                      : "—"}
+                    {selectedOrder ? (selectedOrder as any).service_name || "Service" : "—"}
                   </span>
                 </p>
 
@@ -1251,30 +1468,21 @@ export default function Page() {
                       <span
                         className={[
                           "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                          statusBadgeClasses(
-                            String((selectedOrder as any).status)
-                          ),
+                          statusBadgeClasses(String((selectedOrder as any).status)),
                         ].join(" ")}
                       >
-                        {String((selectedOrder as any).status) ===
-                        "approved" ? (
+                        {String((selectedOrder as any).status) === "approved" ? (
                           <CheckCircle2 className="h-3 w-3" />
-                        ) : String((selectedOrder as any).status) ===
-                          "pending" ? (
+                        ) : String((selectedOrder as any).status) === "pending" ? (
                           <Clock className="h-3 w-3" />
-                        ) : String((selectedOrder as any).status) ===
-                            "rejected" ||
-                          String((selectedOrder as any).status) ===
-                            "cancelled" ? (
+                        ) : String((selectedOrder as any).status) === "rejected" ||
+                          String((selectedOrder as any).status) === "cancelled" ? (
                           <XCircle className="h-3 w-3" />
                         ) : (
                           <ClipboardList className="h-3 w-3" />
                         )}
                         <span className="capitalize">
-                          {String((selectedOrder as any).status).replace(
-                            /_/g,
-                            " "
-                          )}
+                          {String((selectedOrder as any).status).replace(/_/g, " ")}
                         </span>
                       </span>
                     )}
@@ -1283,16 +1491,12 @@ export default function Page() {
                       <span
                         className={[
                           "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
-                          paymentBadgeClasses(
-                            String((selectedOrder as any).payment_status)
-                          ),
+                          paymentBadgeClasses(String((selectedOrder as any).payment_status)),
                         ].join(" ")}
                       >
                         <CreditCard className="h-3 w-3" />
                         <span className="capitalize">
-                          {String(
-                            (selectedOrder as any).payment_status
-                          ).replace(/_/g, " ")}
+                          {String((selectedOrder as any).payment_status).replace(/_/g, " ")}
                         </span>
                       </span>
                     )}
@@ -1341,12 +1545,8 @@ export default function Page() {
                             <span>
                               {orderedByUser
                                 ? (orderedByUser as any).gender
-                                  ? String((orderedByUser as any).gender)
-                                      .charAt(0)
-                                      .toUpperCase() +
-                                    String((orderedByUser as any).gender).slice(
-                                      1
-                                    )
+                                  ? String((orderedByUser as any).gender).charAt(0).toUpperCase() +
+                                    String((orderedByUser as any).gender).slice(1)
                                   : "Gender: —"
                                 : "Gender: —"}
                             </span>
@@ -1356,20 +1556,13 @@ export default function Page() {
                             <Hash className="h-3.5 w-3.5 text-neutral-500" />
                             <span>
                               DOB:{" "}
-                              {orderedByUser
-                                ? formatDateOnly((orderedByUser as any).dob)
-                                : "—"}
+                              {orderedByUser ? formatDateOnly((orderedByUser as any).dob) : "—"}
                               {orderedByUser &&
                               (orderedByUser as any).dob &&
-                              calculateAgeFromDob((orderedByUser as any).dob) !=
-                                null ? (
+                              calculateAgeFromDob((orderedByUser as any).dob) != null ? (
                                 <span className="text-neutral-400">
                                   {" "}
-                                  (
-                                  {calculateAgeFromDob(
-                                    (orderedByUser as any).dob
-                                  )}{" "}
-                                  yrs)
+                                  ({calculateAgeFromDob((orderedByUser as any).dob)} yrs)
                                 </span>
                               ) : null}
                             </span>
@@ -1380,18 +1573,14 @@ export default function Page() {
                           {(orderedByUser as any)?.email && (
                             <span className="inline-flex items-center gap-1">
                               <Mail className="h-3.5 w-3.5 text-neutral-500" />
-                              <span className="break-all">
-                                {(orderedByUser as any).email}
-                              </span>
+                              <span className="break-all">{(orderedByUser as any).email}</span>
                             </span>
                           )}
-                          {((orderedByUser as any)?.phone ||
-                            (orderedByUser as any)?.phoneNumber) && (
+                          {((orderedByUser as any)?.phone || (orderedByUser as any)?.phoneNumber) && (
                             <span className="inline-flex items-center gap-1">
                               <Phone className="h-3.5 w-3.5 text-neutral-500" />
                               <span>
-                                {(orderedByUser as any).phone ||
-                                  (orderedByUser as any).phoneNumber}
+                                {(orderedByUser as any).phone || (orderedByUser as any).phoneNumber}
                               </span>
                             </span>
                           )}
@@ -1404,23 +1593,16 @@ export default function Page() {
                           className={[
                             "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
                             priorityBadgeClasses(
-                              ((orderedByUser as any)
-                                ?.user_priority as string) || "yellow"
+                              ((orderedByUser as any)?.user_priority as string) || "yellow"
                             ),
                           ].join(" ")}
                         >
                           <span className="h-2 w-2 rounded-full bg-current" />
-                          {String(
-                            ((orderedByUser as any)?.user_priority as string) ||
-                              "yellow"
-                          ).toLowerCase()}
+                          {String(((orderedByUser as any)?.user_priority as string) || "yellow").toLowerCase()}
                         </span>
 
                         <select
-                          value={String(
-                            ((orderedByUser as any)?.user_priority as string) ||
-                              "yellow"
-                          ).toLowerCase()}
+                          value={String(((orderedByUser as any)?.user_priority as string) || "yellow").toLowerCase()}
                           disabled={prioritySaving || !orderedByUser}
                           onChange={(e) => handlePriorityChange(e.target.value)}
                           className="mt-1 h-7 rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
@@ -1476,9 +1658,7 @@ export default function Page() {
                             Verification (Weight Management)
                           </p>
                           {verificationError && (
-                            <p className="text-[11px] text-rose-200">
-                              {verificationError}
-                            </p>
+                            <p className="text-[11px] text-rose-200">{verificationError}</p>
                           )}
                         </div>
 
@@ -1486,10 +1666,7 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleVerify("scr_verified")}
-                            disabled={
-                              verifyingField === "scr_verified" ||
-                              !orderedByUser
-                            }
+                            disabled={verifyingField === "scr_verified" || !orderedByUser}
                             className={[
                               "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
                               (orderedByUser as any)?.scr_verified
@@ -1514,9 +1691,7 @@ export default function Page() {
                           <button
                             type="button"
                             onClick={() => handleVerify("id_verified")}
-                            disabled={
-                              verifyingField === "id_verified" || !orderedByUser
-                            }
+                            disabled={verifyingField === "id_verified" || !orderedByUser}
                             className={[
                               "inline-flex items-center gap-2 rounded-md border px-3 py-1 text-[11px]",
                               (orderedByUser as any)?.id_verified
@@ -1552,8 +1727,7 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Reference</dt>
                         <dd className="text-neutral-100">
-                          {(selectedOrder as any).reference ||
-                            (selectedOrder as any)._id}
+                          {(selectedOrder as any).reference || (selectedOrder as any)._id}
                         </dd>
                       </div>
 
@@ -1568,8 +1742,7 @@ export default function Page() {
                         <dt className="text-neutral-500">Created at</dt>
                         <dd className="text-neutral-100">
                           {formatDateTime(
-                            (selectedOrder as any).createdAt ||
-                              (selectedOrder as any).created_at
+                            (selectedOrder as any).createdAt || (selectedOrder as any).created_at
                           )}
                         </dd>
                       </div>
@@ -1577,9 +1750,7 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Appointment</dt>
                         <dd className="text-neutral-100">
-                          {formatDateTime(
-                            extractAppointmentStart(selectedOrder)
-                          )}
+                          {formatDateTime(extractAppointmentStart(selectedOrder))}
                         </dd>
                       </div>
 
@@ -1593,76 +1764,213 @@ export default function Page() {
                       <div>
                         <dt className="text-neutral-500">Payment</dt>
                         <dd className="text-neutral-100 capitalize">
-                          {String(
-                            (selectedOrder as any).payment_status || "—"
-                          ).replace(/_/g, " ")}
+                          {String((selectedOrder as any).payment_status || "—").replace(/_/g, " ")}
                         </dd>
                       </div>
                     </dl>
                   </div>
-                  {/* Items (NEW in side drawer) */}
+
+                  {/* ✅ Items (editable, safe meta merge) */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2">
                         <ClipboardList className="h-4 w-4 text-neutral-300" />
-                        <p className="text-xs font-semibold text-neutral-200">
-                          Items
-                        </p>
+                        <p className="text-xs font-semibold text-neutral-200">Items</p>
                         <span className="rounded-full border border-neutral-800 bg-neutral-950/60 px-2 py-0.5 text-[10px] text-neutral-400">
-                          {extractOrderItems(selectedOrder).length}
+                          {itemsEditing ? itemsDraft.length : extractOrderItems(selectedOrder).length}
                         </span>
                       </div>
 
-                      <p className="text-[11px] text-neutral-400">
-                        Total:{" "}
-                        <span className="font-semibold text-neutral-100">
-                          {formatMoney(extractTotalMinor(selectedOrder))}
-                        </span>
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] text-neutral-400">
+                          Total:{" "}
+                          <span className="font-semibold text-neutral-100">
+                            {itemsEditing
+                              ? formatMoney(itemsDraftTotals.totalMinor)
+                              : formatMoney(extractTotalMinor(selectedOrder))}
+                          </span>
+                        </p>
+
+                        {!itemsEditing ? (
+                          <button
+                            type="button"
+                            onClick={startItemsEdit}
+                            disabled={!getMetaItemsSource(selectedOrder).arr.length}
+                            className="inline-flex h-7 items-center gap-2 rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100 disabled:opacity-50"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={cancelItemsEdit}
+                              disabled={itemsSaveLoading}
+                              className="inline-flex h-7 items-center gap-2 rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-[11px] text-neutral-200 hover:border-neutral-500 disabled:opacity-50"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              Cancel
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={saveItemsEdit}
+                              disabled={itemsSaveLoading}
+                              className="inline-flex h-7 items-center gap-2 rounded-md border border-emerald-600 bg-emerald-600 px-2 text-[11px] text-white hover:bg-emerald-500 disabled:opacity-60"
+                            >
+                              {itemsSaveLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Save className="h-3.5 w-3.5" />
+                              )}
+                              Save
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
 
-                    {extractOrderItems(selectedOrder).length ? (
-                      <div className="space-y-1">
-                        {extractOrderItems(selectedOrder).map((it, idx) => (
-                          <div
-                            key={idx}
-                            className="flex items-start justify-between gap-3 border-b border-neutral-800/60 py-2 last:border-none"
-                          >
-                            <div className="min-w-0">
-                              <p className="truncate text-[11px] font-semibold text-neutral-100">
-                                {it.name}
-                              </p>
-                              <p className="mt-0.5 text-[10px] text-neutral-500">
-                                {it.variation || "Standard"}
-                              </p>
+                    {itemsSaveError && (
+                      <div className="mb-2 rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-[11px] text-rose-100">
+                        {itemsSaveError}
+                      </div>
+                    )}
+
+                    {!itemsEditing ? (
+                      extractOrderItems(selectedOrder).length ? (
+                        <div className="space-y-1">
+                          {extractOrderItems(selectedOrder).map((it, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-start justify-between gap-3 border-b border-neutral-800/60 py-2 last:border-none"
+                            >
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-semibold text-neutral-100">
+                                  {it.name}
+                                </p>
+                                <p className="mt-0.5 text-[10px] text-neutral-500">
+                                  {it.variation || "Standard"}
+                                </p>
+                              </div>
+
+                              <div className="shrink-0 text-right">
+                                <p className="text-[10px] text-neutral-400">Qty: {it.qty}</p>
+
+                                {it.totalMinor != null ? (
+                                  <p className="mt-0.5 text-[11px] font-semibold text-neutral-100">
+                                    {formatMoney(it.totalMinor)}
+                                  </p>
+                                ) : (
+                                  <p className="mt-0.5 text-[10px] text-neutral-600">—</p>
+                                )}
+                              </div>
                             </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-neutral-500">No items found on this order.</p>
+                      )
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2 text-[11px] text-neutral-300">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-neutral-400">Subtotal:</span>
+                            <span className="font-semibold text-neutral-100">
+                              {formatMoney(itemsDraftTotals.subtotalMinor)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-neutral-400">Fees:</span>
+                            <span className="font-semibold text-neutral-100">
+                              {formatMoney(itemsDraftTotals.feesMinor)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-neutral-400">Total:</span>
+                            <span className="font-semibold text-neutral-100">
+                              {formatMoney(itemsDraftTotals.totalMinor)}
+                            </span>
+                          </div>
+                        </div>
 
-                            <div className="shrink-0 text-right">
-                              <p className="text-[10px] text-neutral-400">
-                                Qty: {it.qty}
-                              </p>
+                        {itemsDraft.map((it, idx) => (
+                          <div
+                            key={String(it.__key || idx)}
+                            className="rounded-lg border border-neutral-800 bg-neutral-950/60 px-3 py-2"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-semibold text-neutral-100">
+                                  {it.name}
+                                </p>
 
-                              {it.totalMinor != null ? (
-                                <p className="mt-0.5 text-[11px] font-semibold text-neutral-100">
-                                  {formatMoney(it.totalMinor)}
+                                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <p className="text-[10px] text-neutral-500">Variation</p>
+                                    <input
+                                      value={String(it.variation || "")}
+                                      onChange={(e) => updateDraftRow(idx, { variation: e.target.value })}
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
+                                      placeholder="e.g., 100 mg"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[10px] text-neutral-500">Qty</p>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={Number(it.qty || 1)}
+                                      onChange={(e) =>
+                                        updateDraftRow(idx, { qty: Math.max(1, Math.floor(Number(e.target.value || 1))) })
+                                      }
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <p className="text-[10px] text-neutral-500">Unit price (£)</p>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min={0}
+                                      value={Number(((Number(it.unitMinor || 0) || 0) / 100).toFixed(2))}
+                                      onChange={(e) => {
+                                        const v = Number(e.target.value);
+                                        const minor = Number.isFinite(v) ? Math.max(0, Math.round(v * 100)) : 0;
+                                        updateDraftRow(idx, { unitMinor: minor });
+                                      }}
+                                      className="mt-1 h-8 w-full rounded-md border border-neutral-700 bg-neutral-950/60 px-2 text-[11px] text-neutral-100 outline-none focus:border-emerald-500"
+                                    />
+                                  </div>
+                                </div>
+
+                                <p className="mt-2 text-[10px] text-neutral-400">
+                                  Line total:{" "}
+                                  <span className="font-semibold text-neutral-100">
+                                    {formatMoney(Number(it.totalMinor || 0))}
+                                  </span>
                                 </p>
-                              ) : (
-                                <p className="mt-0.5 text-[10px] text-neutral-600">
-                                  —
-                                </p>
-                              )}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => removeDraftRow(idx)}
+                                disabled={itemsSaveLoading}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/60 text-neutral-300 hover:border-rose-500/70 hover:text-rose-200 disabled:opacity-50"
+                                title="Remove item"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                           </div>
                         ))}
                       </div>
-                    ) : (
-                      <p className="text-[11px] text-neutral-500">
-                        No items found on this order.
-                      </p>
                     )}
                   </div>
 
-                  {/* RAF (NOW SAME AS APPROVED PAGE) */}
+                  {/* RAF */}
                   {getRafQAs(selectedOrder).length ? (
                     <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                       <p className="mb-2 text-xs font-semibold text-neutral-200">
@@ -1691,7 +1999,7 @@ export default function Page() {
                     </div>
                   )}
 
-                  {/* Previous orders (NEW) */}
+                  {/* Previous orders */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
                     <div className="mb-2 flex items-center justify-between">
                       <p className="text-xs font-semibold text-neutral-200">
@@ -1699,13 +2007,8 @@ export default function Page() {
                       </p>
                       {previousOrdersMeta && (
                         <span className="text-[11px] text-neutral-500">
-                          {(previousOrdersMeta as any).total ??
-                            previousOrders.length}{" "}
-                          order
-                          {((previousOrdersMeta as any).total ??
-                            previousOrders.length) === 1
-                            ? ""
-                            : "s"}
+                          {(previousOrdersMeta as any).total ?? previousOrders.length} order
+                          {((previousOrdersMeta as any).total ?? previousOrders.length) === 1 ? "" : "s"}
                         </span>
                       )}
                     </div>
@@ -1716,9 +2019,7 @@ export default function Page() {
                         <span>Loading previous orders…</span>
                       </div>
                     ) : previousOrdersError ? (
-                      <p className="text-[11px] text-rose-300">
-                        {previousOrdersError}
-                      </p>
+                      <p className="text-[11px] text-rose-300">{previousOrdersError}</p>
                     ) : previousOrders.length === 0 ? (
                       <p className="text-[11px] text-neutral-500">
                         No previous orders found for this patient.
@@ -1727,10 +2028,7 @@ export default function Page() {
                       <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                         {previousOrders.map((o: any) => {
                           const name = extractProductName(o);
-                          const when =
-                            extractAppointmentStart(o) ||
-                            o?.createdAt ||
-                            o?.created_at;
+                          const when = extractAppointmentStart(o) || o?.createdAt || o?.created_at;
                           const total = extractTotalMinor(o);
                           const st = String(o?.status || "—");
                           const pay = String(o?.payment_status || "—");
@@ -1792,31 +2090,23 @@ export default function Page() {
 
                   {/* Notes */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <p className="mb-2 text-xs font-semibold text-neutral-200">
-                      Notes
-                    </p>
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">Notes</p>
 
                     <div className="grid gap-4 md:grid-cols-1">
                       {/* Admin notes */}
                       <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
-                        <p className="text-[11px] font-semibold text-neutral-200">
-                          Admin notes
-                        </p>
+                        <p className="text-[11px] font-semibold text-neutral-200">Admin notes</p>
 
                         <div className="mt-2 space-y-2">
                           {adminNotes.length === 0 ? (
-                            <p className="text-[11px] text-neutral-500">
-                              No admin notes yet.
-                            </p>
+                            <p className="text-[11px] text-neutral-500">No admin notes yet.</p>
                           ) : (
                             adminNotes.map((n, idx) => (
                               <div
                                 key={idx}
                                 className="flex items-start justify-between gap-2 rounded-md border border-neutral-800 bg-neutral-950/60 px-2 py-1"
                               >
-                                <p className="text-[11px] text-neutral-100">
-                                  {n}
-                                </p>
+                                <p className="text-[11px] text-neutral-100">{n}</p>
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveAdminNote(idx)}
@@ -1870,10 +2160,7 @@ export default function Page() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          disabled={
-                            statusAction === "approved" ||
-                            statusAction === "rejected"
-                          }
+                          disabled={statusAction === "approved" || statusAction === "rejected"}
                           onClick={openRejectDialog}
                           className={[
                             "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
@@ -1892,10 +2179,7 @@ export default function Page() {
 
                         <button
                           type="button"
-                          disabled={
-                            statusAction === "approved" ||
-                            statusAction === "rejected"
-                          }
+                          disabled={statusAction === "approved" || statusAction === "rejected"}
                           onClick={handleApprove}
                           className={[
                             "inline-flex h-8 items-center gap-2 rounded-md border px-3 text-[11px]",
@@ -1922,9 +2206,7 @@ export default function Page() {
                   </div>
                 </>
               ) : (
-                <div className="text-[11px] text-neutral-400">
-                  No order selected.
-                </div>
+                <div className="text-[11px] text-neutral-400">No order selected.</div>
               )}
             </div>
           </div>
@@ -1934,17 +2216,13 @@ export default function Page() {
       {/* ----------------------------- Reject Dialog ----------------------------- */}
       {showRejectDialog && selectedOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setShowRejectDialog(false)}
-          />
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowRejectDialog(false)} />
           <div className="relative z-10 w-full max-w-xl rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-4 shadow-2xl">
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold text-white">Reject order</p>
                 <p className="mt-1 text-[11px] text-neutral-400">
-                  Add one or more rejection notes. These will be saved with the
-                  order.
+                  Add one or more rejection notes. These will be saved with the order.
                 </p>
               </div>
               <button
@@ -1986,9 +2264,7 @@ export default function Page() {
                 {existingRejectionNotes.length === 0 &&
                 newRejectionNotes.length === 0 &&
                 !rejectionNoteInput.trim() ? (
-                  <p className="text-[11px] text-neutral-500">
-                    No rejection notes added yet.
-                  </p>
+                  <p className="text-[11px] text-neutral-500">No rejection notes added yet.</p>
                 ) : (
                   <div className="space-y-2">
                     {existingRejectionNotes.map((n, idx) => (
