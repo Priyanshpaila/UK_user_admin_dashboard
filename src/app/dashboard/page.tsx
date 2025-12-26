@@ -71,15 +71,6 @@ export default function DashboardPage() {
             Overview of bookings, revenue, and service performance
           </p>
         </div>
-
-        <PeriodFilter
-          preset={preset}
-          onPresetChange={handlePresetChange}
-          start={startIso}
-          end={endIso}
-          onStartChange={setStartIso}
-          onEndChange={setEndIso}
-        />
       </div>
 
       {/* Calendar */}
@@ -87,10 +78,22 @@ export default function DashboardPage() {
         <CalendarWidget />
       </div>
 
+      <PeriodFilter
+        preset={preset}
+        onPresetChange={handlePresetChange}
+        start={startIso}
+        end={endIso}
+        onStartChange={setStartIso}
+        onEndChange={setEndIso}
+      />
+
       {/* Charts (split into two segments) */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <RevenueChartCard presetKey={presetKey} onPresetChange={setPresetKey} />
-        <BookingsChartCard presetKey={presetKey} onPresetChange={setPresetKey} />
+        <BookingsChartCard
+          presetKey={presetKey}
+          onPresetChange={setPresetKey}
+        />
       </div>
 
       {/* KPI cards */}
@@ -100,12 +103,12 @@ export default function DashboardPage() {
 
       {/* Booking status */}
       <div className="mb-6">
-       <BookingStatusTable />
+        <BookingStatusTable />
       </div>
 
       {/* Services + Daily table */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-       <ServicesPerformanceTable />
+        <ServicesPerformanceTable />
         <DailyRevenueTable start={startIso} end={endIso} />
       </div>
     </div>

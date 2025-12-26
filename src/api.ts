@@ -1895,3 +1895,44 @@ export type RevenueBookingsResponse = RevenueBookingsAnalyticsResponse;
 export type RevenueBookingsTotals = RevenueBookingsAnalyticsTotals;
 export type RevenueBookingsPoint = RevenueBookingsAnalyticsPoint;
 export type RevenueBookingsParams = RevenueBookingsAnalyticsParams;
+
+/* ------------------- Zoom APIs ------------------- */
+
+export type ZoomCreateMeetingPayload = {
+  topic: string; // e.g. "Consultation Call"
+  start_time: string; // ISO string, e.g. "2025-12-22T10:30:00Z"
+  duration: number; // minutes
+  timezone?: string; // e.g. "Europe/London"
+  agenda?: string;
+  [key: string]: any;
+};
+
+export type ZoomMeetingDto = {
+  id: number;
+  uuid: string;
+  topic: string;
+  start_time: string; // ISO string
+  duration: number;
+  timezone: string;
+  join_url: string;
+  start_url: string;
+  password?: string;
+  [key: string]: any;
+};
+
+/**
+ * POST /zoom/meetings
+ * Creates a Zoom meeting via your backend.
+ */
+export async function createZoomMeetingApi(
+  payload: ZoomCreateMeetingPayload
+): Promise<ZoomMeetingDto> {
+  const base = getBackendBase();
+  const res = await jsonFetch<any>(`${base}/zoom/meetings`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  // supports either direct response or { data: ... }
+  return (res?.data ?? res) as ZoomMeetingDto;
+}

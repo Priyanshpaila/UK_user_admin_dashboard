@@ -10,6 +10,8 @@ import {
   getOrderByIdApi,
   type OrderDto,
   sendEmailApi,
+  createZoomMeetingApi, // ✅ NEW
+  type ZoomMeetingDto, // ✅ NEW (optional type, but helpful)
 } from "../../../api";
 import {
   Loader2,
@@ -32,6 +34,7 @@ import {
 /* ----------------- email constants ----------------- */
 
 const RESCHEDULE_TEMPLATE = "rescheduleapp"; // ✅ hard-coded template name
+const ZOOM_TEMPLATE = "zoom"; // ✅ NEW: hard-coded zoom template name
 const SUPPORT_EMAIL_FALLBACK = "support@pharmacyexpress.co.uk";
 const TIMEZONE_FALLBACK = "Europe/London";
 
@@ -64,7 +67,10 @@ function truncateUrl(url?: string, max = 40) {
   return url.slice(0, max - 3) + "...";
 }
 
-function getDisplayPatientName(appt: AppointmentDto, user?: UserDto | null): string {
+function getDisplayPatientName(
+  appt: AppointmentDto,
+  user?: UserDto | null
+): string {
   if (appt.patient_name) return appt.patient_name;
 
   if (user) {
@@ -82,7 +88,10 @@ function getDisplayPatientName(appt: AppointmentDto, user?: UserDto | null): str
 function getPatientDetails(user?: UserDto | null): string {
   if (!user) return "";
   const email = (user as any).email;
-  const phone = (user as any).phone || (user as any).mobile || (user as any).phoneNumber;
+  const phone =
+    (user as any).phone ||
+    (user as any).mobile ||
+    (user as any).phoneNumber;
 
   const parts: string[] = [];
   if (email) parts.push(email);
@@ -104,20 +113,25 @@ function toDateTimeLocal(value?: string | null): string {
   const d = new Date(value);
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
+    d.getDate()
+  )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function appointmentStatusPillClass(status?: string) {
   const s = (status || "").toLowerCase();
-  if (s === "pending") return "border-amber-500/70 bg-amber-500/10 text-amber-200";
-  if (s === "confirmed") return "border-blue-500/70 bg-blue-500/10 text-blue-200";
-  if (s === "cancelled") return "border-rose-500/70 bg-rose-500/10 text-rose-200";
-  if (s === "completed") return "border-emerald-500/70 bg-emerald-500/10 text-emerald-200";
+  if (s === "pending")
+    return "border-amber-500/70 bg-amber-500/10 text-amber-200";
+  if (s === "confirmed")
+    return "border-blue-500/70 bg-blue-500/10 text-blue-200";
+  if (s === "cancelled")
+    return "border-rose-500/70 bg-rose-500/10 text-rose-200";
+  if (s === "completed")
+    return "border-emerald-500/70 bg-emerald-500/10 text-emerald-200";
   if (s === "no-show" || s === "no_show" || s === "noshow")
     return "border-orange-500/70 bg-orange-500/10 text-orange-200";
-  if (s === "rescheduled") return "border-violet-500/70 bg-violet-500/10 text-violet-200";
+  if (s === "rescheduled")
+    return "border-violet-500/70 bg-violet-500/10 text-violet-200";
   return "border-neutral-500/60 bg-neutral-500/10 text-neutral-200";
 }
 
@@ -126,7 +140,9 @@ function formatMoney(minor?: number | null) {
   return `£${(minor / 100).toFixed(2)}`;
 }
 
-function splitEmailDateTime(value?: string | null): { date?: string; time?: string } {
+function splitEmailDateTime(
+  value?: string | null
+): { date?: string; time?: string } {
   if (!value) return {};
   const d = new Date(value);
   if (isNaN(d.getTime())) return {};
@@ -140,6 +156,18 @@ function splitEmailDateTime(value?: string | null): { date?: string; time?: stri
     minute: "2-digit",
   });
   return { date, time };
+}
+
+// ✅ NEW: duration helper (Zoom requires duration minutes)
+function computeDurationMinutes(startIso?: string | null, endIso?: string | null) {
+  if (!startIso || !endIso) return null;
+  const s = new Date(startIso);
+  const e = new Date(endIso);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return null;
+  const ms = e.getTime() - s.getTime();
+  if (ms <= 0) return null;
+  const mins = Math.round(ms / 60000);
+  return mins > 0 ? mins : null;
 }
 
 type StatusFilter =
@@ -185,7 +213,9 @@ export default function Page() {
     message: string;
   } | null>(null);
 
-  const [appointmentUsers, setAppointmentUsers] = useState<Record<string, UserDto | null>>({});
+  const [appointmentUsers, setAppointmentUsers] = useState<
+    Record<string, UserDto | null>
+  >({});
 
   const [editingOrder, setEditingOrder] = useState<OrderDto | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
@@ -220,7 +250,11 @@ export default function Page() {
       const res =
         filter === "all"
           ? await getAppointmentsApi({ page: nextPage, limit: nextLimit })
-          : await getAppointmentsApi({ status: filter, page: nextPage, limit: nextLimit });
+          : await getAppointmentsApi({
+              status: filter,
+              page: nextPage,
+              limit: nextLimit,
+            });
 
       const list: AppointmentDto[] = Array.isArray((res as any).data)
         ? (res as any).data
@@ -242,7 +276,9 @@ export default function Page() {
       const meta = (res as any)?.meta;
       const metaHasMore =
         meta && typeof meta === "object"
-          ? (typeof meta.hasMore === "boolean" ? meta.hasMore : undefined)
+          ? typeof meta.hasMore === "boolean"
+            ? meta.hasMore
+            : undefined
           : undefined;
 
       const computedHasMore =
@@ -255,7 +291,9 @@ export default function Page() {
       // ✅ fetch users for the appointments we have (existing logic, but supports append)
       const uniqueUserIds = Array.from(
         new Set(
-          nextAppointments.map((a) => a.user_id as string | undefined).filter(Boolean)
+          nextAppointments
+            .map((a) => a.user_id as string | undefined)
+            .filter(Boolean)
         )
       ) as string[];
 
@@ -349,16 +387,48 @@ export default function Page() {
     const prevEndIso = editing.end_at || null;
 
     try {
-      const payload: any = {
-        join_url: joinUrl || undefined,
-        host_url: hostUrl || undefined,
-      };
+      const payload: any = {};
 
-      if (editStart) payload.start_at = new Date(editStart).toISOString();
-      if (editEnd) payload.end_at = new Date(editEnd).toISOString();
+      // compute next start/end ISO (used for both appointment update and Zoom creation)
+      const nextStartIso = editStart ? new Date(editStart).toISOString() : editing.start_at;
+      const nextEndIso = editEnd ? new Date(editEnd).toISOString() : editing.end_at;
+
+      if (editStart) payload.start_at = nextStartIso;
+      if (editEnd) payload.end_at = nextEndIso;
 
       const intendedStatus = hasTimeChanged ? "rescheduled" : editStatus;
       payload.status = intendedStatus;
+
+      // ✅ If rescheduling AND appointment is online (has join url), generate a new Zoom link
+      const hadJoinUrl = Boolean((editing.join_url || "").trim() || (joinUrl || "").trim());
+      const shouldRegenerateZoom = hasTimeChanged && hadJoinUrl;
+
+      let zoomMeeting: ZoomMeetingDto | null = null;
+      let zoomDurationMinutes: number | null = null;
+
+      if (shouldRegenerateZoom) {
+        zoomDurationMinutes =
+          computeDurationMinutes(nextStartIso, nextEndIso) ?? 30;
+
+        const serviceNameForZoom =
+          editing.service_name || editing.service_slug || "Consultation";
+
+        zoomMeeting = await createZoomMeetingApi({
+          topic: `${serviceNameForZoom} Consultation Call`,
+          start_time: nextStartIso,
+          duration: zoomDurationMinutes,
+          timezone: TIMEZONE_FALLBACK,
+          agenda: "Online consultation and next steps",
+        });
+
+        // overwrite links with new Zoom meeting
+        payload.join_url = zoomMeeting.join_url;
+        payload.host_url = zoomMeeting.start_url;
+      } else {
+        // normal save path (keep what admin set)
+        payload.join_url = joinUrl || undefined;
+        payload.host_url = hostUrl || undefined;
+      }
 
       const updated = await updateAppointmentApi(editing._id, payload);
 
@@ -371,13 +441,16 @@ export default function Page() {
         setAppointments((prev) => prev.filter((a) => a._id !== updated._id));
       }
 
-      /* ----------------- SEND RESCHEDULE EMAIL ----------------- */
+      /* ----------------- SEND RESCHEDULE EMAIL (+ ZOOM EMAIL) ----------------- */
       const newStatus = String(updated.status || intendedStatus || "").toLowerCase();
       const becameRescheduled = newStatus === "rescheduled";
       const shouldSendRescheduleEmail =
         becameRescheduled && (hasTimeChanged || prevStatus !== "rescheduled");
 
       if (shouldSendRescheduleEmail) {
+        let rescheduleEmailSent = false;
+        let zoomEmailSent = false;
+
         try {
           // ensure we have a user object (email)
           let patientUser: UserDto | null =
@@ -421,14 +494,10 @@ export default function Page() {
             const serviceName = updated.service_name || editing.service_name || "Service";
 
             const prevParts = splitEmailDateTime(prevStartIso);
-            const newParts = splitEmailDateTime(
-              updated.start_at || payload.start_at || prevStartIso
-            );
+            const newParts = splitEmailDateTime(updated.start_at || nextStartIso);
 
             const prevEndParts = splitEmailDateTime(prevEndIso);
-            const newEndParts = splitEmailDateTime(
-              updated.end_at || payload.end_at || prevEndIso
-            );
+            const newEndParts = splitEmailDateTime(updated.end_at || nextEndIso);
 
             // appointment ref fallback
             const appointmentRef =
@@ -439,6 +508,7 @@ export default function Page() {
               updated.join_url ||
               (typeof window !== "undefined" ? `${window.location.origin}` : "");
 
+            // 1) Reschedule email (existing)
             await sendEmailApi({
               to: patientEmail,
               subject: "Appointment Rescheduled",
@@ -454,12 +524,10 @@ export default function Page() {
 
                 oldDate: prevParts.date,
                 oldTime: prevParts.time,
-                // optional: show old end too (if you use it in template)
                 oldEndTime: prevEndParts.time,
 
                 newDate: newParts.date,
                 newTime: newParts.time,
-                // optional: show new end too (if you use it in template)
                 newEndTime: newEndParts.time,
 
                 timezone: TIMEZONE_FALLBACK,
@@ -471,18 +539,84 @@ export default function Page() {
               },
             });
 
-            setNotice({
-              type: "success",
-              message: "Appointment updated and reschedule email sent to patient.",
-            });
+            rescheduleEmailSent = true;
+
+            // 2) ✅ Zoom email (ONLY when we regenerated Zoom for reschedule)
+            if (shouldRegenerateZoom) {
+              const apptAtForZoom =
+                newParts?.date && newParts?.time
+                  ? `${newParts.date} ${newParts.time} (${TIMEZONE_FALLBACK})`
+                  : formatDateTime(updated.start_at);
+
+              const durationMinutes =
+                zoomDurationMinutes ??
+                computeDurationMinutes(updated.start_at, updated.end_at) ??
+                30;
+
+              const zoomJoin = (zoomMeeting?.join_url || updated.join_url || "").trim();
+              const zoomMeetingId =
+                (zoomMeeting as any)?.id || (updated as any)?.zoom_meeting_id || "";
+
+              const zoomPasscode =
+                (zoomMeeting as any)?.password ||
+                (zoomMeeting as any)?.passcode ||
+                (updated as any)?.zoom_passcode ||
+                "";
+
+              await sendEmailApi({
+                to: patientEmail,
+                subject: "Your Zoom meeting details",
+                template: ZOOM_TEMPLATE, // ✅ hardcoded "zoom"
+                context: {
+                  subject: "Your online consultation details",
+                  name: patientName,
+
+                  serviceName,
+                  appointmentAt: apptAtForZoom,
+
+                  // supports the template fields you provided
+                  reference: appointmentRef,
+                  durationMinutes,
+
+                  joinUrl: zoomJoin || undefined,
+                  meetingId: zoomMeetingId || undefined,
+                  passcode: zoomPasscode || undefined,
+
+                  email: patientEmail,
+                  supportEmail: SUPPORT_EMAIL_FALLBACK,
+                  year: String(new Date().getFullYear()),
+
+                  message:
+                    "Your appointment time has been updated. Please use the Zoom details below to join your consultation.",
+                },
+              });
+
+              zoomEmailSent = true;
+            }
+
+            // notice
+            if (shouldRegenerateZoom) {
+              setNotice({
+                type: "success",
+                message:
+                  rescheduleEmailSent && zoomEmailSent
+                    ? "Appointment updated, new Zoom link generated, and both emails were sent to the patient."
+                    : "Appointment updated. Emails were processed.",
+              });
+            } else {
+              setNotice({
+                type: "success",
+                message: "Appointment updated and reschedule email sent to patient.",
+              });
+            }
           }
         } catch (mailErr: any) {
-          console.error("Reschedule email failed:", mailErr);
+          console.error("Reschedule/Zoom email failed:", mailErr);
           setNotice({
             type: "warn",
             message:
               mailErr?.message ||
-              "Appointment rescheduled, but failed to send email to patient.",
+              "Appointment rescheduled, but failed to send email(s) to patient.",
           });
         }
       }
@@ -496,7 +630,8 @@ export default function Page() {
     }
   }
 
-  const editingUser = editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
+  const editingUser =
+    editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
   const editingPatientName = editing && getDisplayPatientName(editing, editingUser);
   const editingPatientDetails = getPatientDetails(editingUser);
 
@@ -507,7 +642,9 @@ export default function Page() {
   const rows = useMemo(() => {
     return appointments.map((appt) => {
       const user =
-        appt.user_id && appointmentUsers[appt.user_id] ? appointmentUsers[appt.user_id] : null;
+        appt.user_id && appointmentUsers[appt.user_id]
+          ? appointmentUsers[appt.user_id]
+          : null;
 
       const patientName = getDisplayPatientName(appt, user);
       const patientDetails = getPatientDetails(user);
@@ -534,7 +671,9 @@ export default function Page() {
           </h1>
           <p className="mt-1 text-sm text-neutral-400">
             Filter:{" "}
-            <span className="text-neutral-200 font-semibold">{activeFilterLabel}</span>
+            <span className="text-neutral-200 font-semibold">
+              {activeFilterLabel}
+            </span>
           </p>
         </div>
 
@@ -549,7 +688,11 @@ export default function Page() {
                 setLimit(v);
                 setPage(1);
                 setHasMore(true);
-                void loadAppointments(statusFilter, { page: 1, limit: v, append: false });
+                void loadAppointments(statusFilter, {
+                  page: 1,
+                  limit: v,
+                  append: false,
+                });
               }}
               className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
             >
@@ -609,7 +752,11 @@ export default function Page() {
                   : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500 hover:text-white"
               }`}
             >
-              <Icon className={`h-3.5 w-3.5 ${active ? "text-emerald-300" : "text-neutral-400"}`} />
+              <Icon
+                className={`h-3.5 w-3.5 ${
+                  active ? "text-emerald-300" : "text-neutral-400"
+                }`}
+              />
               {f.label}
             </button>
           );
@@ -804,7 +951,11 @@ export default function Page() {
                 type="button"
                 disabled={loadingMore || loading || !hasMore}
                 onClick={() =>
-                  loadAppointments(statusFilter, { page: page + 1, limit, append: true })
+                  loadAppointments(statusFilter, {
+                    page: page + 1,
+                    limit,
+                    append: true,
+                  })
                 }
                 className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -970,9 +1121,7 @@ export default function Page() {
                   </p>
                 )}
 
-                {orderError && (
-                  <p className="text-[11px] text-rose-300">{orderError}</p>
-                )}
+                {orderError && <p className="text-[11px] text-rose-300">{orderError}</p>}
 
                 {!orderLoading && !orderError && !editingOrder && (
                   <p className="text-[11px] text-neutral-500">
