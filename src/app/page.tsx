@@ -1,28 +1,372 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
   BarChart3,
   CalendarClock,
   CheckCircle2,
+  ChevronDown,
+  Cloud,
+  Lock,
+  Puzzle,
   ShieldCheck,
   Sparkles,
-  Users,
-  PlayCircle,
+  Zap,
 } from "lucide-react";
+import {
+  LazyMotion,
+  domAnimation,
+  m,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+  useTransform,
+} from "framer-motion";
 
-const Pill = ({ children }: { children: React.ReactNode }) => (
-  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-neutral-200 backdrop-blur-sm">
-    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-    {children}
-  </span>
-);
+/* ----------------- Small UI primitives ----------------- */
+
+const Pill = ({
+  children,
+  tone = "emerald",
+}: {
+  children: React.ReactNode;
+  tone?: "emerald" | "blue" | "purple";
+}) => {
+  const toneCls =
+    tone === "blue"
+      ? "border-blue-500/25 bg-blue-500/10 text-blue-100"
+      : tone === "purple"
+      ? "border-purple-500/25 bg-purple-500/10 text-purple-100"
+      : "border-emerald-500/25 bg-emerald-500/10 text-emerald-100";
+
+  return (
+    <span
+      className={
+        "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium " +
+        toneCls
+      }
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+      {children}
+    </span>
+  );
+};
+
+function Reveal({
+  children,
+  className = "",
+  delay = 0,
+  y = 18,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  delay?: number;
+  y?: number;
+}) {
+  const reduce = useReducedMotion();
+
+  return (
+    <m.div
+      className={className}
+      initial={reduce ? { opacity: 1, y: 0 } : { opacity: 0, y }}
+      whileInView={reduce ? { opacity: 1, y: 0 } : { opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.2 }}
+      transition={{
+        duration: 0.6,
+        ease: [0.21, 0.8, 0.21, 1],
+        delay,
+      }}
+    >
+      {children}
+    </m.div>
+  );
+}
+
+/* ----------------- Accordion ----------------- */
+
+function FAQAccordion({
+  items,
+  defaultOpenId,
+}: {
+  items: { id: string; q: string; a: string }[];
+  defaultOpenId?: string;
+}) {
+  const [openId, setOpenId] = useState<string | null>(defaultOpenId || null);
+  const reduce = useReducedMotion();
+
+  return (
+    <div className="space-y-2">
+      {items.map((it) => {
+        const open = openId === it.id;
+
+        return (
+          <div
+            key={it.id}
+            className="rounded-2xl border border-white/10 bg-white/[0.04]"
+          >
+            <button
+              type="button"
+              onClick={() => setOpenId(open ? null : it.id)}
+              className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left"
+            >
+              <span className="text-sm font-medium text-white">{it.q}</span>
+              <m.span
+                animate={reduce ? undefined : { rotate: open ? 180 : 0 }}
+                transition={{ duration: 0.18 }}
+                className="text-neutral-300"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </m.span>
+            </button>
+
+            <m.div
+              initial={false}
+              animate={
+                reduce
+                  ? { height: "auto", opacity: 1 }
+                  : open
+                  ? { height: "auto", opacity: 1 }
+                  : { height: 0, opacity: 0 }
+              }
+              transition={{ duration: 0.22, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 pb-4 text-sm text-neutral-300 leading-relaxed">
+                {it.a}
+              </div>
+            </m.div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ----------------- Hero “screen” cards (no empty boxes) ----------------- */
+
+function GlassShell({
+  children,
+  tint = "violet",
+}: {
+  children: React.ReactNode;
+  tint?: "violet" | "cyan";
+}) {
+  const glow =
+    tint === "cyan"
+      ? "from-cyan-400/18 via-blue-500/10 to-emerald-400/12"
+      : "from-purple-400/18 via-fuchsia-500/10 to-blue-500/12";
+
+  return (
+    <div className={"relative rounded-3xl p-[1px] bg-gradient-to-br " + glow}>
+      <div
+        className={[
+          "relative rounded-3xl border border-white/10 overflow-hidden",
+          // Slightly more opaque + more consistent base to stop bleed-through
+          "bg-gradient-to-b from-slate-950/70 via-slate-950/55 to-slate-950/70",
+          // Blur helps separate layers (keep moderate for performance)
+          "backdrop-blur-md",
+          "shadow-[0_28px_80px_rgba(0,0,0,0.55)]",
+        ].join(" ")}
+      >
+        {/* Inner highlight (keeps the premium glass feel) */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_55%_at_20%_10%,rgba(255,255,255,0.10),transparent_60%)]" />
+
+        {/* Content scrim (this is the key readability layer) */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-black/20 to-black/35" />
+
+        {/* Real content */}
+        <div className="relative">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function BrowserCard({
+  title,
+  subtitle,
+  badge,
+}: {
+  title: string;
+  subtitle: string;
+  badge?: string;
+}) {
+  return (
+    <GlassShell tint="violet">
+      <div className="px-4 py-3 flex items-center justify-between border-b border-white/10">
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-300/80" />
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+        </div>
+        {badge ? (
+          <span className="text-[10px] text-neutral-200 rounded-full border border-white/10 bg-white/5 px-2 py-0.5">
+            {badge}
+          </span>
+        ) : (
+          <span className="text-[10px] text-neutral-400">pharmacyexpress</span>
+        )}
+      </div>
+
+      <div className="p-5">
+        <p className="text-sm font-semibold text-white">{title}</p>
+        <p className="mt-2 text-xs text-neutral-300 leading-relaxed">
+          {subtitle}
+        </p>
+
+        {/* KPI row (replaces empty boxes) */}
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[
+            { k: "Clinics", v: "24", c: "text-emerald-300" },
+            { k: "Booked", v: "18", c: "text-sky-300" },
+            { k: "No-shows", v: "2", c: "text-purple-300" },
+          ].map((x) => (
+            <div
+              key={x.k}
+              className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+            >
+              <p className="text-[10px] text-neutral-400">{x.k}</p>
+              <p className={"mt-1 text-sm font-semibold " + x.c}>{x.v}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* “Queue” list */}
+        <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold text-neutral-200">
+              Today’s queue
+            </p>
+            <span className="text-[10px] text-neutral-400">Live</span>
+          </div>
+
+          <div className="mt-2 space-y-2">
+            {[
+              {
+                t: "Hypertension Review",
+                at: "14:10",
+                s: "In progress",
+                dot: "bg-emerald-400",
+              },
+              { t: "Travel Clinic", at: "14:30", s: "Next", dot: "bg-sky-400" },
+              {
+                t: "Pharmacy First",
+                at: "15:00",
+                s: "Triage",
+                dot: "bg-purple-400",
+              },
+            ].map((r) => (
+              <div
+                key={r.t}
+                className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={"h-2 w-2 rounded-full " + r.dot} />
+                    <p className="text-[11px] font-medium text-white truncate">
+                      {r.t}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-neutral-400">
+                    Slot {r.at}
+                  </p>
+                </div>
+                <span className="text-[10px] text-neutral-200 rounded-full border border-white/10 bg-black/25 px-2 py-0.5">
+                  {r.s}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Mini chart */}
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold text-neutral-200">
+              Utilisation
+            </p>
+            <span className="text-[10px] text-neutral-400">All sites</span>
+          </div>
+          <div className="mt-2 flex h-10 items-end gap-1">
+            {[52, 68, 44, 76, 90, 63].map((v, i) => (
+              <div
+                key={i}
+                className="flex-1 rounded-full bg-gradient-to-t from-white/10 via-sky-400/45 to-emerald-400/55"
+                style={{ height: `${Math.max(18, v)}%` }}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <span className="text-[11px] text-neutral-400">
+            Templates • Booking • Notes • Outcomes
+          </span>
+          <span className="text-[11px] text-emerald-300">Active</span>
+        </div>
+      </div>
+    </GlassShell>
+  );
+}
+
+function MobileCard() {
+  return (
+    <GlassShell tint="cyan">
+      <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+        <span className="text-[10px] text-neutral-200">Patient portal</span>
+        <span className="text-[10px] text-neutral-400">Secure</span>
+      </div>
+
+      <div className="p-5 space-y-3">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+          <p className="text-xs font-semibold text-white">
+            Book an appointment
+          </p>
+          <p className="mt-1 text-[11px] text-neutral-300">
+            Choose a service, complete triage, confirm slot.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[10px] text-neutral-400">Flow:</span>
+            <span className="text-[10px] text-neutral-200 rounded-full border border-white/10 bg-black/25 px-2 py-0.5">
+              Treatments → RAF → Calendar
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+            <p className="text-[11px] text-neutral-400">Status</p>
+            <p className="mt-1 text-xs font-semibold text-emerald-300">
+              Approved
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+            <p className="text-[11px] text-neutral-400">Next slot</p>
+            <p className="mt-1 text-xs font-semibold text-white">15:30</p>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+          <p className="text-[11px] text-neutral-400">Reminders</p>
+          <div className="mt-2 h-2.5 w-full rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full w-[72%] rounded-full bg-gradient-to-r from-emerald-400/80 via-sky-400/70 to-purple-400/80" />
+          </div>
+          <p className="mt-2 text-[11px] text-neutral-300">
+            Automated SMS/email enabled.
+          </p>
+        </div>
+      </div>
+    </GlassShell>
+  );
+}
+
+/* ----------------- Page ----------------- */
 
 export default function Home() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const reduce = useReducedMotion();
 
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const token = localStorage.getItem("session_token");
@@ -33,530 +377,684 @@ export default function Home() {
   const authHref = isLoggedIn ? "/dashboard" : "/login";
   const authLabel = isLoggedIn ? "Go to dashboard" : "Login";
 
+  const heroRef = useRef<HTMLDivElement | null>(null);
+  const { scrollYProgress } = useScroll({
+    target: heroRef,
+    offset: ["start end", "end start"],
+  });
+
+  // Parallax values (smoothed) — no jank
+  const rawY1 = useTransform(
+    scrollYProgress,
+    [0, 1],
+    reduce ? [0, 0] : [16, -16]
+  );
+  const rawY2 = useTransform(
+    scrollYProgress,
+    [0, 1],
+    reduce ? [0, 0] : [26, -26]
+  );
+
+  const parallaxY = useSpring(rawY1, { stiffness: 90, damping: 22, mass: 0.7 });
+  const parallaxY2 = useSpring(rawY2, {
+    stiffness: 90,
+    damping: 22,
+    mass: 0.7,
+  });
+
+  const faqs = useMemo(
+    () => [
+      {
+        id: "faq1",
+        q: "What does Pharmacy Express specialise in?",
+        a: "Pharmacy Express is built for modern pharmacy workflows: patient onboarding, triage (RAF), appointment booking, order handling, consultation documentation, follow-ups and reporting—across NHS and private services.",
+      },
+      {
+        id: "faq2",
+        q: "Who is the platform for?",
+        a: "Independent pharmacies, groups and PCNs who need consistent clinical workflows, fewer manual steps, reliable patient communication and better visibility across sites.",
+      },
+      {
+        id: "faq3",
+        q: "How do you handle security and compliance?",
+        a: "Role-based access, audit trails, standards-aligned architecture, and a UI designed to support safer decisions with structured prompts and consistent documentation.",
+      },
+      {
+        id: "faq4",
+        q: "Do you support custom workflows and integrations?",
+        a: "Yes. Configure booking flows (Treatments → Login → RAF → Calendar → Payment) per service, and integrate with existing systems as required.",
+      },
+      {
+        id: "faq5",
+        q: "What makes Pharmacy Express different?",
+        a: "It is pharmacy-first: real-world clinic operations, multi-site visibility, patient safety prompts, automation where it matters, and clean operator UX for busy teams.",
+      },
+    ],
+    []
+  );
+
   return (
-    <div className="relative min-h-screen overflow-y-auto bg-gradient-to-b from-[#05091c] via-[#050313] to-[#020617] text-white">
-      {/* Big colourful background gradients */}
-      <div className="pointer-events-none fixed inset-0 -z-20">
-        {/* Top glow */}
-        <div className="absolute -top-40 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-br from-blue-600/45 via-emerald-500/25 to-purple-600/40 blur-[140px]" />
-        {/* Subtle band in middle */}
-        <div className="absolute inset-x-0 top-[380px] h-[360px] bg-gradient-to-r from-[#020617]/0 via-[#020617]/80 to-[#020617]/0" />
-        {/* Very soft bottom glow */}
-        <div className="absolute bottom-[-180px] left-1/2 h-[420px] w-[600px] -translate-x-1/2 rounded-full bg-purple-700/25 blur-[150px]" />
-      </div>
+    <LazyMotion features={domAnimation}>
+      <div className="relative min-h-screen overflow-x-hidden bg-gradient-to-b from-[#05091c] via-[#050313] to-[#020617] text-white">
+        {/* Keyframes for smooth float (CSS, not JS) */}
+        <style jsx global>{`
+          .float-a {
+            will-change: transform;
+            animation: floatA 7.5s ease-in-out infinite;
+          }
+          .float-b {
+            will-change: transform;
+            animation: floatB 9.2s ease-in-out infinite;
+          }
+          .float-c {
+            will-change: transform;
+            animation: floatC 8.4s ease-in-out infinite;
+          }
+          @keyframes floatA {
+            0%,
+            100% {
+              transform: translate3d(0, 0, 0);
+            }
+            50% {
+              transform: translate3d(0, -10px, 0);
+            }
+          }
+          @keyframes floatB {
+            0%,
+            100% {
+              transform: translate3d(0, 0, 0);
+            }
+            50% {
+              transform: translate3d(0, 12px, 0);
+            }
+          }
+          @keyframes floatC {
+            0%,
+            100% {
+              transform: translate3d(0, 0, 0);
+            }
+            50% {
+              transform: translate3d(0, -8px, 0);
+            }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .float-a,
+            .float-b,
+            .float-c {
+              animation: none !important;
+            }
+          }
+        `}</style>
 
-      {/* Subtle grid overlay to avoid flat black */}
-      <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.18]">
-        <div className="h-full w-full bg-[linear-gradient(to_right,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:120px_120px]" />
-      </div>
-
-      {/* Page wrapper – more padding to feel roomy */}
-      <div className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-4 pb-24 pt-8 sm:px-8 lg:px-10">
-        {/* Top strip */}
-        <div className="mb-6 flex items-center justify-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200 backdrop-blur">
-            <Sparkles className="h-3 w-3" />
-            Built for NHS & private pharmacy services
-          </span>
+        {/* Background glows (keep, but lighter) */}
+        <div className="pointer-events-none fixed inset-0 -z-20">
+          <div className="absolute -top-44 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-br from-blue-600/40 via-emerald-500/22 to-purple-600/32 blur-[140px]" />
+          <div className="absolute top-[520px] left-[-240px] h-[520px] w-[520px] rounded-full bg-blue-500/16 blur-[160px]" />
+          <div className="absolute top-[1020px] right-[-260px] h-[520px] w-[520px] rounded-full bg-emerald-500/12 blur-[170px]" />
+          <div className="absolute bottom-[-220px] left-1/2 h-[520px] w-[760px] -translate-x-1/2 rounded-full bg-purple-700/20 blur-[160px]" />
         </div>
 
-        {/* Nav */}
-        <header className="sticky top-0 z-30 mb-10 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/40 px-6 py-4 shadow-[0_16px_40px_rgba(0,0,0,0.6)] backdrop-blur-xl">
-          <div className="flex items-center gap-3">
+        {/* Subtle grid overlay */}
+        <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.14]">
+          <div className="h-full w-full bg-[linear-gradient(to_right,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:120px_120px]" />
+        </div>
 
-            <div>
-              <div className="text-sm font-semibold tracking-tight">
-                Pharmacy Express
-              </div>
-              <div className="text-[11px] text-neutral-400">
-                Connected Pharmacy Platform
+        <div className="relative mx-auto max-w-6xl px-4 pb-24 pt-8 sm:px-8 lg:px-10">
+          {/* Header */}
+          <header className="sticky top-0 z-40 mb-10">
+            <div className="rounded-2xl border border-white/10 bg-black/30 px-5 py-4 shadow-[0_18px_55px_rgba(0,0,0,0.55)] backdrop-blur-md">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center">
+                    <Sparkles className="h-4 w-4 text-emerald-300" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold tracking-tight">
+                      Pharmacy Express
+                    </div>
+                    <div className="text-[11px] text-neutral-400">
+                      Connected Pharmacy Platform
+                    </div>
+                  </div>
+                </div>
+
+                <nav className="hidden items-center gap-8 text-sm text-neutral-300 md:flex">
+                  <a href="#features" className="hover:text-white transition">
+                    Features
+                  </a>
+                  <a href="#solutions" className="hover:text-white transition">
+                    Solutions
+                  </a>
+                  <a href="#contact" className="hover:text-white transition">
+                    Contact
+                  </a>
+                </nav>
+
+                <div className="flex items-center gap-3">
+                  <Link
+                    href={authHref}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-2 text-xs font-medium text-neutral-200 hover:border-white/35 hover:bg-white/10 transition"
+                  >
+                    {authLabel}
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
+          </header>
 
-          <nav className="hidden items-center gap-8 text-sm text-neutral-300 md:flex">
-            <a href="#features" className="hover:text-white transition">
-              Features
-            </a>
-            <a href="#workflow" className="hover:text-white transition">
-              How it works
-            </a>
-            <a href="#benefits" className="hover:text-white transition">
-              For pharmacies
-            </a>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <Link
-              href={authHref}
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-2 text-xs font-medium text-neutral-200 shadow-[0_0_25px_rgba(15,23,42,0.9)] hover:border-white/40 hover:bg-white/10"
-            >
-              {authLabel}
-            </Link>
-          </div>
-        </header>
-
-        {/* HERO – bigger padding & gap */}
-        <main className="flex-1">
-          <div className="flex flex-col items-center gap-12 rounded-[32px] border border-white/10 bg-gradient-to-br from-[#050918]/95 via-[#020617]/95 to-[#060015]/95 px-6 py-10 shadow-[0_28px_90px_rgba(0,0,0,0.85)] backdrop-blur-2xl lg:flex-row lg:items-start lg:gap-16 lg:px-14 lg:py-14">
-            {/* Left side */}
-            <section className="w-full max-w-xl space-y-8">
-              <div className="space-y-4">
-                <Pill>All-in-one practice & patient management</Pill>
-                <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl lg:text-[3.1rem] lg:leading-[1.15]">
-                  Redefine how your
-                  <span className="bg-gradient-to-r from-blue-400 via-emerald-400 to-purple-400 bg-clip-text text-transparent">
-                    {" "}
-                    pharmacy delivers care
-                  </span>
-                  .
-                </h1>
-                <p className="text-sm leading-relaxed text-neutral-200 sm:text-base">
-                  Pharmacy Express brings consultations, appointments, patients,
-                  workflows and analytics into one secure platform—purpose-built
-                  for modern NHS and private pharmacy services.
-                </p>
-              </div>
-
-              {/* Stats */}
-              <div className="mt-4 grid grid-cols-3 gap-5">
-                <div className="rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-4 text-center text-xs shadow-[0_16px_40px_rgba(16,185,129,0.45)] transition hover:-translate-y-1">
-                  <div className="text-lg font-semibold text-emerald-300">
-                    50%
-                  </div>
-                  <div className="text-[11px] text-emerald-50/80">
-                    Less admin time
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-blue-500/40 bg-blue-500/10 px-4 py-4 text-center text-xs shadow-[0_16px_40px_rgba(37,99,235,0.45)] transition hover:-translate-y-1">
-                  <div className="text-lg font-semibold text-blue-300">3×</div>
-                  <div className="text-[11px] text-blue-50/80">
-                    More services launched
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-purple-500/40 bg-purple-500/10 px-4 py-4 text-center text-xs shadow-[0_16px_40px_rgba(147,51,234,0.45)] transition hover:-translate-y-1">
-                  <div className="text-lg font-semibold text-purple-300">
-                    24/7
-                  </div>
-                  <div className="text-[11px] text-purple-50/80">
-                    Online booking & triage
-                  </div>
-                </div>
-              </div>
-
-              {/* CTAs */}
-              <div className="mt-4 flex flex-wrap items-center gap-4">
-
-                <Link
-                  href={authHref}
-                  className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-5 py-2 text-xs font-medium text-neutral-100 hover:border-white/45 hover:bg-white/10"
+          {/* HERO */}
+          <section ref={heroRef} className="relative">
+            <div className="grid gap-10 lg:grid-cols-[1.05fr,0.95fr] lg:items-center">
+              {/* Left */}
+              <m.div
+                initial="hidden"
+                animate="show"
+                variants={{
+                  hidden: { opacity: 0, y: 14 },
+                  show: {
+                    opacity: 1,
+                    y: 0,
+                    transition: {
+                      duration: 0.6,
+                      ease: [0.21, 0.8, 0.21, 1],
+                      staggerChildren: 0.06,
+                    },
+                  },
+                }}
+                className="space-y-6"
+              >
+                <m.div
+                  variants={{
+                    hidden: { opacity: 0, y: 8 },
+                    show: { opacity: 1, y: 0 },
+                  }}
+                  className="flex items-center gap-2"
                 >
-                  <PlayCircle className="h-4 w-4" />
-                  {isLoggedIn ? "Open dashboard" : "Login to dashboard"}
-                </Link>
-              </div>
+                  <Pill tone="blue">
+                    AI + workflow automation for pharmacies
+                  </Pill>
+                </m.div>
 
-              <p className="text-xs text-neutral-300">
-                Built for independent pharmacies, groups and PCNs who want
-                safer consultations, less paperwork and happier patients.
-              </p>
-            </section>
+                <m.h1
+                  variants={{
+                    hidden: { opacity: 0, y: 8 },
+                    show: { opacity: 1, y: 0 },
+                  }}
+                  className="text-balance text-4xl font-semibold tracking-tight sm:text-5xl lg:text-[3.25rem] lg:leading-[1.08]"
+                >
+                  Powering the future of{" "}
+                  <span className="bg-gradient-to-r from-blue-400 via-emerald-400 to-purple-400 bg-clip-text text-transparent">
+                    pharmacy intelligence
+                  </span>
+                </m.h1>
 
-            {/* Right side: mock dashboard card */}
-            <section className="w-full max-w-xl">
+                <m.p
+                  variants={{
+                    hidden: { opacity: 0, y: 8 },
+                    show: { opacity: 1, y: 0 },
+                  }}
+                  className="max-w-xl text-sm leading-relaxed text-neutral-200 sm:text-base"
+                >
+                  Deliver cutting-edge consultations, triage and booking flows
+                  that integrate seamlessly with real-world pharmacy
+                  operations—helping teams move faster with safer, consistent
+                  outcomes.
+                </m.p>
+
+                <m.div
+                  variants={{
+                    hidden: { opacity: 0, y: 8 },
+                    show: { opacity: 1, y: 0 },
+                  }}
+                  className="flex flex-wrap items-center gap-3"
+                >
+                  <a
+                    href="#solutions"
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-blue-600 to-emerald-600 px-5 py-2.5 text-xs font-semibold shadow-[0_0_34px_rgba(37,99,235,0.45)] hover:opacity-95 transition"
+                  >
+                    Explore solutions
+                    <ArrowRight className="h-4 w-4" />
+                  </a>
+
+                  <a
+                    href="#about"
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-xs font-semibold text-neutral-100 hover:border-white/30 hover:bg-white/10 transition"
+                  >
+                    Learn more
+                  </a>
+                </m.div>
+
+                {/* Stats row */}
+                <m.div
+                  variants={{
+                    hidden: { opacity: 0, y: 8 },
+                    show: { opacity: 1, y: 0 },
+                  }}
+                  className="mt-2 grid max-w-xl grid-cols-3 gap-4"
+                >
+                  {[
+                    { k: "40%", v: "Efficiency boost" },
+                    { k: "3.5×", v: "Retention increase" },
+                    { k: "75%", v: "Automation coverage" },
+                  ].map((s) => (
+                    <div
+                      key={s.k}
+                      className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 text-center shadow-[0_14px_34px_rgba(0,0,0,0.45)]"
+                    >
+                      <div className="text-lg font-semibold text-white">
+                        {s.k}
+                      </div>
+                      <div className="mt-1 text-[11px] text-neutral-300">
+                        {s.v}
+                      </div>
+                    </div>
+                  ))}
+                </m.div>
+              </m.div>
+
+              {/* Right: stacked “screens” — smooth + not sticker */}
               <div className="relative">
-                <div className="pointer-events-none absolute -inset-1 rounded-[32px] bg-gradient-to-br from-blue-500/60 via-purple-500/40 to-emerald-500/40 opacity-90 blur-[22px]" />
-                <div className="relative rounded-[28px] border border-white/15 bg-[#020617]/95 p-6 shadow-[0_25px_80px_rgba(0,0,0,0.9)] backdrop-blur-xl lg:p-7">
-                  {/* Top bar */}
-                  <div className="mb-5 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-xs text-neutral-200">
-                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-300">
-                        <Sparkles className="h-3.5 w-3.5" />
-                      </span>
-                      <div>
-                        <div className="font-medium">Today&apos;s Clinics</div>
-                        <div className="text-[11px] text-neutral-400">
-                          Real-time snapshot across all sites
-                        </div>
+                <div className="pointer-events-none absolute -inset-2 rounded-[38px] bg-gradient-to-br from-blue-500/28 via-purple-500/16 to-emerald-500/16 blur-[22px]" />
+
+                <div className="relative h-[520px] sm:h-[560px] lg:h-[600px]">
+                  {/* Top browser (parallax outer, float inner) */}
+                  <m.div
+                    style={{ y: parallaxY }}
+                    className="absolute right-0 top-6 w-[88%] sm:w-[82%] transform-gpu"
+                  >
+                    <div className="float-a transform-gpu">
+                      <m.div
+                        initial={{ opacity: 0, y: 12, rotate: 1.6 }}
+                        animate={{ opacity: 1, y: 0, rotate: 1.6 }}
+                        transition={{
+                          duration: 0.55,
+                          ease: [0.21, 0.8, 0.21, 1],
+                        }}
+                        className="origin-bottom-left"
+                      >
+                        <BrowserCard
+                          title="One platform for every clinic workflow"
+                          subtitle="Templates, triage, booking, orders and documentation—built to keep your team consistent and fast."
+                          badge="Clinic suite"
+                        />
+                      </m.div>
+                    </div>
+                  </m.div>
+
+                  {/* Mobile (parallax outer, float inner) */}
+                  <m.div
+                    style={{ y: parallaxY2 }}
+                    className="absolute left-0 bottom-0 w-[72%] sm:w-[66%] transform-gpu"
+                  >
+                    <div className="float-b transform-gpu">
+                      <m.div
+                        initial={{ opacity: 0, y: 14, rotate: -1.8 }}
+                        animate={{ opacity: 1, y: 0, rotate: -1.8 }}
+                        transition={{
+                          duration: 0.6,
+                          delay: 0.05,
+                          ease: [0.21, 0.8, 0.21, 1],
+                        }}
+                        className="origin-bottom-right"
+                      >
+                        <MobileCard />
+                      </m.div>
+                    </div>
+                  </m.div>
+
+                  {/* Floating status pill */}
+                  <m.div
+                    className="absolute right-10 bottom-16 hidden sm:block transform-gpu"
+                    initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{ duration: 0.45, delay: 0.12 }}
+                  >
+                    <div className="float-c rounded-2xl border border-white/10 bg-black/30 px-4 py-3 backdrop-blur-md shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+                      <div className="flex items-center gap-2 text-xs text-neutral-200">
+                        <CalendarClock className="h-4 w-4 text-emerald-300" />
+                        <span className="font-medium">Next session</span>
+                        <span className="text-neutral-400">•</span>
+                        <span className="text-neutral-300">
+                          Flu clinic 16:00
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-neutral-400">
+                        Auto-reminders enabled • Capacity balanced
                       </div>
                     </div>
-                    <span className="rounded-full bg-white/5 px-3 py-1 text-[10px] text-neutral-300">
-                      NHS &amp; private
-                    </span>
-                  </div>
-
-                  {/* Fake dashboard: left list + right insights */}
-                  <div className="flex flex-col gap-5 lg:flex-row">
-                    {/* Sessions list */}
-                    <div className="w-full space-y-3 lg:w-7/12">
-                      {[
-                        {
-                          name: "Hypertension Review",
-                          patients: "8 patients",
-                          status: "In progress",
-                          color: "text-emerald-300",
-                        },
-                        {
-                          name: "Travel Clinic",
-                          patients: "5 patients",
-                          status: "Starting 14:00",
-                          color: "text-sky-300",
-                        },
-                        {
-                          name: "NHS Pharmacy First",
-                          patients: "11 patients",
-                          status: "Online triage live",
-                          color: "text-purple-300",
-                        },
-                      ].map((row, idx) => (
-                        <div
-                          key={row.name}
-                          className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3 transition hover:-translate-y-0.5 hover:border-white/40 hover:bg-white/10"
-                        >
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5 text-xs font-medium">
-                              <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                              {row.name}
-                            </div>
-                            <div className="text-[11px] text-neutral-400">
-                              {row.patients}
-                            </div>
-                          </div>
-                          <div className="text-right text-[11px]">
-                            <div className={`font-medium ${row.color}`}>
-                              {row.status}
-                            </div>
-                            <div className="text-[10px] text-neutral-500">
-                              Site {idx + 1}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Insights */}
-                    <div className="w-full space-y-3 lg:w-5/12">
-                      <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-3 text-xs">
-                        <div className="mb-1 flex items-center justify-between">
-                          <span className="flex items-center gap-1.5 font-medium text-emerald-50">
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                            Today&apos;s impact
-                          </span>
-                          <span className="text-[10px] text-emerald-100/80">
-                            +32% vs last week
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-emerald-50/90">
-                          24 consultations completed, 7 GP notifications sent
-                          and 3 patients recalled automatically.
-                        </p>
-                      </div>
-
-                      <div className="space-y-2 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-1.5 text-neutral-100">
-                            <BarChart3 className="h-3.5 w-3.5" />
-                            Live utilisation
-                          </span>
-                          <span className="text-[10px] text-neutral-400">
-                            All sites
-                          </span>
-                        </div>
-                        <div className="flex h-16 items-end gap-1.5">
-                          {[60, 85, 45, 70, 92].map((v) => (
-                            <div
-                              key={v}
-                              className="flex-1 rounded-full bg-gradient-to-t from-neutral-700 to-blue-500"
-                              style={{ height: `${Math.max(20, v)}%` }}
-                            />
-                          ))}
-                        </div>
-                        <p className="text-[11px] text-neutral-400">
-                          Identify under-used clinics and balance workload in
-                          real time.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-3">
-                    <div className="flex items-center gap-2 text-[11px] text-neutral-400">
-                      <CalendarClock className="h-3.5 w-3.5" />
-                      <span>Next: Flu clinic full from 16:00–18:00</span>
-                    </div>
-                    <span className="text-[10px] text-neutral-500">
-                      Auto-reminders ON
-                    </span>
-                  </div>
+                  </m.div>
                 </div>
               </div>
-            </section>
-          </div>
-        </main>
+            </div>
+          </section>
 
-        {/* FEATURES CARD – more margin & padding */}
-        <section id="features" className="mt-24">
-          <div className="rounded-3xl border border-white/10 bg-black/55 px-6 py-10 shadow-[0_22px_70px_rgba(0,0,0,0.75)] backdrop-blur-2xl sm:px-8 lg:px-10">
-            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-              <div>
-                <Pill>Everything your clinical team needs</Pill>
-                <h2 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">
-                  One platform for consultations, appointments, patients & data.
+          {/* ABOUT + FAQ */}
+          <section id="about" className="mt-20 sm:mt-24">
+            <Reveal>
+              <div className="mx-auto max-w-4xl text-center">
+                <div className="flex justify-center">
+                  <Pill tone="purple">About Pharmacy Express</Pill>
+                </div>
+                <h2 className="mt-5 text-balance text-3xl font-semibold sm:text-4xl">
+                  Empowering{" "}
+                  <span className="bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+                    pharmacies
+                  </span>{" "}
+                  with smart automation
                 </h2>
-                <p className="mt-3 max-w-2xl text-sm text-neutral-300">
-                  Replace spreadsheets and siloed tools with a single,
-                  pharmacy-first system that keeps your teams aligned and your
-                  data in sync.
+                <p className="mt-4 text-sm text-neutral-300 leading-relaxed">
+                  We believe technology should amplify clinical teams—not
+                  replace them. Our workflows reduce manual work, standardise
+                  care and provide clear visibility across sites.
                 </p>
               </div>
-            </div>
+            </Reveal>
 
-            <div className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-              {/* Consultation engine */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-blue-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/15 text-blue-300">
-                  <span className="text-[18px]">⚕️</span>
-                </div>
-                <h3 className="text-sm font-semibold">Consultation engine</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  Structured clinical templates, integrated PGDs and dynamic
-                  prompts that standardise every consultation.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Evidence-based flows for NHS & private services</li>
-                  <li>• Built-in red-flag checks and safety prompts</li>
-                  <li>• Auto-generated notes, letters & outcomes</li>
-                </ul>
-              </div>
-
-              {/* Smart scheduling */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-purple-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/15 text-purple-300">
-                  <CalendarClock className="h-4 w-4" />
-                </div>
-                <h3 className="text-sm font-semibold">Smart scheduling</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  Real-time rota, multi-site calendars and self-booking that
-                  keep staff and patients in sync.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Drag-and-drop clinics & sessions</li>
-                  <li>• Automated SMS/email confirmations & reminders</li>
-                  <li>• Hub-and-spoke and PCN ready</li>
-                </ul>
-              </div>
-
-              {/* Patient hub */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-emerald-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
-                  <Users className="h-4 w-4" />
-                </div>
-                <h3 className="text-sm font-semibold">Unified patient hub</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  A single, longitudinal record with everything you need to make
-                  safer decisions, faster.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Consultation history, meds, allergies & notes</li>
-                  <li>• NHS-ready coding & interoperability</li>
-                  <li>• Attachments, forms and documents in one place</li>
-                </ul>
-              </div>
-
-              {/* Workflow automation */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-emerald-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
-                  <Sparkles className="h-4 w-4" />
-                </div>
-                <h3 className="text-sm font-semibold">Workflow automation</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  From triage to follow-up, let the platform handle the
-                  repetitive work behind the scenes.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Digital pre-assessment forms</li>
-                  <li>• Auto GP notifications & summary letters</li>
-                  <li>• Recalls, aftercare and billing triggers</li>
-                </ul>
-              </div>
-
-              {/* Analytics */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-blue-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/15 text-blue-300">
-                  <BarChart3 className="h-4 w-4" />
-                </div>
-                <h3 className="text-sm font-semibold">Real-time analytics</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  See performance across sites, services and clinicians with
-                  live dashboards.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Service utilisation & revenue trends</li>
-                  <li>• Patient demand & capacity planning</li>
-                  <li>• Export-ready reports for commissioners</li>
-                </ul>
-              </div>
-
-              {/* Compliance */}
-              <div className="group rounded-2xl border border-white/10 bg-white/5 p-5 transition hover:-translate-y-1 hover:border-purple-500/60 hover:bg-white/10 hover:shadow-[0_18px_40px_rgba(0,0,0,0.7)]">
-                <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-purple-500/15 text-purple-300">
-                  <ShieldCheck className="h-4 w-4" />
-                </div>
-                <h3 className="text-sm font-semibold">Compliance-first design</h3>
-                <p className="mt-1.5 text-xs text-neutral-300">
-                  Security, governance and accessibility built in from day one.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-[11px] text-neutral-300">
-                  <li>• Role-based access & full audit trails</li>
-                  <li>• Standards-aligned, NHS-integrated architecture</li>
-                  <li>• WCAG-aligned UI for your whole team</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* HOW IT WORKS CARD */}
-        <section id="workflow" className="mt-24">
-          <div className="rounded-3xl border border-white/10 bg-black/55 px-6 py-10 shadow-[0_22px_70px_rgba(0,0,0,0.75)] backdrop-blur-2xl sm:px-8 lg:px-10">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <Pill>From interest to impact</Pill>
-                <h2 className="mt-3 text-xl font-semibold sm:text-2xl">
-                  Get up and running in weeks, not months.
-                </h2>
-                <p className="mt-3 max-w-2xl text-sm text-neutral-300">
-                  We work with you to configure services, train your team and
-                  connect to your existing systems—without disrupting daily
-                  operations.
-                </p>
-              </div>
-            </div>
-
-            <ol className="mt-8 grid gap-5 md:grid-cols-3">
-              <li className="relative rounded-2xl border border-blue-500/40 bg-blue-500/10 p-5 text-xs transition hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(37,99,235,0.6)]">
-                <span className="mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/30 text-[11px] text-blue-50">
-                  1
-                </span>
-                <h3 className="text-sm font-semibold">Discovery & demo</h3>
-                <p className="mt-1.5 text-neutral-100">
-                  We map your current clinics, services and workflows, then show
-                  you how they live inside the platform.
-                </p>
-              </li>
-              <li className="relative rounded-2xl border border-purple-500/40 bg-purple-500/10 p-5 text-xs transition hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(147,51,234,0.6)]">
-                <span className="mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-purple-500/30 text-[11px] text-purple-50">
-                  2
-                </span>
-                <h3 className="text-sm font-semibold">
-                  Configuration & training
-                </h3>
-                <p className="mt-1.5 text-neutral-100">
-                  We configure templates, schedulers and user roles, and deliver
-                  focused training sessions for your teams.
-                </p>
-              </li>
-              <li className="relative rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-5 text-xs transition hover:-translate-y-1 hover:shadow-[0_18px_40px_rgba(16,185,129,0.6)]">
-                <span className="mb-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500/30 text-[11px] text-emerald-50">
-                  3
-                </span>
-                <h3 className="text-sm font-semibold">Launch & optimise</h3>
-                <p className="mt-1.5 text-neutral-100">
-                  Go live with priority services, then use analytics and our
-                  support team to continually optimise performance.
-                </p>
-              </li>
-            </ol>
-          </div>
-        </section>
-
-        {/* BENEFITS / SEGMENTS CARD */}
-        <section id="benefits" className="mt-24">
-          <div className="grid gap-6 rounded-3xl border border-white/10 bg-black/55 px-6 py-10 shadow-[0_22px_70px_rgba(0,0,0,0.8)] backdrop-blur-2xl sm:px-8 lg:px-10 lg:grid-cols-[1.4fr,1fr]">
-            <div>
-              <Pill>Designed for every type of pharmacy</Pill>
-              <h2 className="mt-3 text-xl font-semibold sm:text-2xl">
-                Whether you&apos;re a single site or a multi-site group, Pharmacy
-                Express scales with you.
-              </h2>
-              <p className="mt-3 max-w-xl text-sm text-neutral-300">
-                Use one platform across NHS and private services, telehealth and
-                in-person clinics, with a configuration that fits the way your
-                teams actually work.
-              </p>
-
-              <div className="mt-6 grid gap-4 text-xs sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <h3 className="text-sm font-semibold">
-                    Independent & small groups
-                  </h3>
-                  <p className="mt-1.5 text-neutral-300">
-                    Launch new services quickly, keep oversight simple and
-                    reduce reliance on paper and spreadsheets.
+            <div className="mt-10 grid gap-6 lg:grid-cols-[1.05fr,0.95fr] lg:items-start">
+              <Reveal className="rounded-3xl border border-white/10 bg-black/25 p-6 backdrop-blur-md shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-emerald-300" />
+                  <p className="text-sm font-semibold text-white">
+                    Faster workflows, safer outcomes
                   </p>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                  <h3 className="text-sm font-semibold">Larger groups & PCNs</h3>
-                  <p className="mt-1.5 text-neutral-300">
-                    Cross-site visibility, standardised care pathways and
-                    dashboards for central teams & commissioners.
-                  </p>
-                </div>
-              </div>
-            </div>
+                <p className="mt-3 text-sm text-neutral-300 leading-relaxed">
+                  From triage and appointment selection to structured notes and
+                  follow-ups, Pharmacy Express keeps the entire journey
+                  consistent—reducing rework and improving the patient
+                  experience.
+                </p>
 
-            <div className="rounded-2xl border border-emerald-500/40 bg-gradient-to-br from-emerald-500/20 via-neutral-900/95 to-neutral-950/95 p-6 text-xs shadow-[0_20px_60px_rgba(0,0,0,0.9)]">
-              <p className="text-[11px] uppercase tracking-[0.15em] text-emerald-200">
-                What partners say
-              </p>
-              <p className="mt-4 text-sm leading-relaxed text-neutral-50">
-                “We&apos;ve cut manual admin almost in half and doubled the number
-                of clinics we run each week—without adding headcount. The team
-                finally feels ahead of demand instead of constantly catching up.”
-              </p>
-              <div className="mt-5">
-                <div className="font-medium text-neutral-100">
-                  Superintendent Pharmacist
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      icon: (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+                      ),
+                      t: "Standardised clinical flows",
+                      d: "Evidence-based templates and prompts.",
+                    },
+                    {
+                      icon: <BarChart3 className="h-4 w-4 text-blue-300" />,
+                      t: "Real-time visibility",
+                      d: "Know capacity, outcomes and utilisation.",
+                    },
+                    {
+                      icon: <ShieldCheck className="h-4 w-4 text-purple-300" />,
+                      t: "Compliance-first design",
+                      d: "Audit trails and role-based access.",
+                    },
+                    {
+                      icon: (
+                        <CalendarClock className="h-4 w-4 text-emerald-300" />
+                      ),
+                      t: "Patient self-booking",
+                      d: "Less phone work, fewer no-shows.",
+                    },
+                  ].map((x) => (
+                    <div
+                      key={x.t}
+                      className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"
+                    >
+                      <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                        {x.icon}
+                        {x.t}
+                      </div>
+                      <p className="mt-2 text-[12px] text-neutral-300">{x.d}</p>
+                    </div>
+                  ))}
                 </div>
-                <div className="text-[11px] text-neutral-400">
-                  Multi-site community pharmacy group
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+              </Reveal>
 
-        {/* FINAL CTA CARD
-        <section id="demo" className="mt-24">
-          <div className="flex justify-center">
-            <div className="inline-flex max-w-2xl flex-col items-center rounded-3xl border border-white/10 bg-black/60 px-8 py-9 text-center shadow-[0_22px_70px_rgba(0,0,0,0.85)] backdrop-blur-2xl sm:px-10 sm:py-10">
-              <Pill>See it in action</Pill>
-              <h2 className="mt-4 text-balance text-xl font-semibold sm:text-2xl">
-                Ready to see how Pharmacy Express could work in your pharmacy?
+              <Reveal delay={0.05}>
+                <FAQAccordion items={faqs} defaultOpenId="faq1" />
+              </Reveal>
+            </div>
+          </section>
+
+          {/* CORE VALUES */}
+          <section className="mt-20 sm:mt-24">
+            <Reveal className="text-center">
+              <h3 className="text-xl font-semibold text-white">
+                Our core values
+              </h3>
+              <p className="mt-2 text-sm text-neutral-400">
+                What guides how we design workflows and experiences.
+              </p>
+            </Reveal>
+
+            <div className="mt-8 grid gap-5 md:grid-cols-3">
+              {[
+                {
+                  icon: Zap,
+                  title: "Innovation first",
+                  desc: "We ship practical automation that removes friction from everyday clinic operations.",
+                },
+                {
+                  icon: Lock,
+                  title: "Reliability built-in",
+                  desc: "Predictable workflows, consistent data and an operator UX designed for real clinics.",
+                },
+                {
+                  icon: Sparkles,
+                  title: "Human-centred design",
+                  desc: "We design for speed and clarity—so teams can focus on patients, not clicks.",
+                },
+              ].map((c, idx) => {
+                const Icon = c.icon;
+                return (
+                  <Reveal key={c.title} delay={0.03 * idx}>
+                    <div className="rounded-3xl border border-white/10 bg-black/25 p-6 backdrop-blur-md shadow-[0_20px_60px_rgba(0,0,0,0.55)] hover:bg-black/30 transition">
+                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+                        <Icon className="h-5 w-5 text-emerald-300" />
+                      </div>
+                      <h4 className="mt-4 text-sm font-semibold text-white">
+                        {c.title}
+                      </h4>
+                      <p className="mt-2 text-sm text-neutral-300 leading-relaxed">
+                        {c.desc}
+                      </p>
+                    </div>
+                  </Reveal>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* SOLUTIONS */}
+          <section id="solutions" className="mt-20 sm:mt-24">
+            <Reveal className="text-center">
+              <h2 className="text-3xl font-semibold sm:text-4xl">
+                Powerful{" "}
+                <span className="bg-gradient-to-r from-blue-400 via-emerald-400 to-purple-400 bg-clip-text text-transparent">
+                  solutions
+                </span>
               </h2>
               <p className="mt-3 text-sm text-neutral-300">
-                Share a few details about your sites and current services, and
-                we&apos;ll set up a tailored walkthrough for your team.
+                Modules that work together across triage, booking, orders and
+                outcomes.
               </p>
-              <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
+            </Reveal>
+
+            <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+              {[
+                {
+                  icon: Cloud,
+                  title: "Cloud operations",
+                  desc: "Multi-site visibility with consistent workflows and shared reporting.",
+                },
+                {
+                  icon: ShieldCheck,
+                  title: "Security",
+                  desc: "Role-based access, audit trails and governance-first architecture.",
+                },
+                {
+                  icon: Zap,
+                  title: "Performance",
+                  desc: "Fast operator UX for busy teams—optimised flows, fewer steps.",
+                },
+                {
+                  icon: BarChart3,
+                  title: "Analytics",
+                  desc: "Track utilisation, demand and outcomes across services and sites.",
+                },
+                {
+                  icon: Sparkles,
+                  title: "Automation",
+                  desc: "Reminders, follow-ups, notes generation and workflow triggers.",
+                },
+                {
+                  icon: Puzzle,
+                  title: "Customisation",
+                  desc: "Per-service flows (Treatments → RAF → Calendar → Payment) and templates.",
+                },
+              ].map((s, idx) => {
+                const Icon = s.icon;
+                return (
+                  <Reveal key={s.title} delay={0.02 * idx}>
+                    <div className="group rounded-3xl border border-white/10 bg-black/25 p-6 backdrop-blur-md shadow-[0_20px_60px_rgba(0,0,0,0.55)] hover:-translate-y-1 hover:bg-black/30 hover:border-emerald-500/35 transition">
+                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
+                        <Icon className="h-5 w-5 text-emerald-300" />
+                      </div>
+                      <h3 className="mt-4 text-sm font-semibold text-white">
+                        {s.title}
+                      </h3>
+                      <p className="mt-2 text-sm text-neutral-300 leading-relaxed">
+                        {s.desc}
+                      </p>
+                      <div className="mt-4 h-px w-full bg-gradient-to-r from-white/0 via-white/10 to-white/0" />
+                      <p className="mt-3 text-[12px] text-neutral-400">
+                        Built to be adopted quickly without disrupting daily
+                        operations.
+                      </p>
+                    </div>
+                  </Reveal>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* CONTACT / CTA */}
+          <section id="contact" className="mt-20 sm:mt-24">
+            <Reveal className="rounded-3xl border border-white/10 bg-black/25 p-8 text-center backdrop-blur-md shadow-[0_20px_60px_rgba(0,0,0,0.55)]">
+              <div className="flex justify-center">
+                <Pill>Get started</Pill>
+              </div>
+              <h2 className="mt-4 text-balance text-2xl font-semibold sm:text-3xl">
+                Ready to streamline consultations and bookings?
+              </h2>
+              <p className="mt-3 text-sm text-neutral-300">
+                Use the dashboard to configure services, flows and
+                schedules—then go live.
+              </p>
+              <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                 <Link
-                  href="/contact"
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-blue-600 to-purple-600 px-7 py-2.5 text-sm font-semibold shadow-[0_0_35px_rgba(37,99,235,0.7)] hover:opacity-95"
+                  href={authHref}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-blue-600 px-6 py-2.5 text-xs font-semibold shadow-[0_0_34px_rgba(16,185,129,0.35)] hover:opacity-95 transition"
                 >
-                  Book your demo
+                  {isLoggedIn ? "Open dashboard" : "Login to dashboard"}
                   <ArrowRight className="h-4 w-4" />
                 </Link>
                 <a
-                  href="mailto:sales@pharmacyexpress.com"
-                  className="text-xs text-neutral-300 underline-offset-4 hover:underline"
+                  href="#solutions"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 px-6 py-2.5 text-xs font-semibold text-neutral-100 hover:border-white/30 hover:bg-white/10 transition"
                 >
-                  Or email sales@pharmacyexpress.com
+                  View solutions
                 </a>
               </div>
+            </Reveal>
+          </section>
+
+          {/* Footer */}
+          <footer className="mt-20 border-t border-white/10 pt-10">
+            <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center">
+                    <Sparkles className="h-4 w-4 text-emerald-300" />
+                  </div>
+                  <div className="text-sm font-semibold">Pharmacy Express</div>
+                </div>
+                <p className="mt-3 max-w-sm text-sm text-neutral-400">
+                  A connected platform for consultations, scheduling and clinic
+                  operations.
+                </p>
+                <p className="mt-4 text-[11px] text-neutral-500">
+                  © {new Date().getFullYear()} Pharmacy Express. All rights
+                  reserved.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-8 text-sm sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-semibold text-neutral-200">
+                    Product
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm text-neutral-400">
+                    <li>
+                      <a
+                        className="hover:text-white transition"
+                        href="#features"
+                      >
+                        Features
+                      </a>
+                    </li>
+                    <li>
+                      <a
+                        className="hover:text-white transition"
+                        href="#solutions"
+                      >
+                        Solutions
+                      </a>
+                    </li>
+                    <li>
+                      <Link
+                        className="hover:text-white transition"
+                        href={authHref}
+                      >
+                        Dashboard
+                      </Link>
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-neutral-200">
+                    Company
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm text-neutral-400">
+                    <li>
+                      <a className="hover:text-white transition" href="#about">
+                        About
+                      </a>
+                    </li>
+                    <li>
+                      <a
+                        className="hover:text-white transition"
+                        href="#contact"
+                      >
+                        Contact
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-neutral-200">
+                    Support
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm text-neutral-400">
+                    <li className="text-neutral-500">
+                      Email: <span className="text-neutral-300">support@…</span>
+                    </li>
+                    <li className="text-neutral-500">
+                      Hours: <span className="text-neutral-300">Mon–Fri</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
-          </div>
-        </section> */}
+          </footer>
+        </div>
       </div>
-    </div>
+    </LazyMotion>
   );
 }
