@@ -1,31 +1,31 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getOrdersApi,
   getOrderByIdApi,
   getUserByIdApi,
+  getBackendBase,
   type OrderDto,
   type OrdersListMeta,
   type UserDto,
 } from "../../../../api";
 import {
   Loader2,
-  CheckCircle2,
-  Clock,
-  XCircle,
   CreditCard,
-  CalendarDays,
-  User,
   ArrowRight,
   Filter,
   X,
   ClipboardList,
-  Mail,
+  User as UserIcon,
   Phone,
+  Mail,
+  MapPin,
+  Hash,
 } from "lucide-react";
 
-/* ----------------- Helpers ----------------- */
+/* ----------------------------- Helpers ----------------------------- */
 
 function formatDateTime(value?: string | null) {
   if (!value) return "—";
@@ -38,6 +38,29 @@ function formatDateTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDateOnly(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function calculateAgeFromDob(dob?: string | null): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - d.getFullYear();
+  const m = today.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
+  if (age < 0 || age > 120) return null;
+  return age;
 }
 
 function formatMoney(minor?: number | null) {
@@ -76,6 +99,14 @@ function paymentBadgeClasses(status: string) {
   }
 }
 
+function priorityBadgeClasses(priority?: string | null) {
+  const p = (priority || "yellow").toLowerCase();
+  if (p === "red") return "border-red-500/60 bg-red-500/10 text-red-300";
+  if (p === "green")
+    return "border-emerald-500/60 bg-emerald-500/10 text-emerald-300";
+  return "border-amber-500/60 bg-amber-500/10 text-amber-200";
+}
+
 function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   if (!order) return "Unknown";
 
@@ -99,166 +130,327 @@ function getDisplayPatientName(order: OrderDto, user?: UserDto | null): string {
   return "Unknown";
 }
 
-function formatDateOnly(value?: string | null) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function formatDobWithAge(value?: string | null) {
-  if (!value) return null;
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return null;
-
-  const today = new Date();
-  let age = today.getFullYear() - d.getFullYear();
-  const m = today.getMonth() - d.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < d.getDate())) age--;
-
-  const dateStr = d.toLocaleDateString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-
-  return `${dateStr} (${age} yrs)`;
-}
-
-function getUserInitials(user: UserDto | null): string {
+function getUserInitials(user: UserDto | null) {
   if (!user) return "PT";
   const u: any = user;
-  const name =
+  const full =
     u.name ||
     u.fullName ||
     `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
     u.email ||
     "";
-  if (!name) return "PT";
-  const parts = String(name)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const parts = String(full).trim().split(/\s+/).filter(Boolean);
   const initials = parts.slice(0, 2).map((p) => p[0].toUpperCase());
   return initials.join("") || "PT";
 }
 
-function PatientProfileCard({ user }: { user: UserDto | null }) {
-  if (!user) {
-    return (
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-        <p className="text-xs text-neutral-400 mb-1">Patient profile</p>
-        <p className="text-sm text-neutral-300">No patient details found.</p>
-      </div>
-    );
+/* ----------------- URL helper (for RAF attachments) ----------------- */
+
+function resolveImageUrl(imagePath?: string | null): string {
+  if (!imagePath) return "";
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
+
+  const normalizedPath = imagePath.startsWith("/") ? imagePath : `/${imagePath}`;
+
+  const baseWithApi = getBackendBase();
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+  return `${cleanBase}${normalizedPath}`;
+}
+
+/* ----------------- API unwrap helpers (robust) ----------------- */
+
+function unwrapOrder(res: any): OrderDto {
+  return (res?.data ?? res?.order ?? res) as OrderDto;
+}
+
+function unwrapUser(res: any): UserDto | null {
+  if (!res) return null;
+  const u = (res?.data ?? res?.user ?? res) as any;
+  if (!u || typeof u !== "object") return null;
+  return u as UserDto;
+}
+
+function unwrapOrdersList(res: any): { orders: OrderDto[]; meta: OrdersListMeta | null } {
+  const orders = (res?.data ??
+    res?.orders ??
+    res?.items ??
+    (Array.isArray(res) ? res : [])) as OrderDto[];
+  const meta = (res?.meta ?? res?.pagination ?? null) as OrdersListMeta | null;
+  return { orders: Array.isArray(orders) ? orders : [], meta };
+}
+
+function idOf(o: any) {
+  return String(o?._id || o?.id || "");
+}
+
+function extractUserIdFromOrder(order: any): string | null {
+  return (
+    (order?.user_id as string) ||
+    (order?.userId as string) ||
+    (order?.user?._id as string) ||
+    null
+  );
+}
+
+function extractTotalMinor(order: any): number | null {
+  return (
+    order?.meta?.totalMinor ??
+    order?.meta?.total_minor ??
+    order?.total_minor ??
+    order?.totalMinor ??
+    null
+  );
+}
+
+function extractAppointmentStart(order: any): string | null {
+  return (
+    order?.meta?.appointment_start_at ??
+    order?.meta?.appointmentStartAt ??
+    order?.start_at ??
+    order?.startAt ??
+    null
+  );
+}
+
+function extractProductName(order: any): string {
+  return (
+    order?.meta?.selectedProduct?.name ||
+    order?.meta?.lines?.[0]?.name ||
+    order?.meta?.items?.[0]?.name ||
+    order?.service_name ||
+    "Order"
+  );
+}
+
+type OrderItemRow = {
+  name: string;
+  qty: number;
+  variation: string;
+  totalMinor: number | null;
+  unitMinor: number | null;
+};
+
+function toNumberOrNull(v: any): number | null {
+  const n = typeof v === "string" ? Number(v) : typeof v === "number" ? v : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractOrderItems(order: any): OrderItemRow[] {
+  const meta: any = order?.meta || {};
+
+  const raw = meta?.items ?? meta?.lines ?? order?.items ?? [];
+  const arr = Array.isArray(raw) ? raw : [];
+  if (!arr.length) return [];
+
+  return arr
+    .map((it: any) => {
+      const name = String(it?.name || it?.title || it?.medicine_name || "Item").trim();
+
+      const qtyRaw = it?.qty ?? it?.quantity ?? it?.count ?? 1;
+      const qty = Math.max(1, toNumberOrNull(qtyRaw) ?? 1);
+
+      const variation = String(
+        it?.variation || it?.variations || it?.strength || "Standard"
+      ).trim();
+
+      const unitMinor =
+        toNumberOrNull(it?.unitMinor) ??
+        toNumberOrNull(it?.unit_minor) ??
+        toNumberOrNull(it?.priceMinor) ??
+        toNumberOrNull(it?.price_minor) ??
+        null;
+
+      const totalMinorExplicit =
+        toNumberOrNull(it?.totalMinor) ?? toNumberOrNull(it?.total_minor) ?? null;
+
+      const totalMinor =
+        totalMinorExplicit != null ? totalMinorExplicit : unitMinor != null ? unitMinor * qty : null;
+
+      return { name, qty, variation, totalMinor, unitMinor };
+    })
+    .filter((x) => x.name.length > 0);
+}
+
+/* ----------------- RAF extraction + render (same approach) ----------------- */
+
+function getRafQAs(order: any): Array<{ question: string; answer: string; raw?: any }> {
+  const meta: any = order?.meta || {};
+
+  const forms = meta?.formsQA?.raf?.qa;
+  if (Array.isArray(forms) && forms.length) {
+    return forms.map((qa: any, idx: number) => ({
+      question: String(qa?.question || qa?.key || `Question ${idx + 1}`),
+      answer:
+        qa?.answer != null
+          ? String(qa.answer)
+          : qa?.raw == null
+          ? "—"
+          : Array.isArray(qa.raw)
+          ? qa.raw.map(String).join(", ")
+          : String(qa.raw),
+      raw: qa?.raw,
+    }));
   }
 
-  const u: any = user;
-  const fullName =
-    u.name ||
-    u.fullName ||
-    `${u.firstName || ""} ${u.lastName || ""}`.trim() ||
-    "Unknown patient";
+  const ra = meta?.riskAssessment || meta?.raf || order?.riskAssessment || order?.raf || null;
 
-  const gender =
-    u.gender && typeof u.gender === "string"
-      ? u.gender.charAt(0).toUpperCase() + u.gender.slice(1)
-      : null;
+  if (Array.isArray(ra)) {
+    return ra.map((it: any, idx: number) => {
+      const question = String(it?.question || it?.key || it?.label || `Question ${idx + 1}`);
+      const value = it?.value ?? it?.answer ?? it?.raw ?? it?.response ?? it;
 
-  const dobLabel = formatDobWithAge(u.dob);
-  const createdAt = u.createdAt || u.created_at || null;
-  const updatedAt = u.updatedAt || u.updated_at || null;
+      if (Array.isArray(value) && value.length && typeof value[0] === "object") {
+        return {
+          question,
+          answer: `${value.length} attachment${value.length === 1 ? "" : "s"}`,
+          raw: value,
+        };
+      }
 
+      const answer =
+        value == null
+          ? "—"
+          : typeof value === "string" || typeof value === "number"
+          ? String(value)
+          : Array.isArray(value)
+          ? value.map(String).filter(Boolean).join(", ") || "—"
+          : typeof value === "boolean"
+          ? value
+            ? "Yes"
+            : "No"
+          : "—";
+
+      return { question, answer, raw: it?.raw };
+    });
+  }
+
+  if (ra && typeof ra === "object") {
+    return Object.entries(ra).map(([k, v]) => ({
+      question: String(k),
+      answer:
+        v == null
+          ? "—"
+          : typeof v === "string" || typeof v === "number"
+          ? String(v)
+          : typeof v === "boolean"
+          ? v
+            ? "Yes"
+            : "No"
+          : Array.isArray(v)
+          ? v.map(String).filter(Boolean).join(", ") || "—"
+          : "—",
+      raw: Array.isArray(v) && v.length && typeof (v as any[])[0] === "object" ? v : null,
+    }));
+  }
+
+  return [];
+}
+
+function RafAnswer({ raw, answer }: { raw: any; answer: string }) {
+  const isFileArray =
+    Array.isArray(raw) &&
+    raw.length > 0 &&
+    typeof raw[0] === "object" &&
+    ((raw[0] as any).url || (raw[0] as any).name);
+
+  if (!isFileArray) {
+    return <p className="mt-0.5 whitespace-pre-wrap text-[11px] text-neutral-100">{answer}</p>;
+  }
+
+  const files = (raw as any[]).filter((f) => f && (f.url || f.name));
   return (
-    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
-      <div className="flex items-start gap-3">
-        <div className="h-10 w-10 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center">
-          <span className="text-xs font-semibold text-neutral-100">
-            {getUserInitials(user)}
-          </span>
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-white">{fullName}</p>
-          <p className="text-[11px] text-neutral-400">
-            {gender ? gender : "Gender: —"}
-            {dobLabel && (
-              <>
-                {" "}
-                • <span>{dobLabel}</span>
-              </>
-            )}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
-            {u.email && (
-              <span className="inline-flex items-center gap-1">
-                <Mail className="h-3 w-3 text-neutral-500" />
-                <span className="break-all">{u.email}</span>
-              </span>
-            )}
-            {(u.phone || u.phoneNumber) && (
-              <span className="inline-flex items-center gap-1">
-                <Phone className="h-3 w-3 text-neutral-500" />
-                <span>{u.phone || u.phoneNumber}</span>
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
+    <div className="mt-1 flex flex-wrap gap-2">
+      {files.map((file: any, i: number) => {
+        const fileUrl = resolveImageUrl(file.url || "");
+        if (!fileUrl) return null;
 
-      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[11px]">
-        <div>
-          <dt className="text-neutral-500">Address line 1</dt>
-          <dd className="text-neutral-100">
-            {u.address_line1 || u.addressLine1 || "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-neutral-500">Address line 2</dt>
-          <dd className="text-neutral-100">
-            {u.address_line2 || u.addressLine2 || "—"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-neutral-500">City</dt>
-          <dd className="text-neutral-100">{u.city || "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-neutral-500">County</dt>
-          <dd className="text-neutral-100">{u.county || "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-neutral-500">Postcode</dt>
-          <dd className="text-neutral-100">{u.postalcode || "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-neutral-500">Country</dt>
-          <dd className="text-neutral-100">{u.country || "—"}</dd>
-        </div>
-      </dl>
+        const isImage =
+          (file.type || file.mimeType || "").startsWith("image/") ||
+          /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.name || file.url || "");
 
-      <div className="flex flex-wrap gap-4 text-[11px] text-neutral-500 pt-2 border-t border-neutral-800">
-        <span>
-          Created:{" "}
-          <span className="text-neutral-200">
-            {formatDateOnly(createdAt) || "—"}
-          </span>
-        </span>
-        <span>
-          Updated:{" "}
-          <span className="text-neutral-200">
-            {formatDateOnly(updatedAt) || "—"}
-          </span>
-        </span>
-      </div>
+        if (isImage) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => window.open(fileUrl, "_blank")}
+              className="group relative overflow-hidden rounded border border-neutral-800 bg-neutral-900"
+              title="Open image"
+            >
+              <img
+                src={fileUrl}
+                alt={file.name || `Attachment ${i + 1}`}
+                className="max-h-24 max-w-[180px] object-contain"
+              />
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-black/60 px-1 py-0.5 text-[10px] text-neutral-200 opacity-0 group-hover:opacity-100">
+                {file.name || "Open"}
+              </span>
+            </button>
+          );
+        }
+
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => window.open(fileUrl, "_blank")}
+            className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-900 px-2 py-0.5 text-[10px] text-emerald-200 hover:border-emerald-500 hover:text-emerald-100"
+          >
+            {file.name || `Attachment ${i + 1}`}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-/* ----------------- Page ----------------- */
+/* ----------------- Notes extraction (robust) ----------------- */
+
+function normaliseStringArray(v: any): string[] {
+  const arr = Array.isArray(v) ? v : v == null ? [] : [v];
+  return arr.map((x) => String(x).trim()).filter((x) => x.length > 0);
+}
+
+function extractAdminNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  return normaliseStringArray(o?.admin_notes ?? m?.admin_notes ?? []);
+}
+
+function extractConsultationNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  const raw =
+    o?.consultation_notes ??
+    o?.consultant_notes ??
+    o?.consultationNotes ??
+    m?.consultation_notes ??
+    m?.consultationNotes ??
+    m?.consultant_notes ??
+    m?.consultantNotes ??
+    [];
+  return normaliseStringArray(raw);
+}
+
+function extractRejectionNotes(order: any): string[] {
+  const o: any = order;
+  const m: any = o?.meta || {};
+  const raw =
+    o?.rejection_notes ??
+    o?.rejected_notes ??
+    o?.reject_notes ??
+    o?.rejection_reason ??
+    o?.rejected_reason ??
+    m?.rejection_notes ??
+    m?.rejected_notes ??
+    m?.reject_notes ??
+    m?.rejection_reason ??
+    m?.rejected_reason ??
+    [];
+  return normaliseStringArray(raw);
+}
+
+/* ----------------------------- Page ----------------------------- */
 
 export default function Page() {
   // list state
@@ -267,71 +459,28 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // cache of user info for cards: user_id -> user
-  const [orderUsers, setOrderUsers] = useState<
-    Record<string, UserDto | null>
-  >({});
+  // cache user_id -> user
+  const [orderUsers, setOrderUsers] = useState<Record<string, UserDto | null>>({});
+  const orderUsersRef = useRef<Record<string, UserDto | null>>({});
+  useEffect(() => {
+    orderUsersRef.current = orderUsers;
+  }, [orderUsers]);
 
-  // detail modal state
+  // detail drawer state
   const [showDetail, setShowDetail] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OrderDto | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [orderedByUser, setOrderedByUser] = useState<UserDto | null>(null);
 
-  // 🔒 hard-coded filter
+  // notes state (detail)
+  const [adminNotes, setAdminNotes] = useState<string[]>([]);
+  const [consultationNotes, setConsultationNotes] = useState<string[]>([]);
+  const [rejectionNotes, setRejectionNotes] = useState<string[]>([]);
+
+  // hard-coded filter
   const STATUS = "rejected";
 
-  // 👉 derived notes for the currently selected order (detail modal)
-  const adminNotesForDetail = useMemo(() => {
-    if (!selectedOrder) return [] as string[];
-    const raw =
-      (selectedOrder as any).admin_notes ??
-      (selectedOrder.meta as any)?.admin_notes ??
-      [];
-    if (Array.isArray(raw)) return raw.map((n) => String(n));
-    if (raw == null) return [];
-    return [String(raw)];
-  }, [selectedOrder]);
-
-  const consultantNotesForDetail = useMemo(() => {
-    if (!selectedOrder) return [] as string[];
-    const meta: any = selectedOrder.meta || {};
-    const raw =
-      meta.consultant_notes ??
-      meta.consultantNotes ??
-      meta.consultation_notes ??
-      meta.consultationNotes ??
-      [];
-    if (Array.isArray(raw)) return raw.map((n) => String(n));
-    if (raw == null) return [];
-    return [String(raw)];
-  }, [selectedOrder]);
-
-  const rejectedNotesForDetail = useMemo(() => {
-    if (!selectedOrder) return [] as string[];
-    const meta: any = selectedOrder.meta || {};
-    const raw =
-      (selectedOrder as any).rejection_notes ??
-      (selectedOrder as any).rejected_notes ??
-      (selectedOrder as any).reject_notes ??
-      meta.rejected_notes ??
-      meta.reject_notes ??
-      meta.rejection_notes ??
-      meta.rejected_reason ??
-      meta.rejection_reason ??
-      [];
-    if (Array.isArray(raw)) return raw.map((n) => String(n));
-    if (raw == null) return [];
-    return [String(raw)];
-  }, [selectedOrder]);
-
-  const hasAnyNotes =
-    adminNotesForDetail.length > 0 ||
-    consultantNotesForDetail.length > 0 ||
-    rejectedNotesForDetail.length > 0;
-
-  // Load list (rejected)
   useEffect(() => {
     let cancelled = false;
 
@@ -339,26 +488,30 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const res = await getOrdersApi({ status: STATUS });
+        const res: any = await getOrdersApi({ status: STATUS });
         if (cancelled) return;
-        const ordersList = res.data || [];
+
+        const { orders: ordersList, meta: metaRes } = unwrapOrdersList(res);
         setOrders(ordersList);
-        setMeta(res.meta || null);
+        setMeta(metaRes);
 
         const uniqueUserIds = Array.from(
           new Set(
             ordersList
-              .map((o) => (o as any).user_id as string | undefined)
+              .map((o: any) => extractUserIdFromOrder(o))
               .filter(Boolean)
           )
         ) as string[];
 
-        if (uniqueUserIds.length) {
+        const currentUsers = orderUsersRef.current;
+        const missingIds = uniqueUserIds.filter((id) => currentUsers[id] === undefined);
+
+        if (missingIds.length) {
           const results = await Promise.all(
-            uniqueUserIds.map(async (id) => {
+            missingIds.map(async (id) => {
               try {
-                const user = await getUserByIdApi(id);
-                return [id, user] as const;
+                const uRes = await getUserByIdApi(id);
+                return [id, unwrapUser(uRes)] as const;
               } catch (err) {
                 console.error("Failed to fetch user for order list", id, err);
                 return [id, null] as const;
@@ -367,11 +520,11 @@ export default function Page() {
           );
 
           if (!cancelled) {
-            const map: Record<string, UserDto | null> = {};
-            for (const [id, user] of results) {
-              map[id] = user;
-            }
-            setOrderUsers(map);
+            setOrderUsers((prev) => {
+              const next = { ...prev };
+              for (const [id, user] of results) next[id] = user;
+              return next;
+            });
           }
         }
       } catch (e: any) {
@@ -386,9 +539,14 @@ export default function Page() {
     return () => {
       cancelled = true;
     };
-  }, []); // always "rejected"
+  }, []);
 
-  // View details handler
+  function hydrateNotes(order: OrderDto) {
+    setAdminNotes(extractAdminNotes(order));
+    setConsultationNotes(extractConsultationNotes(order));
+    setRejectionNotes(extractRejectionNotes(order));
+  }
+
   async function handleViewDetails(id: string) {
     setShowDetail(true);
     setDetailLoading(true);
@@ -396,17 +554,29 @@ export default function Page() {
     setSelectedOrder(null);
     setOrderedByUser(null);
 
-    try {
-      const order = await getOrderByIdApi(id);
-      setSelectedOrder(order);
+    setAdminNotes([]);
+    setConsultationNotes([]);
+    setRejectionNotes([]);
 
-      const userId = (order as any).user_id as string | undefined;
+    try {
+      const orderRes = await getOrderByIdApi(id);
+      const order = unwrapOrder(orderRes);
+      setSelectedOrder(order);
+      hydrateNotes(order);
+
+      const userId = extractUserIdFromOrder(order);
       if (userId) {
-        try {
-          const user = await getUserByIdApi(userId);
-          setOrderedByUser(user);
-        } catch (err) {
-          console.error("Failed to fetch user for order (detail)", err);
+        if (orderUsersRef.current[userId] !== undefined) {
+          setOrderedByUser(orderUsersRef.current[userId] || null);
+        } else {
+          try {
+            const userRes = await getUserByIdApi(userId);
+            const u = unwrapUser(userRes);
+            setOrderedByUser(u);
+            setOrderUsers((prev) => ({ ...prev, [userId]: u }));
+          } catch (err) {
+            console.error("Failed to fetch user for order (detail)", err);
+          }
         }
       }
     } catch (e: any) {
@@ -416,427 +586,507 @@ export default function Page() {
     }
   }
 
-  const totalRejected = meta?.total ?? orders.length;
+  function closeDetail() {
+    setShowDetail(false);
+    setSelectedOrder(null);
+    setOrderedByUser(null);
+    setDetailError(null);
+  }
+
+  const totalRejected = (meta as any)?.total ?? orders.length;
+
+  const rows = useMemo(() => {
+    return orders.map((order: any) => {
+      const userId = extractUserIdFromOrder(order) || undefined;
+      const listUser = userId && orderUsers[userId] !== undefined ? orderUsers[userId] : null;
+
+      const patientName = getDisplayPatientName(order, listUser);
+      const priority = ((listUser as any)?.user_priority as string | undefined) || "yellow";
+      const totalMinor = extractTotalMinor(order);
+      const productName = extractProductName(order);
+      const reference = order?.reference || order?._id;
+
+      return { order, reference, patientName, listUser, priority, totalMinor, productName };
+    });
+  }, [orders, orderUsers]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-semibold text-white">
-            Rejected Orders
-          </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            Orders that have been{" "}
-            <span className="font-semibold text-rose-300">rejected</span>. Review
-            reasons and notes for audit or follow-up.
-          </p>
+    <>
+      <div className="mx-auto max-w-7xl px-4 py-6">
+        {/* Header */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-white md:text-3xl">Rejected Orders</h1>
+            <p className="mt-1 text-sm text-neutral-400">
+              Orders that have been rejected. Open an order to review notes, reasons, RAF, and items.
+            </p>
+          </div>
+
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900/70 px-3 py-1.5 text-xs text-neutral-300">
+              <Filter size={14} />
+              <span>Status:</span>
+              <span className="font-medium text-rose-300">Rejected</span>
+            </div>
+            <span className="text-xs text-neutral-500">
+              {totalRejected} rejected{" "}
+              {meta ? `• page ${(meta as any).page} of ${(meta as any).totalPages}` : ""}
+            </span>
+          </div>
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <div className="inline-flex items-center gap-2 rounded-full bg-neutral-900/70 border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300">
-            <Filter size={14} />
-            <span>Status:</span>
-            <span className="font-medium text-rose-400">Rejected</span>
+        {/* List content (TABLE layout like Pending Orders page) */}
+        {loading ? (
+          <div className="flex items-center justify-center py-20 text-neutral-300">
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            Loading orders…
           </div>
-          <span className="text-xs text-neutral-500">
-            {totalRejected} rejected order{totalRejected === 1 ? "" : "s"}
-          </span>
-        </div>
+        ) : error ? (
+          <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 px-6 py-10 text-center text-neutral-400">
+            No rejected orders found.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950/40">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-neutral-900/80 text-[11px] uppercase tracking-wide text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Reference</th>
+                    <th className="px-3 py-2 text-left font-medium">Patient</th>
+                    <th className="px-3 py-2 text-left font-medium">Product / Service</th>
+                    <th className="px-3 py-2 text-left font-medium">Priority</th>
+                    <th className="px-3 py-2 text-right font-medium">Total</th>
+                    <th className="px-3 py-2 text-right font-medium"></th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {rows.map(({ order, reference, patientName, listUser, priority, totalMinor, productName }) => {
+                    const email =
+                      (listUser as any)?.email ||
+                      (order as any)?.email ||
+                      (order as any)?.patient_email ||
+                      "";
+
+                    return (
+                      <tr
+                        key={String(order?._id)}
+                        className="cursor-pointer border-t border-neutral-900/80 bg-neutral-950/40 hover:bg-neutral-900/60"
+                        onClick={() => handleViewDetails(String(order?._id))}
+                      >
+                        <td className="whitespace-nowrap px-3 py-2 align-middle">
+                          <div className="flex items-center gap-1">
+                            <ClipboardList className="h-3.5 w-3.5 text-neutral-500" />
+                            <span className="font-medium text-neutral-100">{reference}</span>
+                          </div>
+                        </td>
+
+                        <td className="max-w-xs px-3 py-2 align-middle">
+                          <div className="flex items-start gap-2">
+                            <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-neutral-800 bg-neutral-900 text-[10px] font-semibold text-neutral-100">
+                              {getUserInitials(listUser)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-medium text-neutral-100">
+                                {patientName}
+                              </p>
+                              <p className="truncate text-[10px] text-neutral-500">{email || "—"}</p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="max-w-xs px-3 py-2 align-middle">
+                          <p className="line-clamp-2 text-[11px] text-neutral-100">{productName}</p>
+                          <p className="mt-0.5 line-clamp-1 text-[10px] text-neutral-500">
+                            {order?.service_name || "—"}
+                          </p>
+                        </td>
+
+                        <td className="px-3 py-2 align-middle">
+                          <span
+                            className={[
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px] font-medium",
+                              priorityBadgeClasses(priority),
+                            ].join(" ")}
+                          >
+                            <span className="h-2 w-2 rounded-full bg-current" />
+                            {String(priority).toLowerCase()}
+                          </span>
+                        </td>
+
+                        <td className="whitespace-nowrap px-3 py-2 text-right align-middle text-[11px] text-neutral-100">
+                          {formatMoney(totalMinor ?? null)}
+                        </td>
+
+                        <td className="px-3 py-2 text-right align-middle">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewDetails(String(order?._id));
+                            }}
+                            className="inline-flex h-7 items-center gap-1 rounded-md border border-neutral-700 bg-neutral-900/80 px-2 text-[11px] text-neutral-100 hover:border-emerald-500/70 hover:text-emerald-100"
+                          >
+                            <span>Open</span>
+                            <ArrowRight className="h-3 w-3" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* List content */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20 text-neutral-300">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Loading orders…
-        </div>
-      ) : error ? (
-        <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
-          {error}
-        </div>
-      ) : orders.length === 0 ? (
-        <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 px-6 py-10 text-center text-neutral-400">
-          No rejected orders found.
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {orders.map((order) => {
-            const totalMinor = order.meta?.totalMinor ?? null;
-            const appointmentAt =
-              order.meta?.appointment_start_at || order.start_at;
-            const productName =
-              order.meta?.selectedProduct?.name ||
-              order.meta?.lines?.[0]?.name ||
-              order.service_name;
+      {/* ----------------------------- Detail Drawer (same style) ----------------------------- */}
+      {showDetail && (
+        <div className="fixed inset-0 z-40 flex items-stretch justify-end">
+          <div className="absolute inset-0 bg-black/60" onClick={closeDetail} />
+          <div className="relative z-10 flex h-full w-full max-w-3xl flex-col border-l border-neutral-800 bg-neutral-950">
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-neutral-500">Order reference</p>
+                <p className="text-sm font-semibold text-white">
+                  {selectedOrder ? (selectedOrder as any).reference || (selectedOrder as any)._id : "—"}
+                </p>
 
-            const userId = (order as any).user_id as string | undefined;
-            const cardUser =
-              userId && orderUsers[userId] !== undefined
-                ? orderUsers[userId]
-                : null;
-            const patientName = getDisplayPatientName(order, cardUser);
+                {selectedOrder && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(selectedOrder as any).status && (
+                      <span
+                        className={[
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
+                          statusBadgeClasses(String((selectedOrder as any).status)),
+                        ].join(" ")}
+                      >
+                        <span className="capitalize">
+                          {String((selectedOrder as any).status).replace(/_/g, " ")}
+                        </span>
+                      </span>
+                    )}
 
-            return (
-              <div
-                key={order._id}
-                className="group flex flex-col rounded-2xl border border-neutral-800 bg-neutral-900/80 p-4 hover:border-emerald-500/50 hover:bg-neutral-900 transition-colors"
-              >
-                {/* Top: title + status */}
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-base font-semibold text-white">
-                        {productName}
-                      </h2>
-                      {order.status === "approved" ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      ) : order.status === "pending" ? (
-                        <Clock className="h-4 w-4 text-amber-400" />
-                      ) : order.status === "draft" ? (
-                        <XCircle className="h-4 w-4 text-neutral-400" />
-                      ) : null}
-                    </div>
-                    <p className="mt-1 text-xs text-neutral-400">
-                      {order.service_name} • Ref:{" "}
-                      <span className="font-mono">{order.reference}</span>
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col items-end gap-1">
-                    <span
-                      className={
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                        statusBadgeClasses(order.status)
-                      }
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                      {order.status.toUpperCase()}
-                    </span>
-                    <span
-                      className={
-                        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                        paymentBadgeClasses(order.payment_status)
-                      }
-                    >
-                      <CreditCard className="h-3 w-3" />
-                      {order.payment_status.toUpperCase()}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Middle: patient + appointment */}
-                <div className="mt-4 flex flex-col gap-2 text-xs text-neutral-300">
-                  <div className="flex items-center gap-2">
-                    <User className="h-4 w-4 text-neutral-400" />
-                    <span className="font-medium">{patientName}</span>
-                    {order.email && (
-                      <span className="ml-2 truncate text-neutral-400">
-                        {order.email}
+                    {(selectedOrder as any).payment_status && (
+                      <span
+                        className={[
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-[2px] text-[10px]",
+                          paymentBadgeClasses(String((selectedOrder as any).payment_status)),
+                        ].join(" ")}
+                      >
+                        <CreditCard className="h-3 w-3" />
+                        <span className="capitalize">
+                          {String((selectedOrder as any).payment_status).replace(/_/g, " ")}
+                        </span>
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <CalendarDays className="h-4 w-4 text-neutral-400" />
-                    <span>{formatDateTime(appointmentAt)}</span>
-                    {order.start_at && order.end_at && (
-                      <>
-                        <span className="mx-2 text-neutral-500">•</span>
-                        <span className="text-neutral-400">
-                          Duration:{" "}
-                          {Math.max(
-                            1,
-                            Math.round(
-                              (new Date(order.end_at).getTime() -
-                                new Date(order.start_at).getTime()) /
-                                60000
-                            )
-                          )}{" "}
-                          min
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bottom: total + action */}
-                <div className="mt-4 flex items-center justify-between">
-                  <div className="text-sm">
-                    <span className="text-neutral-400">Total:</span>{" "}
-                    <span className="font-semibold text-white">
-                      {formatMoney(totalMinor)}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleViewDetails(order._id)}
-                    className="inline-flex items-center gap-1 rounded-full border border-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:border-emerald-500 hover:text-emerald-300 group-hover:border-emerald-500"
-                  >
-                    View details
-                    <ArrowRight className="h-3 w-3" />
-                  </button>
-                </div>
+                )}
               </div>
-            );
-          })}
-        </div>
-      )}
 
-      {/* 🔹 Detail modal */}
-      {showDetail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 md:px-6">
-          <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-neutral-950 border border-neutral-800 shadow-2xl flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-4">
-              <div className="flex items-center gap-2">
-                <ClipboardList className="h-4 w-4 text-emerald-400" />
-                <h2 className="text-sm font-semibold text-white">
-                  Order details
-                </h2>
-              </div>
               <button
                 type="button"
-                onClick={() => setShowDetail(false)}
-                className="rounded-full p-1 hover:bg-neutral-800 text-neutral-400 hover:text-white"
+                onClick={closeDetail}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/80 text-neutral-300 hover:border-neutral-500 hover:text-white"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
 
-            {/* Body */}
-            <div className="max-h-[80vh] overflow-y-auto px-5 py-4 space-y-4 text-sm text-neutral-200">
-              {detailLoading && (
-                <div className="flex items-center justify-center py-10 text-neutral-300">
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Loading order…
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+              {detailLoading ? (
+                <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Loading full order details…</span>
                 </div>
-              )}
-
-              {detailError && !detailLoading && (
-                <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-sm text-rose-100">
+              ) : detailError ? (
+                <div className="rounded-md border border-rose-700/60 bg-rose-950/40 px-3 py-2 text-xs text-rose-100">
                   {detailError}
                 </div>
-              )}
-
-              {!detailLoading && !detailError && selectedOrder && (
+              ) : selectedOrder ? (
                 <>
-                  {/* Top summary */}
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Reference
-                      </p>
-                      <p className="font-mono text-sm text-white">
-                        {selectedOrder.reference}
-                      </p>
-                      <p className="mt-1 text-xs text-neutral-400">
-                        Service:{" "}
-                        <span className="font-medium">
-                          {selectedOrder.service_name}
-                        </span>{" "}
-                        ({selectedOrder.service_slug})
-                      </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          statusBadgeClasses(selectedOrder.status)
-                        }
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
-                        {selectedOrder.status.toUpperCase()}
-                      </span>
-                      <span
-                        className={
-                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium " +
-                          paymentBadgeClasses(selectedOrder.payment_status)
-                        }
-                      >
-                        <CreditCard className="h-3 w-3" />
-                        {selectedOrder.payment_status.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Patient profile + appointment */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <PatientProfileCard user={orderedByUser} />
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                      <p className="text-xs text-neutral-400 mb-0.5">
-                        Appointment
-                      </p>
-                      <p className="text-sm text-white">
-                        {formatDateTime(
-                          selectedOrder.meta?.appointment_start_at ||
-                            selectedOrder.start_at
-                        )}
-                      </p>
-                      <p className="text-xs text-neutral-400">
-                        End: {formatDateTime(selectedOrder.end_at)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Items / lines */}
+                  {/* Patient card */}
                   <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <ClipboardList className="h-4 w-4 text-neutral-300" />
-                        <p className="text-xs font-semibold text-neutral-200">
-                          Items
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800">
+                        <span className="text-xs font-semibold text-neutral-100">
+                          {getUserInitials(orderedByUser)}
+                        </span>
+                      </div>
+
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-white">
+                          {getDisplayPatientName(selectedOrder, orderedByUser)}
+                        </p>
+
+                        <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+                          <span className="inline-flex items-center gap-1">
+                            <UserIcon className="h-3.5 w-3.5 text-neutral-500" />
+                            <span>
+                              {orderedByUser
+                                ? (orderedByUser as any).gender
+                                  ? String((orderedByUser as any).gender).charAt(0).toUpperCase() +
+                                    String((orderedByUser as any).gender).slice(1)
+                                  : "Gender: —"
+                                : "Gender: —"}
+                            </span>
+                          </span>
+
+                          <span className="inline-flex items-center gap-1">
+                            <Hash className="h-3.5 w-3.5 text-neutral-500" />
+                            <span>
+                              DOB: {orderedByUser ? formatDateOnly((orderedByUser as any).dob) : "—"}
+                              {orderedByUser &&
+                              (orderedByUser as any).dob &&
+                              calculateAgeFromDob((orderedByUser as any).dob) != null ? (
+                                <span className="text-neutral-400">
+                                  {" "}
+                                  ({calculateAgeFromDob((orderedByUser as any).dob)} yrs)
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-neutral-300">
+                          {(orderedByUser as any)?.email && (
+                            <span className="inline-flex items-center gap-1">
+                              <Mail className="h-3.5 w-3.5 text-neutral-500" />
+                              <span className="break-all">{(orderedByUser as any).email}</span>
+                            </span>
+                          )}
+                          {((orderedByUser as any)?.phone || (orderedByUser as any)?.phoneNumber) && (
+                            <span className="inline-flex items-center gap-1">
+                              <Phone className="h-3.5 w-3.5 text-neutral-500" />
+                              <span>{(orderedByUser as any).phone || (orderedByUser as any).phoneNumber}</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Address */}
+                    <div className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 text-[11px] sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <p className="text-neutral-500">Address</p>
+                        <p className="mt-0.5 text-neutral-100">
+                          <span className="inline-flex items-center gap-1">
+                            <MapPin className="h-3.5 w-3.5 text-neutral-500" />
+                            {orderedByUser
+                              ? [
+                                  (orderedByUser as any).address_line1 ||
+                                    (orderedByUser as any).addressLine1 ||
+                                    "",
+                                  (orderedByUser as any).address_line2 ||
+                                    (orderedByUser as any).addressLine2 ||
+                                    "",
+                                  (orderedByUser as any).city || "",
+                                  (orderedByUser as any).county || "",
+                                  (orderedByUser as any).postalcode ||
+                                    (orderedByUser as any).postcode ||
+                                    "",
+                                  (orderedByUser as any).country || "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(", ") || "—"
+                              : "—"}
+                          </span>
                         </p>
                       </div>
-                      <p className="text-xs text-neutral-400">
+                    </div>
+                  </div>
+
+                  {/* Order summary */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">Order summary</p>
+
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[11px] sm:grid-cols-2">
+                      <div>
+                        <dt className="text-neutral-500">Reference</dt>
+                        <dd className="text-neutral-100">
+                          {(selectedOrder as any).reference || (selectedOrder as any)._id}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Service</dt>
+                        <dd className="text-neutral-100">{(selectedOrder as any).service_name || "—"}</dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Created at</dt>
+                        <dd className="text-neutral-100">
+                          {formatDateTime((selectedOrder as any).createdAt || (selectedOrder as any).created_at)}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Appointment</dt>
+                        <dd className="text-neutral-100">
+                          {formatDateTime(extractAppointmentStart(selectedOrder))}
+                        </dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Total incl. VAT</dt>
+                        <dd className="text-neutral-100">{formatMoney(extractTotalMinor(selectedOrder))}</dd>
+                      </div>
+
+                      <div>
+                        <dt className="text-neutral-500">Payment</dt>
+                        <dd className="text-neutral-100 capitalize">
+                          {String((selectedOrder as any).payment_status || "—").replace(/_/g, " ")}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+
+                  {/* Items */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-neutral-300" />
+                        <p className="text-xs font-semibold text-neutral-200">Items</p>
+                        <span className="rounded-full border border-neutral-800 bg-neutral-950/60 px-2 py-0.5 text-[10px] text-neutral-400">
+                          {extractOrderItems(selectedOrder).length}
+                        </span>
+                      </div>
+
+                      <p className="text-[11px] text-neutral-400">
                         Total:{" "}
-                        <span className="font-semibold text-white">
-                          {formatMoney(selectedOrder.meta?.totalMinor)}
+                        <span className="font-semibold text-neutral-100">
+                          {formatMoney(extractTotalMinor(selectedOrder))}
                         </span>
                       </p>
                     </div>
 
-                    {selectedOrder.meta?.items?.length ? (
+                    {extractOrderItems(selectedOrder).length ? (
                       <div className="space-y-1">
-                        {selectedOrder.meta.items.map(
-                          (it: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="flex items-center justify-between text-xs py-1 border-b border-neutral-800/60 last:border-none"
-                            >
-                              <div className="flex flex-col">
-                                <span className="font-medium text-white">
-                                  {it.name}
-                                </span>
-                                <span className="text-[11px] text-neutral-400">
-                                  {it.variation || it.variations || "Standard"}
-                                </span>
-                              </div>
-                              <div className="text-right">
-                                <span className="block text-[11px] text-neutral-400">
-                                  Qty: {it.qty}
-                                </span>
-                                <span className="block text-[11px] text-neutral-300">
-                                  {formatMoney(it.totalMinor)}
-                                </span>
-                              </div>
+                        {extractOrderItems(selectedOrder).map((it, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-start justify-between gap-3 border-b border-neutral-800/60 py-2 last:border-none"
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-semibold text-neutral-100">{it.name}</p>
+                              <p className="mt-0.5 text-[10px] text-neutral-500">
+                                {it.variation || "Standard"}
+                              </p>
                             </div>
-                          )
-                        )}
+
+                            <div className="shrink-0 text-right">
+                              <p className="text-[10px] text-neutral-400">Qty: {it.qty}</p>
+                              {it.totalMinor != null ? (
+                                <p className="mt-0.5 text-[11px] font-semibold text-neutral-100">
+                                  {formatMoney(it.totalMinor)}
+                                </p>
+                              ) : (
+                                <p className="mt-0.5 text-[10px] text-neutral-600">—</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-neutral-500">
-                        No items found on this order.
-                      </p>
+                      <p className="text-[11px] text-neutral-500">No items found on this order.</p>
                     )}
                   </div>
 
-                  {/* 🔹 Admin + Consultation + Rejection notes */}
-                  {hasAnyNotes && (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3 space-y-3">
-                      <p className="text-xs font-semibold text-neutral-200 flex items-center gap-2">
-                        <ClipboardList className="h-4 w-4 text-neutral-300" />
-                        Notes
-                      </p>
+                  {/* Notes */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                    <p className="mb-2 text-xs font-semibold text-neutral-200">Notes</p>
+
+                    {adminNotes.length === 0 && consultationNotes.length === 0 && rejectionNotes.length === 0 ? (
+                      <p className="text-[11px] text-neutral-500">No notes found for this order.</p>
+                    ) : (
                       <div className="grid gap-3 md:grid-cols-3">
-                        <div>
-                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
-                            Admin notes
-                          </p>
-                          {adminNotesForDetail.length ? (
-                            <ul className="space-y-1">
-                              {adminNotesForDetail.map((note, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-neutral-200 leading-snug"
-                                >
-                                  • {note}
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                          <p className="text-[11px] font-semibold text-neutral-200">Admin notes</p>
+                          {adminNotes.length ? (
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-neutral-200">
+                              {adminNotes.map((n, idx) => (
+                                <li key={idx} className="break-words">
+                                  {n}
                                 </li>
                               ))}
                             </ul>
                           ) : (
-                            <p className="text-[11px] text-neutral-500">
-                              No admin notes.
-                            </p>
+                            <p className="mt-2 text-[11px] text-neutral-500">No admin notes.</p>
                           )}
                         </div>
-                        <div>
-                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
-                            Consultation notes
-                          </p>
-                          {consultantNotesForDetail.length ? (
-                            <ul className="space-y-1">
-                              {consultantNotesForDetail.map((note, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-neutral-200 leading-snug"
-                                >
-                                  • {note}
+
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                          <p className="text-[11px] font-semibold text-neutral-200">Consultation notes</p>
+                          {consultationNotes.length ? (
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-neutral-200">
+                              {consultationNotes.map((n, idx) => (
+                                <li key={idx} className="break-words">
+                                  {n}
                                 </li>
                               ))}
                             </ul>
                           ) : (
-                            <p className="text-[11px] text-neutral-500">
-                              No consultation notes.
-                            </p>
+                            <p className="mt-2 text-[11px] text-neutral-500">No consultation notes.</p>
                           )}
                         </div>
-                        <div>
-                          <p className="text-[11px] font-semibold text-neutral-400 mb-1">
-                            Rejection notes
-                          </p>
-                          {rejectedNotesForDetail.length ? (
-                            <ul className="space-y-1">
-                              {rejectedNotesForDetail.map((note, idx) => (
-                                <li
-                                  key={idx}
-                                  className="text-xs text-neutral-200 leading-snug"
-                                >
-                                  • {note}
+
+                        <div className="rounded-lg border border-neutral-800 bg-neutral-950/40 p-3">
+                          <p className="text-[11px] font-semibold text-neutral-200">Rejection notes</p>
+                          {rejectionNotes.length ? (
+                            <ul className="mt-2 list-disc space-y-1 pl-5 text-[11px] text-neutral-200">
+                              {rejectionNotes.map((n, idx) => (
+                                <li key={idx} className="break-words">
+                                  {n}
                                 </li>
                               ))}
                             </ul>
                           ) : (
-                            <p className="text-[11px] text-neutral-500">
-                              No rejection notes.
-                            </p>
+                            <p className="mt-2 text-[11px] text-neutral-500">No rejection notes.</p>
                           )}
                         </div>
                       </div>
+                    )}
+                  </div>
+
+                  {/* RAF */}
+                  {getRafQAs(selectedOrder).length ? (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                      <p className="mb-2 text-xs font-semibold text-neutral-200">
+                        RAF Questions &amp; Answers
+                      </p>
+
+                      <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                        {getRafQAs(selectedOrder).map((qa, idx) => (
+                          <div
+                            key={idx}
+                            className="border-b border-neutral-800/60 pb-2 text-[11px] last:border-none"
+                          >
+                            <p className="font-medium text-neutral-400">
+                              {idx + 1}. {qa.question}
+                            </p>
+                            <RafAnswer raw={qa.raw} answer={qa.answer} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+                      <p className="text-[11px] text-neutral-400">No Risk Assessment data captured for this order.</p>
                     </div>
                   )}
-
-                  {/* RAF Preview */}
-                  {selectedOrder.meta?.formsQA?.raf?.qa?.length ? (
-                    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
-                      <p className="text-xs font-semibold text-neutral-200 mb-2">
-                        RAF Answers (preview)
-                      </p>
-                      <div className="max-h-40 overflow-y-auto space-y-1">
-                        {selectedOrder.meta.formsQA.raf.qa.map(
-                          (qa: any, idx: number) => (
-                            <div
-                              key={idx}
-                              className="text-[11px] border-b border-neutral-800/60 pb-1 last:border-none"
-                            >
-                              <p className="text-neutral-400">
-                                {qa.question || qa.key}
-                              </p>
-                              <p className="text-neutral-100">
-                                {qa.answer ?? "—"}
-                              </p>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
                 </>
+              ) : (
+                <div className="text-[11px] text-neutral-400">No order selected.</div>
               )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
