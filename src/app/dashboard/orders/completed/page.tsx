@@ -1774,17 +1774,48 @@ function drawInfoCard(
 
   return y + cardH;
 }
+function formatPharmacyAddressLines(loggedInUser?: UserDto | null): string[] {
+  const u: any = loggedInUser || {};
+
+  // Try common shapes: user.address, user.pharmacy.address, user.tenant.address, etc.
+  const a: any =
+    u.pharmacy_address ||
+    u.pharmacyAddress ||
+    u.pharmacy?.address ||
+    u.tenant?.address ||
+    u.organisation?.address ||
+    u.organization?.address ||
+    u.address ||
+    {};
+
+  const line1 =
+    a.line1 || a.address1 || a.addressLine1 || u.addressLine1 || u.line1;
+  const line2 =
+    a.line2 || a.address2 || a.addressLine2 || u.addressLine2 || u.line2;
+  const city = a.city || a.town || a.locality || u.city;
+  const county = a.county || a.state || a.region || u.county || u.state;
+  const postcode =
+    a.postcode || a.postalCode || a.zip || a.pincode || u.postcode;
+  const country = a.country || u.country;
+
+  return [line1, line2, city, county, postcode, country]
+    .filter(Boolean)
+    .map((v) => String(v).trim())
+    .filter(Boolean);
+}
 
 function writePrivateRxTopCards(
   doc: jsPDF,
   cursor: PdfCursor,
   order: OrderDto,
-  user: UserDto | null
+  user: UserDto | null,              // patient user (as you already had)
+  loggedInUser: UserDto | null        // NEW: logged-in user for left card
 ) {
   const pageWidth = getPageWidth(doc);
   const gap = 8;
   const cardW = (pageWidth - 2 * MARGIN_X - gap) / 2;
 
+  // ---------------- Patient (right card) ----------------
   const u: any = user || {};
   const patientName = getDisplayPatientName(order, user || undefined);
 
@@ -1796,13 +1827,6 @@ function writePrivateRxTopCards(
 
   const dob = u.dob ? formatDateOnly(u.dob) || "—" : "—";
 
-  const leftRows: PdfInfoRow[] = [
-    { label: "Name", value: PHARMACY_INFO.name },
-    { label: "Address", value: PHARMACY_INFO.addressLines.join(", ") },
-    { label: "Tel", value: PHARMACY_INFO.tel },
-    { label: "Email", value: PHARMACY_INFO.email },
-  ];
-
   const rightRows: PdfInfoRow[] = [
     { label: "Name", value: patientName || "—" },
     { label: "DOB", value: dob },
@@ -1811,6 +1835,42 @@ function writePrivateRxTopCards(
       value: patientAddrLines.length ? patientAddrLines.join(", ") : "—",
     },
     { label: "Contact", value: contact || "—" },
+  ];
+
+  // ---------------- Logged-in user (left card) ----------------
+  const lu: any = loggedInUser || {};
+
+  const pharmacyName =
+    lu.pharmacy_name ||
+    lu.pharmacyName ||
+    lu.tenant?.name ||
+    lu.companyName ||
+    lu.organisationName ||
+    lu.organizationName ||
+    PHARMACY_INFO.name ||
+    "—";
+
+  const pharmacyAddrLines = formatPharmacyAddressLines(loggedInUser);
+  const pharmacyAddress =
+    pharmacyAddrLines.length
+      ? pharmacyAddrLines.join(", ")
+      : (PHARMACY_INFO.addressLines || []).join(", ") || "—";
+
+  const pharmacyTel =
+    lu.tel ||
+    lu.phone ||
+    lu.phoneNumber ||
+    lu.mobile ||
+    PHARMACY_INFO.tel ||
+    "—";
+
+  const pharmacyEmail = lu.email || PHARMACY_INFO.email || "—";
+
+  const leftRows: PdfInfoRow[] = [
+    { label: "Name", value: pharmacyName },
+    { label: "Address", value: pharmacyAddress },
+    { label: "Tel", value: pharmacyTel },
+    { label: "Email", value: pharmacyEmail },
   ];
 
   // Measure first so we can ensure space before drawing
@@ -2151,7 +2211,8 @@ function getLoginUrl() {
 
 async function exportInvoicePdf(
   order: OrderDto,
-  user: UserDto | null,
+  user: UserDto | null,                 // ✅ patient (as you already use)
+  loggedInUser: UserDto | null,         // ✅ pharmacist (logged-in)
   mode: PdfExportMode = "download"
 ) {
   const invoiceNo = `#INV-${(order as any).reference || (order as any)._id}`;
@@ -2164,10 +2225,12 @@ async function exportInvoicePdf(
   );
 
   const subtitle = `Invoice No: ${invoiceNo}  |  VAT No: ${PHARMACY_INFO.vatNo}  |  Date: ${invoiceDate}`;
+
   const [logoDataUrl, brandName] = await Promise.all([
     getPdfLogoDataUrl(),
     getPdfHeaderName(),
   ]);
+
   const doc = createPdfBaseDoc(
     "Invoice",
     subtitle,
@@ -2176,14 +2239,16 @@ async function exportInvoicePdf(
     undefined,
     brandName || undefined
   );
+
   const pageWidth = getPageWidth(doc);
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
+  // ---------------- Patient (Bill To) ----------------
   const patientName = getDisplayPatientName(order, user || undefined);
   const u: any = user || {};
   const dobLabel = u.dob ? formatDateOnly(u.dob) : null;
 
-  const addrParts = [
+  const patientAddrParts = [
     u.address_line1 || u.addressLine1 || u.address_line_1 || u.address1,
     u.address_line2 || u.addressLine2 || u.address_line_2 || u.address2,
     u.city,
@@ -2191,16 +2256,42 @@ async function exportInvoicePdf(
     u.postalcode || u.postcode,
     u.country,
   ].filter(Boolean);
-  const patientAddress = addrParts.join(", ");
+  const patientAddress = patientAddrParts.join(", ");
 
-  const email = u.email || (order as any).email || "";
-  const phone = u.phone || u.phoneNumber || (order as any).phone || "";
-  const contactParts: string[] = [];
-  if (email) contactParts.push(email);
-  if (phone) contactParts.push(phone);
-  const contact = contactParts.join(" | ");
+  const patientEmail = u.email || (order as any).email || "";
+  const patientPhone = u.phone || u.phoneNumber || (order as any).phone || "";
+  const patientContactParts: string[] = [];
+  if (patientEmail) patientContactParts.push(patientEmail);
+  if (patientPhone) patientContactParts.push(patientPhone);
+  const patientContact = patientContactParts.join(" | ");
 
-  // Simple cards
+  // ---------------- Pharmacist (From) = Logged-in user ----------------
+  const p: any = loggedInUser || {};
+
+  const pharmacistName =
+    p.name ||
+    p.fullName ||
+    [p.firstName, p.lastName].filter(Boolean).join(" ") ||
+    PHARMACY_INFO.name;
+
+  const pharmacistAddrParts = [
+    p.address_line1 || p.addressLine1 || p.address_line_1 || p.address1,
+    p.address_line2 || p.addressLine2 || p.address_line_2 || p.address2,
+    p.city,
+    p.county,
+    p.postalcode || p.postcode,
+    p.country,
+  ].filter(Boolean);
+  const pharmacistAddress =
+    pharmacistAddrParts.length ? pharmacistAddrParts.join(", ") : PHARMACY_INFO.addressLines.join(", ");
+
+  const pharmacistTel =
+    p.phone || p.phoneNumber || p.mobile || PHARMACY_INFO.tel;
+
+  const pharmacistEmail =
+    p.email || PHARMACY_INFO.email;
+
+  // ---------------- Cards ----------------
   const cardGap = 6;
   const cardWidth = (pageWidth - 2 * MARGIN_X - cardGap) / 2;
 
@@ -2261,13 +2352,15 @@ async function exportInvoicePdf(
     return y + cardHeight;
   };
 
+  // ✅ FROM = logged-in pharmacist
   const leftBottom = drawInfoCard(MARGIN_X, cursor.y, cardWidth, "From", [
-    { label: "Name:", value: PHARMACY_INFO.name },
-    { label: "Address:", value: PHARMACY_INFO.addressLines.join(", ") },
-    { label: "Tel:", value: PHARMACY_INFO.tel },
-    { label: "Email:", value: PHARMACY_INFO.email },
+    { label: "Name:", value: pharmacistName },
+    { label: "Address:", value: pharmacistAddress || "—" },
+    { label: "Tel:", value: pharmacistTel || "—" },
+    { label: "Email:", value: pharmacistEmail || "—" },
   ]);
 
+  // ✅ BILL TO = patient
   const rightBottom = drawInfoCard(
     MARGIN_X + cardWidth + cardGap,
     cursor.y,
@@ -2277,12 +2370,13 @@ async function exportInvoicePdf(
       { label: "Patient:", value: patientName },
       { label: "DOB:", value: dobLabel || "—" },
       { label: "Address:", value: patientAddress || "—" },
-      { label: "Contact:", value: contact || "—" },
+      { label: "Contact:", value: patientContact || "—" },
     ]
   );
 
   cursor.y = Math.max(leftBottom, rightBottom) + 10;
 
+  // ---------- rest of your invoice unchanged ----------
   writeSectionTitle(doc, cursor, "Invoice Details");
 
   const items = ((order as any).meta?.items || []) as any[];
@@ -2332,10 +2426,8 @@ async function exportInvoicePdf(
 
       const numY = rowY;
       doc.text(String(qty), colQtyX, numY);
-      if (unitMinor != null)
-        doc.text((unitMinor / 100).toFixed(2), colUnitX, numY);
-      if (totalMinor != null)
-        doc.text((totalMinor / 100).toFixed(2), colNetX, numY);
+      if (unitMinor != null) doc.text((unitMinor / 100).toFixed(2), colUnitX, numY);
+      if (totalMinor != null) doc.text((totalMinor / 100).toFixed(2), colNetX, numY);
 
       cursor.y = rowY + rowHeight;
     });
@@ -2354,6 +2446,7 @@ async function exportInvoicePdf(
 
   const paymentStatus =
     String((order as any).payment_status || "").toUpperCase() || "N/A";
+
   const paidAtSource =
     (order as any).paid_at ||
     (order as any).meta?.paid_at ||
@@ -2371,11 +2464,10 @@ async function exportInvoicePdf(
   doc.text(paymentLine, MARGIN_X, cursor.y);
   cursor.y += 6;
 
-  const filename = `Invoice_${
-    (order as any).reference || (order as any)._id
-  }.pdf`;
+  const filename = `Invoice_${(order as any).reference || (order as any)._id}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
+
 
 /* ----------------- RAF PDF ----------------- */
 
@@ -2514,6 +2606,7 @@ async function exportDeclarationPdf(
 async function exportRecordPdf(
   order: OrderDto,
   user: UserDto | null,
+  pharmacist: UserDto | null,  
   mode: PdfExportMode = "download"
 ) {
   const reference = (order as any).reference || (order as any)._id;
@@ -2548,7 +2641,7 @@ async function exportRecordPdf(
 
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
-  writePrivateRxTopCards(doc, cursor, order, user);
+  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
   writeRecordSection(doc, cursor, order);
 
   const filename = `RecordOfSupply_${reference}.pdf`;
@@ -2607,7 +2700,7 @@ async function buildPrivatePrescriptionDoc(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // ✅ Restore patient + order details block
-  writePrivateRxTopCards(doc, cursor, order, user);
+  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
 
   // ✅ Medicines
   writeSectionTitle(doc, cursor, "Medicine Prescribed");
@@ -2859,8 +2952,8 @@ const PDF_BUILDERS: Record<PdfKind, PdfBuilder> = {
   raf: (o, u, _p, mode) => exportRafPdf(o, u, mode) as any,
   advice: (o, u, _p, mode) => exportAdvicePdf(o, u, mode) as any,
   declaration: (o, u, p, mode) => exportDeclarationPdf(o, u, p, mode) as any,
-  record: (o, u, _p, mode) => exportRecordPdf(o, u, mode) as any,
-  invoice: (o, u, _p, mode) => exportInvoicePdf(o, u, mode) as any,
+   record: (o, u, p, mode) => exportRecordPdf(o, u, p, mode) as any,
+  invoice: (o, u, p, mode) => exportInvoicePdf(o, u, p, mode) as any,
   private_rx: (o, u, p, mode) => exportPrivatePrescriptionPdf(o, u, p, mode) as any,
   private_rx_patient: (o, u, p, mode) =>
     exportPrivatePrescriptionPatientPdf(o, u, p, mode) as any,
@@ -2973,20 +3066,67 @@ async function exportNotificationOfTreatmentPdf(
     (await getPharmacistSignatureDataUrl(pharmacistUser)) ||
     (await getSignatureDataUrl(order));
 
+  // -------------------- NEW: header uses logged-in pharmacist --------------------
+  const ph: any = pharmacistUser || {};
+
+  const pick = (...vals: any[]) => vals.find((v) => typeof v === "string" && v.trim());
+
+  const pharmacistHeaderName = pick(
+    ph.pharmacy_name,
+    ph.pharmacyName,
+    ph.organisation_name,
+    ph.organisationName,
+    ph.company_name,
+    ph.companyName,
+    ph.name,
+    ph.fullName,
+    [ph.firstName, ph.lastName].filter(Boolean).join(" "),
+    PHARMACY_INFO.name
+  ) as string;
+
+  const pharmacistHeaderEmail = pick(ph.email, PHARMACY_INFO.email) as string;
+  const pharmacistHeaderTel = pick(
+    ph.phone,
+    ph.phoneNumber,
+    ph.mobile,
+    PHARMACY_INFO.tel
+  ) as string;
+
+  const pharmacistAddrParts = [
+    pick(ph.address_line1, ph.addressLine1, ph.address_line_1, ph.address1),
+    pick(ph.address_line2, ph.addressLine2, ph.address_line_2, ph.address2),
+    pick(ph.address_line3, ph.addressLine3, ph.address_line_3, ph.address3),
+    pick(ph.city),
+    pick(ph.county),
+    pick(ph.postalcode, ph.postcode),
+    pick(ph.country),
+  ].filter(Boolean) as string[];
+
+  const headerAddressLines =
+    pharmacistAddrParts.length > 0 ? pharmacistAddrParts : PHARMACY_INFO.addressLines;
+
+  // ------------------------------------------------------------------------------
+
   let y = 18;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   doc.setTextColor(15, 23, 42);
 
+  // ✅ Header block now driven by pharmacist user (fallback to PHARMACY_INFO)
   const topLines = [
-    PHARMACY_INFO.name,
-    ...PHARMACY_INFO.addressLines,
-    `${PHARMACY_INFO.email} | ${PHARMACY_INFO.tel}`,
-  ];
+    pharmacistHeaderName,
+    ...headerAddressLines,
+    [pharmacistHeaderEmail, pharmacistHeaderTel].filter(Boolean).join(" | "),
+  ].filter(Boolean);
+
+  // Wrap lines safely so long text doesn't overflow
   topLines.forEach((ln) => {
-    doc.text(ln, x, y);
-    y += 4.6;
+    const wrapped = doc.splitTextToSize(String(ln), pageWidth - 2 * x);
+    wrapped.forEach((w: string) => {
+      doc.text(w, x, y);
+      y += 4.6;
+    });
   });
 
   y += 2;
@@ -3145,6 +3285,7 @@ async function exportNotificationOfTreatmentPdf(
 
 
 
+
 /* ----------------- Full Clinical PDF (FIXED: jsPDF only) ----------------- */
 
 async function exportAllClinicalPdf(
@@ -3186,7 +3327,7 @@ async function exportAllClinicalPdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // Keep existing top cards
-  writePrivateRxTopCards(doc, cursor, order, user);
+  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
 
   // RAF items (your existing normaliser)
   const items = normaliseRafItems(getRiskAssessmentItems(order), order);
@@ -4215,10 +4356,10 @@ export default function Page() {
           );
           break;
         case "record":
-          await exportRecordPdf(order, user, "download");
+          await exportRecordPdf(order, user,loggedInPharmacist, "download");
           break;
         case "invoice":
-          await exportInvoicePdf(order, user, "download");
+          await exportInvoicePdf(order, user,loggedInPharmacist, "download");
           break;
         case "private_rx":
           await exportPrivatePrescriptionPdf(
@@ -4275,9 +4416,9 @@ export default function Page() {
           "file"
         )) as File;
       case "record":
-        return (await exportRecordPdf(order, user, "file")) as File;
+        return (await exportRecordPdf(order, user,loggedInPharmacist, "file")) as File;
       case "invoice":
-        return (await exportInvoicePdf(order, user, "file")) as File;
+        return (await exportInvoicePdf(order, user,loggedInPharmacist, "file")) as File;
       case "private_rx":
         return (await exportPrivatePrescriptionPdf(
           order,
