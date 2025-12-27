@@ -9,6 +9,8 @@ import {
   Copy,
   Save,
   ArrowLeft,
+  Upload,
+  X,
 } from "lucide-react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
@@ -305,6 +307,287 @@ export default function Page() {
     () => fields.find((f) => f.id === selectedFieldId) || null,
     [fields, selectedFieldId]
   );
+
+  /* ---------- Import JSON (NEW) ---------- */
+
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
+
+  function openImportModal() {
+    setImportText("");
+    setImportError(null);
+    setImportOpen(true);
+  }
+
+  function closeImportModal() {
+    setImportOpen(false);
+    setImportError(null);
+    setImportText("");
+  }
+
+  function failImport(msg: string) {
+    setImportError(msg);
+    toast.error(msg); // ✅ popup of invalid format
+  }
+
+  function isPlainObject(v: any): v is Record<string, any> {
+    return !!v && typeof v === "object" && !Array.isArray(v);
+  }
+
+  // Accepts:
+  // A) Full payload (same shape as formPayload) -> { name, description, schema: [...] , ... }
+  // B) Raw schema array -> [ {type, data}, ... ]
+  function extractSchemaAndMeta(
+    input: any
+  ): { meta?: Record<string, any>; schema: any[] } | null {
+    if (Array.isArray(input)) {
+      return { schema: input };
+    }
+    if (isPlainObject(input) && Array.isArray((input as any).schema)) {
+      return { meta: input as any, schema: (input as any).schema };
+    }
+    return null;
+  }
+
+  function normalizeShowIf(si: any): ShowIf {
+    const base = defaultShowIf();
+    if (!si || typeof si !== "object") return base;
+
+    const arr = Array.isArray(si.in) ? si.in.map(String) : [];
+    return {
+      enabled: Boolean(si.enabled),
+      field: si.field != null ? String(si.field) : null,
+      equals: si.equals != null ? String(si.equals) : null,
+      in: arr,
+      inRaw: arr.join(", "),
+      truthy: Boolean(si.truthy),
+      notEquals: si.notEquals != null ? String(si.notEquals) : null,
+    };
+  }
+
+  function importedOptionsToUiOptions(raw: any): Option[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((o: any) => {
+      const label = o?.label != null ? String(o.label) : "";
+      const value = o?.value != null ? String(o.value) : "";
+      if (!label) throw new Error("Invalid option: missing label");
+      if (!value) throw new Error("Invalid option: missing value");
+
+      const expectedAuto = optionLabelToValue(label);
+      return {
+        id: createId(),
+        label,
+        value,
+        // if imported value differs from our auto-generated value,
+        // mark as touched so we never override it on label edits.
+        valueTouched: value !== expectedAuto,
+      };
+    });
+  }
+
+  function schemaItemToField(item: any): FormField {
+    if (
+      !isPlainObject(item) ||
+      typeof item.type !== "string" ||
+      !isPlainObject(item.data)
+    ) {
+      throw new Error(
+        'Invalid format: schema items must be like { "type": "...", "data": { ... } }'
+      );
+    }
+
+    const t = String(item.type);
+    const d = item.data as Record<string, any>;
+
+    const showIf = normalizeShowIf(d.showIf);
+
+    // base factory that respects label/key fallbacks per ui type
+    const makeBase = (uiType: FieldType): FormField => {
+      const label =
+        d.label != null ? String(d.label) : defaultLabelForType(uiType);
+      const key = d.key != null ? String(d.key) : defaultKeyForType(uiType);
+
+      return {
+        id: createId(),
+        type: uiType,
+        label,
+        key,
+        required: Boolean(d.required),
+        helpText:
+          d.help != null
+            ? String(d.help)
+            : d.helpText != null
+            ? String(d.helpText)
+            : "",
+        showIf,
+        hidden: Boolean(d.hidden),
+        disabled: Boolean(d.disabled),
+      };
+    };
+
+    switch (t) {
+      case "section": {
+        return makeBase("section");
+      }
+
+      case "textarea": {
+        const f = makeBase("textarea");
+        return { ...f, placeholder: d.placeholder != null ? String(d.placeholder) : "" };
+      }
+
+      case "date": {
+        return makeBase("date");
+      }
+
+      case "select": {
+        const multiple = Boolean(d.multiple);
+        const uiType: FieldType = multiple ? "select" : "dropdown";
+        const f = makeBase(uiType);
+        return {
+          ...f,
+          options: importedOptionsToUiOptions(d.options),
+          multiple,
+        };
+      }
+
+      case "radio": {
+        const f = makeBase("radio");
+        return { ...f, options: importedOptionsToUiOptions(d.options) };
+      }
+
+      case "checkbox": {
+        const f = makeBase("checkbox");
+        return {
+          ...f,
+          options: importedOptionsToUiOptions(d.options),
+          multiple: Boolean(d.multiple),
+        };
+      }
+
+      case "file_upload": {
+        const f = makeBase("file");
+        return { ...f, fileMultiple: Boolean(d.multiple) };
+      }
+
+      case "text_block": {
+        const f = makeBase("textBlock");
+        return { ...f, content: d.content != null ? String(d.content) : "" };
+      }
+
+      case "image": {
+        const f = makeBase("image");
+        return { ...f, imageUrl: d.url != null ? String(d.url) : "" };
+      }
+
+      case "signature": {
+        return makeBase("signature");
+      }
+
+      case "divider": {
+        return makeBase("divider");
+      }
+
+      case "page_break": {
+        return makeBase("pageBreak");
+      }
+
+      case "text": {
+        const inputTypeRaw = d.inputType != null ? String(d.inputType) : "text";
+        const uiType: FieldType =
+          inputTypeRaw === "email"
+            ? "email"
+            : inputTypeRaw === "number"
+            ? "number"
+            : "text";
+
+        const f = makeBase(uiType);
+        return { ...f, placeholder: d.placeholder != null ? String(d.placeholder) : "" };
+      }
+
+      default:
+        throw new Error(`Invalid format: unsupported schema type "${t}"`);
+    }
+  }
+
+  function applyImportedPayload(meta: Record<string, any> | undefined, schema: any[]) {
+    if (!Array.isArray(schema)) throw new Error("Invalid format: schema must be an array.");
+
+    const nextFields = schema.map(schemaItemToField);
+
+    setFields(nextFields);
+    setSelectedFieldId(nextFields[0]?.id || null);
+    setOpenInsertMenuAt(null);
+
+    // Optional meta application (does not change save flow; just fills inputs)
+    if (meta) {
+      if (typeof meta.name === "string") setFormName(meta.name);
+      if (typeof meta.description === "string") setDescription(meta.description);
+
+      if (typeof meta.service_slug === "string") setServiceSlug(meta.service_slug);
+      if (typeof meta.service_id === "string") setServiceId(meta.service_id);
+
+      if (typeof meta.treatment_slug === "string") setTreatmentSlug(meta.treatment_slug);
+
+      if (typeof meta.is_active === "boolean") setIsActive(meta.is_active);
+
+      if (meta.raf_status === "draft" || meta.raf_status === "published") {
+        setRafStatus(meta.raf_status);
+      }
+
+      if (typeof meta.form_type === "string") {
+        setFormType(meta.form_type);
+        if (!formTypeOptions.includes(meta.form_type)) {
+          setFormTypeOptions((prev) => [...prev, meta.form_type]);
+        }
+      }
+    }
+  }
+
+  async function handleImportFromText() {
+    setImportError(null);
+
+    const raw = (importText || "").trim();
+    if (!raw) {
+      failImport("Invalid format: paste JSON or upload a .json file.");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      const extracted = extractSchemaAndMeta(parsed);
+
+      if (!extracted) {
+        failImport(
+          'Invalid format: expected either a full payload with "schema": [...] or a raw schema array.'
+        );
+        return;
+      }
+
+      applyImportedPayload(extracted.meta, extracted.schema);
+
+      toast.success("JSON imported successfully");
+      closeImportModal();
+    } catch (e: any) {
+      console.error(e);
+      failImport(e?.message || "Invalid JSON format.");
+    }
+  }
+
+  async function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] || null;
+    e.target.value = ""; // allow re-upload same file
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setImportText(text);
+    } catch (err) {
+      console.error(err);
+      failImport("Failed to read JSON file.");
+    }
+  }
 
   /* ---------- Load services for dropdown ---------- */
 
@@ -806,7 +1089,11 @@ export default function Page() {
         onDragOver={(e) => onDragOverInsert(e, index)}
         onDrop={(e) => onDropInsert(e, index)}
       >
-        <div className={`flex items-center justify-center gap-3 ${compact ? "" : ""}`}>
+        <div
+          className={`flex items-center justify-center gap-3 ${
+            compact ? "" : ""
+          }`}
+        >
           <div className="h-px flex-1 bg-neutral-800" />
           <button
             type="button"
@@ -892,14 +1179,31 @@ export default function Page() {
           </h1>
           <p className="text-sm text-neutral-400">
             Design a dynamic form and save it directly to{" "}
-            <span className="font-semibold text-neutral-100">
-              /clinic-forms
-            </span>
+            <span className="font-semibold text-neutral-100">/clinic-forms</span>
             .
           </p>
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {/* ✅ Import JSON (NEW) */}
+          <button
+            type="button"
+            onClick={openImportModal}
+            className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-3 py-2 text-xs sm:text-sm font-medium text-neutral-100 border border-neutral-700 hover:bg-neutral-800"
+          >
+            <Upload className="h-4 w-4" />
+            Import JSON
+          </button>
+
+          {/* hidden file input (NEW) */}
+          <input
+            ref={importFileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={handleImportFileChange}
+          />
+
           <button
             type="button"
             onClick={copySchema}
@@ -908,6 +1212,7 @@ export default function Page() {
             <Copy className="h-4 w-4" />
             Copy payload JSON
           </button>
+
           <button
             type="button"
             onClick={handleSave}
@@ -1710,6 +2015,115 @@ export default function Page() {
           </div>
         </aside>
       </div>
+
+      {/* ---------- Import JSON Modal (NEW) ---------- */}
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={closeImportModal}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-neutral-800 bg-neutral-950 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-4 py-3">
+              <div>
+                <p className="text-sm font-semibold text-neutral-100">
+                  Import form JSON
+                </p>
+                <p className="text-[11px] text-neutral-500">
+                  Accepts either full payload (with <code>schema</code>) or a raw
+                  schema array.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeImportModal}
+                className="inline-flex items-center justify-center rounded-full border border-neutral-700 bg-neutral-900 p-1 text-neutral-300 hover:border-neutral-500"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 px-4 py-4">
+              {importError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-[12px] text-rose-100">
+                  {importError}
+                </div>
+              )}
+
+              <textarea
+                rows={10}
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={`Paste JSON here...
+
+Example:
+{
+  "name": "Travel RAF",
+  "schema": [ ... ]
+}
+
+or:
+[
+  { "type": "text", "data": { ... } }
+]`}
+                className="w-full rounded-xl bg-neutral-950 border border-neutral-800 px-3 py-2 text-[12px] text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500"
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => importFileRef.current?.click()}
+                    className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-medium text-neutral-200 hover:bg-neutral-800"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Choose .json file
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportText("");
+                      setImportError(null);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-neutral-900"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={closeImportModal}
+                    className="rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-neutral-900"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportFromText}
+                    className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500"
+                  >
+                    Import
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-neutral-500">
+                If the imported JSON does not match our expected structure, an{" "}
+                <span className="text-neutral-200 font-semibold">
+                  invalid format
+                </span>{" "}
+                popup will appear.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
