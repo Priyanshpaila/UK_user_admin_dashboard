@@ -197,6 +197,10 @@ export default function EditClinicFormPage() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
+  // ✅ Import payload JSON (UI-only)
+  const [importOpen, setImportOpen] = useState(false);
+  const [importJson, setImportJson] = useState("");
+
   const selectedField = useMemo(
     () => fields.find((f) => f.id === selectedFieldId) || null,
     [fields, selectedFieldId]
@@ -1000,6 +1004,62 @@ export default function EditClinicFormPage() {
     }
   };
 
+  // ✅ Import payload JSON (replaces current editor state; does NOT save to backend)
+  const handleImportPayload = () => {
+    try {
+      const parsed = JSON.parse(importJson);
+
+      // Allow importing either:
+      // 1) Full payload: { name, description, schema: [...] , ... }
+      // 2) Schema-only array: [ ...schemaItems ]
+      const schemaArr = Array.isArray(parsed) ? parsed : parsed?.schema;
+
+      if (!Array.isArray(schemaArr)) {
+        toast.error(
+          'Invalid JSON. Provide either an array schema or a payload with "schema: []".'
+        );
+        return;
+      }
+
+      // If full payload object, import metadata too
+      if (!Array.isArray(parsed) && parsed && typeof parsed === "object") {
+        if (typeof parsed.name === "string") setFormName(parsed.name);
+        if (typeof parsed.description === "string")
+          setDescription(parsed.description);
+
+        if (typeof parsed.service_id === "string") setServiceId(parsed.service_id);
+        if (typeof parsed.service_slug === "string") setServiceSlug(parsed.service_slug);
+        if (typeof parsed.treatment_slug === "string")
+          setTreatmentSlug(parsed.treatment_slug);
+
+        if (typeof parsed.is_active === "boolean") setIsActive(parsed.is_active);
+
+        if (parsed.raf_status === "draft" || parsed.raf_status === "published") {
+          setRafStatus(parsed.raf_status);
+        }
+
+        if (typeof parsed.form_type === "string" && parsed.form_type.trim()) {
+          const ft = parsed.form_type.trim();
+          setFormType(ft);
+          setFormTypeOptions((prev) => (prev.includes(ft) ? prev : [...prev, ft]));
+        }
+      }
+
+      // Replace fields using your existing parser
+      const parsedFields: FormField[] = schemaArr.map(parseBackendFieldToFormField);
+
+      setFields(parsedFields);
+      setSelectedFieldId(parsedFields[0]?.id ?? null);
+
+      setImportOpen(false);
+      setImportJson("");
+      toast.success("Payload imported into editor");
+    } catch (e) {
+      console.error(e);
+      toast.error("Invalid JSON format");
+    }
+  };
+
   const handleSave = async () => {
     if (!id) return;
     if (!formName.trim()) {
@@ -1125,6 +1185,72 @@ export default function EditClinicFormPage() {
     <div className="max-w-7xl mx-auto px-4 py-8 text-neutral-100">
       <ToastContainer position="top-right" autoClose={3000} />
 
+      {/* ✅ Import Modal */}
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setImportOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl border border-neutral-800 bg-neutral-950 p-4 sm:p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-neutral-100">
+                  Import payload JSON
+                </h3>
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Paste the JSON you copied from “Copy payload JSON”. This will
+                  replace the current editor state (nothing is saved until you
+                  click “Save changes”).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setImportOpen(false);
+                  setImportJson("");
+                }}
+                className="rounded-md border border-neutral-800 bg-neutral-900/60 px-2.5 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+              >
+                Close
+              </button>
+            </div>
+
+            <textarea
+              rows={10}
+              value={importJson}
+              onChange={(e) => setImportJson(e.target.value)}
+              placeholder={`{ "name": "My Form", "description": "", "schema": [ ... ] }`}
+              className="mt-3 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-[11px] text-neutral-100 font-mono"
+            />
+
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setImportOpen(false);
+                  setImportJson("");
+                }}
+                className="rounded-md border border-neutral-800 bg-neutral-900/60 px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleImportPayload}
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500"
+              >
+                Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top header + actions */}
       <div className="flex flex-col gap-4 mb-6 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-2">
@@ -1158,6 +1284,16 @@ export default function EditClinicFormPage() {
             <Copy className="h-4 w-4" />
             Copy payload JSON
           </button>
+
+          {/* ✅ Import button */}
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-3 py-2 text-xs sm:text-sm font-medium text-neutral-100 border border-neutral-700 hover:bg-neutral-800"
+          >
+            Import payload JSON
+          </button>
+
           <button
             type="button"
             onClick={handleSave}
@@ -1630,13 +1766,13 @@ export default function EditClinicFormPage() {
                 </div>
 
                 {/* Required */}
-                {![
+                {[
                   "section",
                   "divider",
                   "textBlock",
                   "image",
                   "pageBreak",
-                ].includes(selectedField.type) && (
+                ].includes(selectedField.type) === false && (
                   <div className="flex items-center gap-2">
                     <input
                       id="required-toggle"
