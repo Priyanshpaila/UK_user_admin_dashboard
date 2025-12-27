@@ -779,7 +779,7 @@ export default function Page() {
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
                   <p className="text-[11px] text-neutral-400">Edit appointment</p>
-                  <p className="text-sm font-semibold text-white">{editing.order_id || "No order ID"}</p>
+                  <p className="text-sm font-semibold text-white">{editing.order_reference || "No order Ref"}</p>
                   {editingPatientName && (
                     <p className="mt-0.5 text-xs text-neutral-300 flex items-center gap-1">
                       <User className="h-3 w-3 text-emerald-400" />
