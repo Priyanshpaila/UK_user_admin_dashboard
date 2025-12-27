@@ -10,8 +10,8 @@ import {
   getOrderByIdApi,
   type OrderDto,
   sendEmailApi,
-  createZoomMeetingApi, // ✅ NEW
-  type ZoomMeetingDto, // ✅ NEW (optional type, but helpful)
+  createZoomMeetingApi,
+  type ZoomMeetingDto,
 } from "../../../api";
 import {
   Loader2,
@@ -22,21 +22,20 @@ import {
   X,
   RefreshCw,
   Link2,
-  Filter,
-  CheckCircle2,
-  XCircle,
-  BadgeCheck,
-  CalendarX2,
   ArrowRight,
   ClipboardList,
 } from "lucide-react";
 
 /* ----------------- email constants ----------------- */
 
-const RESCHEDULE_TEMPLATE = "rescheduleapp"; // ✅ hard-coded template name
-const ZOOM_TEMPLATE = "zoom"; // ✅ NEW: hard-coded zoom template name
+const RESCHEDULE_TEMPLATE = "rescheduleapp";
+const ZOOM_TEMPLATE = "zoom";
 const SUPPORT_EMAIL_FALLBACK = "support@pharmacyexpress.co.uk";
 const TIMEZONE_FALLBACK = "Europe/London";
+
+/* ----------------- show ONLY these statuses in table ----------------- */
+
+const ALLOWED_STATUSES = new Set(["pending", "rescheduled"]);
 
 /* ----------------- helpers ----------------- */
 
@@ -67,10 +66,7 @@ function truncateUrl(url?: string, max = 40) {
   return url.slice(0, max - 3) + "...";
 }
 
-function getDisplayPatientName(
-  appt: AppointmentDto,
-  user?: UserDto | null
-): string {
+function getDisplayPatientName(appt: AppointmentDto, user?: UserDto | null): string {
   if (appt.patient_name) return appt.patient_name;
 
   if (user) {
@@ -88,10 +84,7 @@ function getDisplayPatientName(
 function getPatientDetails(user?: UserDto | null): string {
   if (!user) return "";
   const email = (user as any).email;
-  const phone =
-    (user as any).phone ||
-    (user as any).mobile ||
-    (user as any).phoneNumber;
+  const phone = (user as any).phone || (user as any).mobile || (user as any).phoneNumber;
 
   const parts: string[] = [];
   if (email) parts.push(email);
@@ -113,25 +106,20 @@ function toDateTimeLocal(value?: string | null): string {
   const d = new Date(value);
   if (isNaN(d.getTime())) return "";
   const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-    d.getDate()
-  )}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 
 function appointmentStatusPillClass(status?: string) {
   const s = (status || "").toLowerCase();
-  if (s === "pending")
-    return "border-amber-500/70 bg-amber-500/10 text-amber-200";
-  if (s === "confirmed")
-    return "border-blue-500/70 bg-blue-500/10 text-blue-200";
-  if (s === "cancelled")
-    return "border-rose-500/70 bg-rose-500/10 text-rose-200";
-  if (s === "completed")
-    return "border-emerald-500/70 bg-emerald-500/10 text-emerald-200";
+  if (s === "pending") return "border-amber-500/70 bg-amber-500/10 text-amber-200";
+  if (s === "confirmed") return "border-blue-500/70 bg-blue-500/10 text-blue-200";
+  if (s === "cancelled") return "border-rose-500/70 bg-rose-500/10 text-rose-200";
+  if (s === "completed") return "border-emerald-500/70 bg-emerald-500/10 text-emerald-200";
   if (s === "no-show" || s === "no_show" || s === "noshow")
     return "border-orange-500/70 bg-orange-500/10 text-orange-200";
-  if (s === "rescheduled")
-    return "border-violet-500/70 bg-violet-500/10 text-violet-200";
+  if (s === "rescheduled") return "border-violet-500/70 bg-violet-500/10 text-violet-200";
   return "border-neutral-500/60 bg-neutral-500/10 text-neutral-200";
 }
 
@@ -140,9 +128,7 @@ function formatMoney(minor?: number | null) {
   return `£${(minor / 100).toFixed(2)}`;
 }
 
-function splitEmailDateTime(
-  value?: string | null
-): { date?: string; time?: string } {
+function splitEmailDateTime(value?: string | null): { date?: string; time?: string } {
   if (!value) return {};
   const d = new Date(value);
   if (isNaN(d.getTime())) return {};
@@ -151,14 +137,10 @@ function splitEmailDateTime(
     month: "short",
     year: "numeric",
   });
-  const time = d.toLocaleTimeString("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   return { date, time };
 }
 
-// ✅ NEW: duration helper (Zoom requires duration minutes)
 function computeDurationMinutes(startIso?: string | null, endIso?: string | null) {
   if (!startIso || !endIso) return null;
   const s = new Date(startIso);
@@ -170,34 +152,12 @@ function computeDurationMinutes(startIso?: string | null, endIso?: string | null
   return mins > 0 ? mins : null;
 }
 
-type StatusFilter =
-  | "pending"
-  | "confirmed"
-  | "cancelled"
-  | "completed"
-  | "rescheduled"
-  | "no-show"
-  | "all";
-
-const FILTERS: { key: StatusFilter; label: string; icon: any }[] = [
-  { key: "pending", label: "Pending", icon: Clock },
-  { key: "confirmed", label: "Confirmed", icon: BadgeCheck },
-  { key: "completed", label: "Completed", icon: CheckCircle2 },
-  { key: "cancelled", label: "Cancelled", icon: XCircle },
-  { key: "rescheduled", label: "Rescheduled", icon: CalendarX2 },
-  { key: "no-show", label: "No-show", icon: CalendarX2 },
-  { key: "all", label: "All", icon: Filter },
-];
-
 /* ----------------- page ----------------- */
 
 export default function Page() {
   const [appointments, setAppointments] = useState<AppointmentDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // ✅ filters (pending default)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
 
   const [editing, setEditing] = useState<AppointmentDto | null>(null);
   const [editStatus, setEditStatus] = useState<string>("pending");
@@ -208,53 +168,37 @@ export default function Page() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [notice, setNotice] = useState<{
-    type: "success" | "warn";
-    message: string;
-  } | null>(null);
+  const [notice, setNotice] = useState<{ type: "success" | "warn"; message: string } | null>(
+    null
+  );
 
-  const [appointmentUsers, setAppointmentUsers] = useState<
-    Record<string, UserDto | null>
-  >({});
+  const [appointmentUsers, setAppointmentUsers] = useState<Record<string, UserDto | null>>({});
 
   const [editingOrder, setEditingOrder] = useState<OrderDto | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
 
-  /* ----------------- pagination (NEW) ----------------- */
+  /* ----------------- pagination ----------------- */
 
   const [page, setPage] = useState<number>(1);
-  const [limit, setLimit] = useState<number>(20); // default stays 20, now user can change
+  const [limit, setLimit] = useState<number>(20);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
 
-  async function loadAppointments(
-    filter: StatusFilter = statusFilter,
-    opts?: { page?: number; limit?: number; append?: boolean }
-  ) {
+  async function loadAppointments(opts?: { page?: number; limit?: number; append?: boolean }) {
     const nextPage = typeof opts?.page === "number" ? opts.page : 1;
     const nextLimit = typeof opts?.limit === "number" ? opts.limit : limit;
     const append = !!opts?.append;
 
-    if (append) {
-      setLoadingMore(true);
-    } else {
-      setLoading(true);
-    }
+    if (append) setLoadingMore(true);
+    else setLoading(true);
 
     setError(null);
     setNotice(null);
 
     try {
-      // ✅ call backend with status when not "all", and pass page/limit
-      const res =
-        filter === "all"
-          ? await getAppointmentsApi({ page: nextPage, limit: nextLimit })
-          : await getAppointmentsApi({
-              status: filter,
-              page: nextPage,
-              limit: nextLimit,
-            });
+      // fetch page (backend might not support multi-status filter -> we filter locally)
+      const res = await getAppointmentsApi({ page: nextPage, limit: nextLimit });
 
       const list: AppointmentDto[] = Array.isArray((res as any).data)
         ? (res as any).data
@@ -262,24 +206,17 @@ export default function Page() {
         ? (res as any)
         : [];
 
-      // ✅ UI safety filter (in case backend ignores query)
-      const filtered =
-        filter === "all"
-          ? list
-          : list.filter((a) => (a.status || "").toLowerCase() === filter);
+      // ✅ only pending + rescheduled rows
+      const filtered = list.filter((a) => ALLOWED_STATUSES.has(String(a.status || "").toLowerCase()));
 
-      // ✅ append vs replace
+      // append vs replace
       const nextAppointments = append ? [...appointments, ...filtered] : filtered;
       setAppointments(nextAppointments);
 
-      // ✅ determine hasMore (prefer meta if available; fallback to "got less than limit")
+      // hasMore: prefer meta.hasMore else fallback by raw list size
       const meta = (res as any)?.meta;
       const metaHasMore =
-        meta && typeof meta === "object"
-          ? typeof meta.hasMore === "boolean"
-            ? meta.hasMore
-            : undefined
-          : undefined;
+        meta && typeof meta === "object" && typeof meta.hasMore === "boolean" ? meta.hasMore : undefined;
 
       const computedHasMore =
         typeof metaHasMore === "boolean" ? metaHasMore : list.length >= nextLimit;
@@ -288,13 +225,9 @@ export default function Page() {
       setPage(nextPage);
       setLimit(nextLimit);
 
-      // ✅ fetch users for the appointments we have (existing logic, but supports append)
+      // fetch users for displayed appointments
       const uniqueUserIds = Array.from(
-        new Set(
-          nextAppointments
-            .map((a) => a.user_id as string | undefined)
-            .filter(Boolean)
-        )
+        new Set(nextAppointments.map((a) => a.user_id as string | undefined).filter(Boolean))
       ) as string[];
 
       if (uniqueUserIds.length) {
@@ -324,13 +257,13 @@ export default function Page() {
     }
   }
 
-  // initial + when filter changes (reset pagination)
+  // initial
   useEffect(() => {
     setPage(1);
     setHasMore(true);
-    void loadAppointments(statusFilter, { page: 1, limit, append: false });
+    void loadAppointments({ page: 1, limit, append: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, []);
 
   function openEdit(appt: AppointmentDto) {
     setEditing(appt);
@@ -372,8 +305,7 @@ export default function Page() {
 
   const originalStartInput = editing ? toDateTimeLocal(editing.start_at) : "";
   const originalEndInput = editing ? toDateTimeLocal(editing.end_at) : "";
-  const hasTimeChanged =
-    !!editing && (editStart !== originalStartInput || editEnd !== originalEndInput);
+  const hasTimeChanged = !!editing && (editStart !== originalStartInput || editEnd !== originalEndInput);
 
   async function handleSave() {
     if (!editing) return;
@@ -381,7 +313,6 @@ export default function Page() {
     setSaveError(null);
     setNotice(null);
 
-    // snapshot BEFORE update (for reschedule email)
     const prevStatus = String(editing.status || "").toLowerCase();
     const prevStartIso = editing.start_at || null;
     const prevEndIso = editing.end_at || null;
@@ -389,7 +320,6 @@ export default function Page() {
     try {
       const payload: any = {};
 
-      // compute next start/end ISO (used for both appointment update and Zoom creation)
       const nextStartIso = editStart ? new Date(editStart).toISOString() : editing.start_at;
       const nextEndIso = editEnd ? new Date(editEnd).toISOString() : editing.end_at;
 
@@ -399,7 +329,6 @@ export default function Page() {
       const intendedStatus = hasTimeChanged ? "rescheduled" : editStatus;
       payload.status = intendedStatus;
 
-      // ✅ If rescheduling AND appointment is online (has join url), generate a new Zoom link
       const hadJoinUrl = Boolean((editing.join_url || "").trim() || (joinUrl || "").trim());
       const shouldRegenerateZoom = hasTimeChanged && hadJoinUrl;
 
@@ -407,11 +336,9 @@ export default function Page() {
       let zoomDurationMinutes: number | null = null;
 
       if (shouldRegenerateZoom) {
-        zoomDurationMinutes =
-          computeDurationMinutes(nextStartIso, nextEndIso) ?? 30;
+        zoomDurationMinutes = computeDurationMinutes(nextStartIso, nextEndIso) ?? 30;
 
-        const serviceNameForZoom =
-          editing.service_name || editing.service_slug || "Consultation";
+        const serviceNameForZoom = editing.service_name || editing.service_slug || "Consultation";
 
         zoomMeeting = await createZoomMeetingApi({
           topic: `${serviceNameForZoom} Consultation Call`,
@@ -421,11 +348,9 @@ export default function Page() {
           agenda: "Online consultation and next steps",
         });
 
-        // overwrite links with new Zoom meeting
         payload.join_url = zoomMeeting.join_url;
         payload.host_url = zoomMeeting.start_url;
       } else {
-        // normal save path (keep what admin set)
         payload.join_url = joinUrl || undefined;
         payload.host_url = hostUrl || undefined;
       }
@@ -435,24 +360,18 @@ export default function Page() {
       // update local list
       setAppointments((prev) => prev.map((a) => (a._id === updated._id ? updated : a)));
 
-      // ✅ if we are in a filtered view, drop the row if it no longer matches
-      const f = statusFilter;
-      if (f !== "all" && (updated.status || "").toLowerCase() !== f) {
+      // ✅ keep ONLY pending/rescheduled in the table
+      if (!ALLOWED_STATUSES.has(String(updated.status || "").toLowerCase())) {
         setAppointments((prev) => prev.filter((a) => a._id !== updated._id));
       }
 
       /* ----------------- SEND RESCHEDULE EMAIL (+ ZOOM EMAIL) ----------------- */
       const newStatus = String(updated.status || intendedStatus || "").toLowerCase();
       const becameRescheduled = newStatus === "rescheduled";
-      const shouldSendRescheduleEmail =
-        becameRescheduled && (hasTimeChanged || prevStatus !== "rescheduled");
+      const shouldSendRescheduleEmail = becameRescheduled && (hasTimeChanged || prevStatus !== "rescheduled");
 
       if (shouldSendRescheduleEmail) {
-        let rescheduleEmailSent = false;
-        let zoomEmailSent = false;
-
         try {
-          // ensure we have a user object (email)
           let patientUser: UserDto | null =
             (editing.user_id && appointmentUsers[editing.user_id]) || null;
 
@@ -464,7 +383,6 @@ export default function Page() {
             }
           }
 
-          // ensure we have order ref/email fallback
           let orderRef = editingOrder?.reference || "";
           let orderEmail = (editingOrder as any)?.email || "";
           if ((!orderRef || !orderEmail) && updated.order_id) {
@@ -477,17 +395,11 @@ export default function Page() {
             }
           }
 
-          const patientEmail =
-            (patientUser as any)?.email ||
-            (updated as any)?.email ||
-            orderEmail ||
-            "";
-
+          const patientEmail = (patientUser as any)?.email || (updated as any)?.email || orderEmail || "";
           if (!patientEmail) {
             setNotice({
               type: "warn",
-              message:
-                "Appointment rescheduled, but patient email was not found (email not sent).",
+              message: "Appointment rescheduled, but patient email was not found (email not sent).",
             });
           } else {
             const patientName = getDisplayPatientName(updated, patientUser);
@@ -499,20 +411,16 @@ export default function Page() {
             const prevEndParts = splitEmailDateTime(prevEndIso);
             const newEndParts = splitEmailDateTime(updated.end_at || nextEndIso);
 
-            // appointment ref fallback
             const appointmentRef =
               (updated as any).reference || (editing as any).reference || updated._id;
 
-            // use join_url as "manageUrl" if you want a clickable CTA in email
             const manageUrl =
-              updated.join_url ||
-              (typeof window !== "undefined" ? `${window.location.origin}` : "");
+              updated.join_url || (typeof window !== "undefined" ? `${window.location.origin}` : "");
 
-            // 1) Reschedule email (existing)
             await sendEmailApi({
               to: patientEmail,
               subject: "Appointment Rescheduled",
-              template: RESCHEDULE_TEMPLATE, // ✅ hardcoded template
+              template: RESCHEDULE_TEMPLATE,
               context: {
                 subject: "Your appointment has been rescheduled",
                 name: patientName,
@@ -539,9 +447,6 @@ export default function Page() {
               },
             });
 
-            rescheduleEmailSent = true;
-
-            // 2) ✅ Zoom email (ONLY when we regenerated Zoom for reschedule)
             if (shouldRegenerateZoom) {
               const apptAtForZoom =
                 newParts?.date && newParts?.time
@@ -549,14 +454,10 @@ export default function Page() {
                   : formatDateTime(updated.start_at);
 
               const durationMinutes =
-                zoomDurationMinutes ??
-                computeDurationMinutes(updated.start_at, updated.end_at) ??
-                30;
+                zoomDurationMinutes ?? computeDurationMinutes(updated.start_at, updated.end_at) ?? 30;
 
               const zoomJoin = (zoomMeeting?.join_url || updated.join_url || "").trim();
-              const zoomMeetingId =
-                (zoomMeeting as any)?.id || (updated as any)?.zoom_meeting_id || "";
-
+              const zoomMeetingId = (zoomMeeting as any)?.id || (updated as any)?.zoom_meeting_id || "";
               const zoomPasscode =
                 (zoomMeeting as any)?.password ||
                 (zoomMeeting as any)?.passcode ||
@@ -566,57 +467,38 @@ export default function Page() {
               await sendEmailApi({
                 to: patientEmail,
                 subject: "Your Zoom meeting details",
-                template: ZOOM_TEMPLATE, // ✅ hardcoded "zoom"
+                template: ZOOM_TEMPLATE,
                 context: {
                   subject: "Your online consultation details",
                   name: patientName,
-
                   serviceName,
                   appointmentAt: apptAtForZoom,
-
-                  // supports the template fields you provided
                   reference: appointmentRef,
                   durationMinutes,
-
                   joinUrl: zoomJoin || undefined,
                   meetingId: zoomMeetingId || undefined,
                   passcode: zoomPasscode || undefined,
-
                   email: patientEmail,
                   supportEmail: SUPPORT_EMAIL_FALLBACK,
                   year: String(new Date().getFullYear()),
-
                   message:
                     "Your appointment time has been updated. Please use the Zoom details below to join your consultation.",
                 },
               });
-
-              zoomEmailSent = true;
             }
 
-            // notice
-            if (shouldRegenerateZoom) {
-              setNotice({
-                type: "success",
-                message:
-                  rescheduleEmailSent && zoomEmailSent
-                    ? "Appointment updated, new Zoom link generated, and both emails were sent to the patient."
-                    : "Appointment updated. Emails were processed.",
-              });
-            } else {
-              setNotice({
-                type: "success",
-                message: "Appointment updated and reschedule email sent to patient.",
-              });
-            }
+            setNotice({
+              type: "success",
+              message: shouldRegenerateZoom
+                ? "Appointment updated, new Zoom link generated, and email(s) were sent to the patient."
+                : "Appointment updated and reschedule email sent to patient.",
+            });
           }
         } catch (mailErr: any) {
           console.error("Reschedule/Zoom email failed:", mailErr);
           setNotice({
             type: "warn",
-            message:
-              mailErr?.message ||
-              "Appointment rescheduled, but failed to send email(s) to patient.",
+            message: mailErr?.message || "Appointment rescheduled, but failed to send email(s) to patient.",
           });
         }
       }
@@ -630,34 +512,18 @@ export default function Page() {
     }
   }
 
-  const editingUser =
-    editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
+  const editingUser = editing && editing.user_id ? appointmentUsers[editing.user_id] : null;
   const editingPatientName = editing && getDisplayPatientName(editing, editingUser);
   const editingPatientDetails = getPatientDetails(editingUser);
 
-  const activeFilterLabel = useMemo(() => {
-    return FILTERS.find((f) => f.key === statusFilter)?.label || "Pending";
-  }, [statusFilter]);
-
   const rows = useMemo(() => {
     return appointments.map((appt) => {
-      const user =
-        appt.user_id && appointmentUsers[appt.user_id]
-          ? appointmentUsers[appt.user_id]
-          : null;
-
+      const user = appt.user_id && appointmentUsers[appt.user_id] ? appointmentUsers[appt.user_id] : null;
       const patientName = getDisplayPatientName(appt, user);
       const patientDetails = getPatientDetails(user);
-
       const created = (appt as any).createdAt || (appt as any).created_at || null;
 
-      return {
-        appt,
-        user,
-        patientName,
-        patientDetails,
-        created,
-      };
+      return { appt, user, patientName, patientDetails, created };
     });
   }, [appointments, appointmentUsers]);
 
@@ -666,19 +532,12 @@ export default function Page() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-white md:text-3xl">
-            Appointments
-          </h1>
-          <p className="mt-1 text-sm text-neutral-400">
-            Filter:{" "}
-            <span className="text-neutral-200 font-semibold">
-              {activeFilterLabel}
-            </span>
-          </p>
+          <h1 className="text-2xl font-semibold text-white md:text-3xl">Appointments</h1>
+      
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Rows per page (NEW) */}
+          {/* Rows per page */}
           <div className="flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200">
             <span className="text-neutral-400">Rows</span>
             <select
@@ -688,11 +547,7 @@ export default function Page() {
                 setLimit(v);
                 setPage(1);
                 setHasMore(true);
-                void loadAppointments(statusFilter, {
-                  page: 1,
-                  limit: v,
-                  append: false,
-                });
+                void loadAppointments({ page: 1, limit: v, append: false });
               }}
               className="rounded-md bg-neutral-950 border border-neutral-700 px-2 py-1 text-xs text-neutral-100 focus:outline-none focus:border-emerald-500"
             >
@@ -708,16 +563,12 @@ export default function Page() {
             onClick={() => {
               setPage(1);
               setHasMore(true);
-              void loadAppointments(statusFilter, { page: 1, limit, append: false });
+              void loadAppointments({ page: 1, limit, append: false });
             }}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-60"
           >
-            {loading ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3 w-3" />
-            )}
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
             Refresh
           </button>
         </div>
@@ -735,33 +586,6 @@ export default function Page() {
           {notice.message}
         </div>
       )}
-
-      {/* Filter pills */}
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map((f) => {
-          const Icon = f.icon;
-          const active = statusFilter === f.key;
-          return (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setStatusFilter(f.key)}
-              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                active
-                  ? "border-emerald-500/70 bg-emerald-500/10 text-emerald-200"
-                  : "border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500 hover:text-white"
-              }`}
-            >
-              <Icon
-                className={`h-3.5 w-3.5 ${
-                  active ? "text-emerald-300" : "text-neutral-400"
-                }`}
-              />
-              {f.label}
-            </button>
-          );
-        })}
-      </div>
 
       {/* Error */}
       {error && (
@@ -781,18 +605,18 @@ export default function Page() {
       {/* Empty */}
       {!loading && !error && rows.length === 0 && (
         <div className="mt-6 rounded-xl border border-neutral-800 bg-neutral-900 px-6 py-10 text-center text-neutral-400">
-          No appointments found.
+          No pending/rescheduled appointments found.
         </div>
       )}
 
-      {/* LIST FORM (table) */}
+      {/* SINGLE TABLE */}
       {rows.length > 0 && (
         <div className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950/40">
           <div className="overflow-x-auto">
             <table className="min-w-full text-xs">
               <thead className="bg-neutral-900/80 text-[11px] uppercase tracking-wide text-neutral-500">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">Order ID</th>
+                  <th className="px-3 py-2 text-left font-medium">Order Ref</th>
                   <th className="px-3 py-2 text-left font-medium">Patient</th>
                   <th className="px-3 py-2 text-left font-medium">Service</th>
                   <th className="px-3 py-2 text-left font-medium">Start</th>
@@ -818,7 +642,7 @@ export default function Page() {
                         <div className="flex items-center gap-1">
                           <ClipboardList className="h-3.5 w-3.5 text-neutral-500" />
                           <span className="font-mono text-[11px] text-neutral-100">
-                            {appt.order_id || "—"}
+                            {appt.order_reference || "—"}
                           </span>
                         </div>
                       </td>
@@ -829,20 +653,14 @@ export default function Page() {
                             {initials}
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate text-[11px] font-medium text-neutral-100">
-                              {patientName}
-                            </p>
-                            <p className="truncate text-[10px] text-neutral-500">
-                              {patientDetails || "—"}
-                            </p>
+                            <p className="truncate text-[11px] font-medium text-neutral-100">{patientName}</p>
+                            <p className="truncate text-[10px] text-neutral-500">{patientDetails || "—"}</p>
                           </div>
                         </div>
                       </td>
 
                       <td className="max-w-xs px-3 py-2 align-middle">
-                        <p className="line-clamp-2 text-[11px] text-neutral-100">
-                          {appt.service_name || "Service"}
-                        </p>
+                        <p className="line-clamp-2 text-[11px] text-neutral-100">{appt.service_name || "Service"}</p>
                       </td>
 
                       <td className="whitespace-nowrap px-3 py-2 align-middle text-[11px] text-neutral-200">
@@ -930,18 +748,10 @@ export default function Page() {
 
           <div className="border-t border-neutral-800 bg-neutral-950/40 px-3 py-2 text-[11px] text-neutral-500 flex flex-wrap items-center justify-between gap-2">
             <div>
-              Showing <span className="text-neutral-200">{rows.length}</span>{" "}
-              appointment{rows.length === 1 ? "" : "s"}
-              {statusFilter !== "all" ? (
-                <>
-                  {" "}
-                  in <span className="text-neutral-200">{activeFilterLabel}</span>
-                </>
-              ) : null}
-              .
+              Showing <span className="text-neutral-200">{rows.length}</span> appointment{rows.length === 1 ? "" : "s"}{" "}
+              (Pending + Rescheduled).
             </div>
 
-            {/* Load more (NEW) */}
             <div className="flex items-center gap-2">
               <span className="text-neutral-600">
                 Page <span className="text-neutral-300">{page}</span>
@@ -950,13 +760,7 @@ export default function Page() {
               <button
                 type="button"
                 disabled={loadingMore || loading || !hasMore}
-                onClick={() =>
-                  loadAppointments(statusFilter, {
-                    page: page + 1,
-                    limit,
-                    append: true,
-                  })
-                }
+                onClick={() => loadAppointments({ page: page + 1, limit, append: true })}
                 className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs text-neutral-200 hover:border-emerald-500 hover:text-emerald-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loadingMore ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
@@ -967,30 +771,22 @@ export default function Page() {
         </div>
       )}
 
-      {/* Edit drawer */}
+      {/* Edit drawer (UNCHANGED from your logic) */}
       {editing && (
         <div className="fixed inset-0 z-40 flex items-stretch justify-end bg-black/40">
           <div className="h-full w-full max-w-md bg-neutral-950 border-l border-neutral-800 px-4 py-5 flex flex-col gap-4 shadow-[0_0_40px_rgba(0,0,0,0.6)] overflow-hidden">
-            {/* ✅ SCROLL AREA START */}
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
-              {/* header */}
               <div className="flex items-start justify-between gap-2">
                 <div className="space-y-0.5">
                   <p className="text-[11px] text-neutral-400">Edit appointment</p>
-                  <p className="text-sm font-semibold text-white">
-                    {editing.order_id || "No order ID"}
-                  </p>
+                  <p className="text-sm font-semibold text-white">{editing.order_id || "No order ID"}</p>
                   {editingPatientName && (
                     <p className="mt-0.5 text-xs text-neutral-300 flex items-center gap-1">
                       <User className="h-3 w-3 text-emerald-400" />
                       {editingPatientName}
                     </p>
                   )}
-                  {editingPatientDetails && (
-                    <p className="ml-4 text-[11px] text-neutral-500">
-                      {editingPatientDetails}
-                    </p>
-                  )}
+                  {editingPatientDetails && <p className="ml-4 text-[11px] text-neutral-500">{editingPatientDetails}</p>}
                   {editing.service_name && (
                     <p className="mt-1 text-[11px] text-neutral-400 flex items-center gap-1">
                       <Stethoscope className="h-3 w-3 text-neutral-600" />
@@ -1007,16 +803,11 @@ export default function Page() {
                 </button>
               </div>
 
-              {/* time controls */}
               <div className="space-y-2 text-xs text-neutral-300 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3">
-                <p className="text-[11px] font-semibold text-neutral-200 mb-1">
-                  Date &amp; time
-                </p>
+                <p className="text-[11px] font-semibold text-neutral-200 mb-1">Date &amp; time</p>
                 <div className="grid grid-cols-1 gap-3">
                   <div>
-                    <label className="text-[11px] text-neutral-400">
-                      Start (local)
-                    </label>
+                    <label className="text-[11px] text-neutral-400">Start (local)</label>
                     <input
                       type="datetime-local"
                       value={editStart}
@@ -1037,20 +828,17 @@ export default function Page() {
                 {hasTimeChanged && (
                   <p className="mt-2 flex items-center gap-1 text-[11px] text-amber-300">
                     <Clock className="h-3 w-3" />
-                    Time changed – this appointment will be marked as{" "}
-                    <span className="font-semibold">Rescheduled</span>.
+                    Time changed – this appointment will be marked as <span className="font-semibold">Rescheduled</span>.
                   </p>
                 )}
               </div>
 
-              {/* status */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs text-neutral-300">Status</label>
                   {hasTimeChanged && (
                     <span className="text-[10px] text-neutral-500">
-                      Locked to <span className="font-semibold">Rescheduled</span>{" "}
-                      due to time change
+                      Locked to <span className="font-semibold">Rescheduled</span> due to time change
                     </span>
                   )}
                 </div>
@@ -1069,7 +857,6 @@ export default function Page() {
                 </select>
               </div>
 
-              {/* URLs */}
               <div className="space-y-2">
                 <label className="text-xs text-neutral-300 flex items-center gap-1">
                   <Link2 className="h-3 w-3 text-emerald-400" />
@@ -1098,18 +885,13 @@ export default function Page() {
                 />
               </div>
 
-              {/* Order details */}
+              {/* Order details block (kept as-is) */}
               <div className="space-y-2 rounded-lg bg-neutral-900/60 border border-neutral-800 px-3 py-3 text-xs text-neutral-300">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-[11px] font-semibold text-neutral-200">
-                    Order details
-                  </p>
+                  <p className="text-[11px] font-semibold text-neutral-200">Order details</p>
                   {editingOrder?.reference && (
                     <span className="text-[11px] text-neutral-400">
-                      Ref:{" "}
-                      <span className="font-mono text-neutral-100">
-                        {editingOrder.reference}
-                      </span>
+                      Ref: <span className="font-mono text-neutral-100">{editingOrder.reference}</span>
                     </span>
                   )}
                 </div>
@@ -1124,9 +906,7 @@ export default function Page() {
                 {orderError && <p className="text-[11px] text-rose-300">{orderError}</p>}
 
                 {!orderLoading && !orderError && !editingOrder && (
-                  <p className="text-[11px] text-neutral-500">
-                    No linked order found for this appointment.
-                  </p>
+                  <p className="text-[11px] text-neutral-500">No linked order found for this appointment.</p>
                 )}
 
                 {!orderLoading && !orderError && editingOrder && (
@@ -1156,17 +936,13 @@ export default function Page() {
                             className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-800 last:border-none"
                           >
                             <div className="flex flex-col">
-                              <span className="font-medium text-neutral-100">
-                                {it.name}
-                              </span>
+                              <span className="font-medium text-neutral-100">{it.name}</span>
                               <span className="text-[10px] text-neutral-400">
                                 {it.variation || it.variations || "Standard"}
                               </span>
                             </div>
                             <div className="text-right">
-                              <span className="block text-[10px] text-neutral-400">
-                                Qty: {it.qty}
-                              </span>
+                              <span className="block text-[10px] text-neutral-400">Qty: {it.qty}</span>
                               <span className="block text-[10px] text-neutral-300">
                                 {formatMoney(it.totalMinor)}
                               </span>
@@ -1175,9 +951,7 @@ export default function Page() {
                         ))}
                       </div>
                     ) : (
-                      <p className="mt-1 text-[11px] text-neutral-500">
-                        No line items on this order.
-                      </p>
+                      <p className="mt-1 text-[11px] text-neutral-500">No line items on this order.</p>
                     )}
 
                     <div className="mt-2 flex items-center justify-between border-t border-neutral-800 pt-2 text-[11px]">
@@ -1192,9 +966,7 @@ export default function Page() {
 
               {saveError && <div className="text-[11px] text-rose-300">{saveError}</div>}
             </div>
-            {/* ✅ SCROLL AREA END */}
 
-            {/* footer (kept EXACT as you had it) */}
             <div className="mt-auto flex items-center justify-end gap-2 pt-3 border-t border-neutral-800">
               <button
                 type="button"
