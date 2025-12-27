@@ -132,8 +132,6 @@ function addWrappedText(
   return y + lines.length * lineHeight;
 }
 
-
-
 function formatMoneyFromMinorSafe(minor: number | null | undefined): string {
   if (minor === null || minor === undefined) return "—";
 
@@ -143,7 +141,6 @@ function formatMoneyFromMinorSafe(minor: number | null | undefined): string {
   const pounds = (minor / 100).toFixed(2);
   return `£${pounds}`;
 }
-
 
 type PdfBranding = {
   logoDataUrl: string | null;
@@ -1808,8 +1805,8 @@ function writePrivateRxTopCards(
   doc: jsPDF,
   cursor: PdfCursor,
   order: OrderDto,
-  user: UserDto | null,              // patient user (as you already had)
-  loggedInUser: UserDto | null        // NEW: logged-in user for left card
+  user: UserDto | null, // patient user (as you already had)
+  loggedInUser: UserDto | null // NEW: logged-in user for left card
 ) {
   const pageWidth = getPageWidth(doc);
   const gap = 8;
@@ -1851,10 +1848,9 @@ function writePrivateRxTopCards(
     "—";
 
   const pharmacyAddrLines = formatPharmacyAddressLines(loggedInUser);
-  const pharmacyAddress =
-    pharmacyAddrLines.length
-      ? pharmacyAddrLines.join(", ")
-      : (PHARMACY_INFO.addressLines || []).join(", ") || "—";
+  const pharmacyAddress = pharmacyAddrLines.length
+    ? pharmacyAddrLines.join(", ")
+    : (PHARMACY_INFO.addressLines || []).join(", ") || "—";
 
   const pharmacyTel =
     lu.tel ||
@@ -2211,8 +2207,8 @@ function getLoginUrl() {
 
 async function exportInvoicePdf(
   order: OrderDto,
-  user: UserDto | null,                 // ✅ patient (as you already use)
-  loggedInUser: UserDto | null,         // ✅ pharmacist (logged-in)
+  user: UserDto | null, // ✅ patient (as you already use)
+  loggedInUser: UserDto | null, // ✅ pharmacist (logged-in)
   mode: PdfExportMode = "download"
 ) {
   const invoiceNo = `#INV-${(order as any).reference || (order as any)._id}`;
@@ -2282,14 +2278,14 @@ async function exportInvoicePdf(
     p.postalcode || p.postcode,
     p.country,
   ].filter(Boolean);
-  const pharmacistAddress =
-    pharmacistAddrParts.length ? pharmacistAddrParts.join(", ") : PHARMACY_INFO.addressLines.join(", ");
+  const pharmacistAddress = pharmacistAddrParts.length
+    ? pharmacistAddrParts.join(", ")
+    : PHARMACY_INFO.addressLines.join(", ");
 
   const pharmacistTel =
     p.phone || p.phoneNumber || p.mobile || PHARMACY_INFO.tel;
 
-  const pharmacistEmail =
-    p.email || PHARMACY_INFO.email;
+  const pharmacistEmail = p.email || PHARMACY_INFO.email;
 
   // ---------------- Cards ----------------
   const cardGap = 6;
@@ -2426,8 +2422,10 @@ async function exportInvoicePdf(
 
       const numY = rowY;
       doc.text(String(qty), colQtyX, numY);
-      if (unitMinor != null) doc.text((unitMinor / 100).toFixed(2), colUnitX, numY);
-      if (totalMinor != null) doc.text((totalMinor / 100).toFixed(2), colNetX, numY);
+      if (unitMinor != null)
+        doc.text((unitMinor / 100).toFixed(2), colUnitX, numY);
+      if (totalMinor != null)
+        doc.text((totalMinor / 100).toFixed(2), colNetX, numY);
 
       cursor.y = rowY + rowHeight;
     });
@@ -2464,10 +2462,11 @@ async function exportInvoicePdf(
   doc.text(paymentLine, MARGIN_X, cursor.y);
   cursor.y += 6;
 
-  const filename = `Invoice_${(order as any).reference || (order as any)._id}.pdf`;
+  const filename = `Invoice_${
+    (order as any).reference || (order as any)._id
+  }.pdf`;
   return finalisePdf(doc, filename, mode);
 }
-
 
 /* ----------------- RAF PDF ----------------- */
 
@@ -2606,7 +2605,7 @@ async function exportDeclarationPdf(
 async function exportRecordPdf(
   order: OrderDto,
   user: UserDto | null,
-  pharmacist: UserDto | null,  
+  pharmacist: UserDto | null,
   mode: PdfExportMode = "download"
 ) {
   const reference = (order as any).reference || (order as any)._id;
@@ -2641,7 +2640,7 @@ async function exportRecordPdf(
 
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
-  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
+  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
   writeRecordSection(doc, cursor, order);
 
   const filename = `RecordOfSupply_${reference}.pdf`;
@@ -2700,7 +2699,7 @@ async function buildPrivatePrescriptionDoc(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // ✅ Restore patient + order details block
-  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
+  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
 
   // ✅ Medicines
   writeSectionTitle(doc, cursor, "Medicine Prescribed");
@@ -2952,12 +2951,14 @@ const PDF_BUILDERS: Record<PdfKind, PdfBuilder> = {
   raf: (o, u, _p, mode) => exportRafPdf(o, u, mode) as any,
   advice: (o, u, _p, mode) => exportAdvicePdf(o, u, mode) as any,
   declaration: (o, u, p, mode) => exportDeclarationPdf(o, u, p, mode) as any,
-   record: (o, u, p, mode) => exportRecordPdf(o, u, p, mode) as any,
+  record: (o, u, p, mode) => exportRecordPdf(o, u, p, mode) as any,
   invoice: (o, u, p, mode) => exportInvoicePdf(o, u, p, mode) as any,
-  private_rx: (o, u, p, mode) => exportPrivatePrescriptionPdf(o, u, p, mode) as any,
+  private_rx: (o, u, p, mode) =>
+    exportPrivatePrescriptionPdf(o, u, p, mode) as any,
   private_rx_patient: (o, u, p, mode) =>
     exportPrivatePrescriptionPatientPdf(o, u, p, mode) as any,
-  treatment_notice: (o, u, p, mode) => exportNotificationOfTreatmentPdf(o, u, p, mode) as any,
+  treatment_notice: (o, u, p, mode) =>
+    exportNotificationOfTreatmentPdf(o, u, p, mode) as any,
 };
 
 async function buildOrderPdf(
@@ -2991,7 +2992,6 @@ async function generateOrderPdfFile(
 ): Promise<File | null> {
   return await buildOrderPdf(kind, order, user, pharmacist, "file");
 }
-
 
 /* ===========================
    2) Watermark helper
@@ -3069,7 +3069,8 @@ async function exportNotificationOfTreatmentPdf(
   // -------------------- NEW: header uses logged-in pharmacist --------------------
   const ph: any = pharmacistUser || {};
 
-  const pick = (...vals: any[]) => vals.find((v) => typeof v === "string" && v.trim());
+  const pick = (...vals: any[]) =>
+    vals.find((v) => typeof v === "string" && v.trim());
 
   const pharmacistHeaderName = pick(
     ph.pharmacy_name,
@@ -3103,7 +3104,9 @@ async function exportNotificationOfTreatmentPdf(
   ].filter(Boolean) as string[];
 
   const headerAddressLines =
-    pharmacistAddrParts.length > 0 ? pharmacistAddrParts : PHARMACY_INFO.addressLines;
+    pharmacistAddrParts.length > 0
+      ? pharmacistAddrParts
+      : PHARMACY_INFO.addressLines;
 
   // ------------------------------------------------------------------------------
 
@@ -3283,9 +3286,6 @@ async function exportNotificationOfTreatmentPdf(
   return finalisePdf(doc, filename, mode);
 }
 
-
-
-
 /* ----------------- Full Clinical PDF (FIXED: jsPDF only) ----------------- */
 
 async function exportAllClinicalPdf(
@@ -3327,7 +3327,7 @@ async function exportAllClinicalPdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // Keep existing top cards
-  writePrivateRxTopCards(doc, cursor, order, user,pharmacist);
+  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
 
   // RAF items (your existing normaliser)
   const items = normaliseRafItems(getRiskAssessmentItems(order), order);
@@ -3430,7 +3430,8 @@ function normaliseRafItems(raw: any[], order: OrderDto): RafItem[] {
         it?.title ||
         "Clinical Assessment") + "";
 
-    const question = (it?.question || it?.q || it?.label || it?.name || "") + "";
+    const question =
+      (it?.question || it?.q || it?.label || it?.name || "") + "";
     const answerVal = it?.answer ?? it?.a ?? it?.value ?? it?.response;
 
     if (!question.trim()) continue;
@@ -3451,8 +3452,14 @@ function normaliseRafItems(raw: any[], order: OrderDto): RafItem[] {
     const nonImage = files.filter((f) => !rafFileLooksLikeImage(f));
 
     // ✅ If the "answer" is only an image upload, do NOT show filename/url
-    const looksLikeAutoAttachmentText = /^attached file/i.test(String(text || "").trim());
-    if ((text === "—" || looksLikeAutoAttachmentText) && imageFiles.length && !nonImage.length) {
+    const looksLikeAutoAttachmentText = /^attached file/i.test(
+      String(text || "").trim()
+    );
+    if (
+      (text === "—" || looksLikeAutoAttachmentText) &&
+      imageFiles.length &&
+      !nonImage.length
+    ) {
       text = imageFiles.length === 1 ? "Image attached" : "Images attached";
     }
 
@@ -3469,7 +3476,8 @@ function normaliseRafItems(raw: any[], order: OrderDto): RafItem[] {
     out.push({
       section: section.trim() || "Clinical Assessment",
       question: question.trim(),
-      answer: String(text || "No response provided").trim() || "No response provided",
+      answer:
+        String(text || "No response provided").trim() || "No response provided",
       images: imageFiles.length ? imageFiles : undefined,
     });
   }
@@ -3553,7 +3561,9 @@ async function drawQaTable(doc: jsPDF, cursor: PdfCursor, rows: RafItem[]) {
 
   for (const r of rows) {
     const q = String(r.question || "—").trim() || "—";
-    const a = String(r.answer || "No response provided").trim() || "No response provided";
+    const a =
+      String(r.answer || "No response provided").trim() ||
+      "No response provided";
 
     const qLines = doc.splitTextToSize(q, colQ - padX * 2) as string[];
     const aLines = doc.splitTextToSize(a, colA - padX * 2) as string[];
@@ -3783,8 +3793,6 @@ async function writeRafOnlySection(
 //   cursor.y += 6;
 // }
 
-
-
 // function normaliseRafItems(raw: any[], order: OrderDto): RafItem[] {
 //   // Primary: whatever your getRiskAssessmentItems(order) returns
 //   const arr = Array.isArray(raw) ? raw : [];
@@ -3825,7 +3833,10 @@ function stringifyRafAnswer(v: any): string {
     return s ? s : "No response provided";
   }
   if (Array.isArray(v)) {
-    const parts = v.map(stringifyRafAnswer).map((x) => x.trim()).filter(Boolean);
+    const parts = v
+      .map(stringifyRafAnswer)
+      .map((x) => x.trim())
+      .filter(Boolean);
     return parts.length ? parts.join(", ") : "No response provided";
   }
   if (typeof v === "object") {
@@ -4006,6 +4017,43 @@ function OrderItemsListCard({ order }: { order: OrderDto }) {
     </div>
   );
 }
+function AdviceChecklistCard({ order }: { order: OrderDto }) {
+  const points = useMemo(() => extractAdvicePoints(order), [order]);
+
+  return (
+    <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
+      <p className="mb-2 text-xs font-semibold text-neutral-200">
+        Pharmacist advice (selected)
+      </p>
+
+      {points.length === 0 ? (
+        <p className="text-[11px] text-neutral-500">
+          No Pharmacist Advice has been recorded for this order.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {points.map((p, idx) => (
+            <label
+              key={`${p}-${idx}`}
+              className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-950/40 px-3 py-2"
+            >
+              {/* read-only checked checkbox (display only) */}
+              <input
+                type="checkbox"
+                checked
+                readOnly
+                className="mt-0.5 h-4 w-4 accent-emerald-500"
+              />
+              <span className="text-[12px] leading-relaxed text-neutral-200">
+                {p}
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ----------------- Types for clinical section tabs ----------------- */
 
@@ -4123,8 +4171,6 @@ export default function Page() {
   const [search, setSearch] = useState("");
 
   const pageSize = DEFAULT_PAGE_SIZE;
-
-  
 
   // Menus refs
   const downloadRef = useRef<HTMLDivElement | null>(null);
@@ -4356,10 +4402,10 @@ export default function Page() {
           );
           break;
         case "record":
-          await exportRecordPdf(order, user,loggedInPharmacist, "download");
+          await exportRecordPdf(order, user, loggedInPharmacist, "download");
           break;
         case "invoice":
-          await exportInvoicePdf(order, user,loggedInPharmacist, "download");
+          await exportInvoicePdf(order, user, loggedInPharmacist, "download");
           break;
         case "private_rx":
           await exportPrivatePrescriptionPdf(
@@ -4416,9 +4462,19 @@ export default function Page() {
           "file"
         )) as File;
       case "record":
-        return (await exportRecordPdf(order, user,loggedInPharmacist, "file")) as File;
+        return (await exportRecordPdf(
+          order,
+          user,
+          loggedInPharmacist,
+          "file"
+        )) as File;
       case "invoice":
-        return (await exportInvoicePdf(order, user,loggedInPharmacist, "file")) as File;
+        return (await exportInvoicePdf(
+          order,
+          user,
+          loggedInPharmacist,
+          "file"
+        )) as File;
       case "private_rx":
         return (await exportPrivatePrescriptionPdf(
           order,
@@ -4737,25 +4793,30 @@ export default function Page() {
         );
       }
 
-      const common =
-        "space-y-2 pl-5 text-[11px] leading-relaxed text-neutral-200";
+      // checklist container
+      const listCls =
+        "min-w-0 space-y-2 text-[11px] leading-relaxed text-neutral-200";
 
-      return ADVICE_LIST_STYLE === "numbered" ? (
-        <ol className={`list-decimal ${common}`}>
+      // row + text wrapping fixes (handles long URLs/codes + preserves newlines)
+      const rowCls = "min-w-0 flex items-start gap-2";
+      const textCls =
+        "min-w-0 whitespace-pre-line break-words [overflow-wrap:anywhere]";
+
+      return (
+        <div className={listCls}>
           {points.map((p, idx) => (
-            <li key={idx} className="break-words">
-              {p}
-            </li>
+            <div key={`${idx}-${p.slice(0, 24)}`} className={rowCls}>
+              <input
+                type="checkbox"
+                checked={true} // set to true if you want all visually checked
+                readOnly
+                tabIndex={-1}
+                className="mt-[2px] h-3.5 w-3.5 rounded border border-neutral-600 bg-neutral-950 accent-emerald-500"
+              />
+              <div className={textCls}>{p}</div>
+            </div>
           ))}
-        </ol>
-      ) : (
-        <ul className={`list-disc ${common}`}>
-          {points.map((p, idx) => (
-            <li key={idx} className="break-words">
-              {p}
-            </li>
-          ))}
-        </ul>
+        </div>
       );
     }
 
