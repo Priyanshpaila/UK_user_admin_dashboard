@@ -25,6 +25,76 @@ import {
   useTransform,
 } from "framer-motion";
 
+/* ----------------- Branding (generalised / multi-tenant friendly) ----------------- */
+
+type TenantBranding = {
+  name: string;
+  tagline: string;
+  productLabel: string;
+  supportEmail: string;
+  footerBlurb: string;
+  domainLabel: string;
+};
+
+const DEFAULT_BRAND: TenantBranding = {
+  name: "Clinic Platform",
+  tagline: "Connected Care Platform",
+  productLabel: "Workflow automation platform",
+  supportEmail: "support@safescript.com",
+  footerBlurb: "A connected platform for consultations, scheduling and operations.",
+  domainLabel: "your-platform",
+};
+
+function titleCaseFromSlug(slug: string) {
+  return slug
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function inferBrandFromHost(): Partial<TenantBranding> {
+  if (typeof window === "undefined") return {};
+  const raw = window.location.hostname || "";
+  const host = raw.split(":")[0].toLowerCase();
+  if (!host || host === "localhost") return {};
+
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length < 2) return {};
+
+  const sub = parts[0];
+  const reserved = new Set([
+    "www",
+    "admin",
+    "app",
+    "api",
+    "backend",
+    "user",
+    "portal",
+    "dashboard",
+  ]);
+  if (!sub || reserved.has(sub)) return {};
+
+  const inferredName = titleCaseFromSlug(sub);
+  return inferredName ? { name: inferredName } : {};
+}
+
+function readBrandingFromStorage(): Partial<TenantBranding> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem("tenant_branding");
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as Partial<TenantBranding>;
+  } catch {
+    return {};
+  }
+}
+
 /* ----------------- Small UI primitives ----------------- */
 
 const Pill = ({
@@ -163,20 +233,13 @@ function GlassShell({
       <div
         className={[
           "relative rounded-3xl border border-white/10 overflow-hidden",
-          // Slightly more opaque + more consistent base to stop bleed-through
           "bg-gradient-to-b from-slate-950/70 via-slate-950/55 to-slate-950/70",
-          // Blur helps separate layers (keep moderate for performance)
           "backdrop-blur-md",
           "shadow-[0_28px_80px_rgba(0,0,0,0.55)]",
         ].join(" ")}
       >
-        {/* Inner highlight (keeps the premium glass feel) */}
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_55%_at_20%_10%,rgba(255,255,255,0.10),transparent_60%)]" />
-
-        {/* Content scrim (this is the key readability layer) */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-black/20 to-black/35" />
-
-        {/* Real content */}
         <div className="relative">{children}</div>
       </div>
     </div>
@@ -187,10 +250,12 @@ function BrowserCard({
   title,
   subtitle,
   badge,
+  domainLabel,
 }: {
   title: string;
   subtitle: string;
   badge?: string;
+  domainLabel: string;
 }) {
   return (
     <GlassShell tint="violet">
@@ -205,7 +270,7 @@ function BrowserCard({
             {badge}
           </span>
         ) : (
-          <span className="text-[10px] text-neutral-400">pharmacyexpress</span>
+          <span className="text-[10px] text-neutral-400">{domainLabel}</span>
         )}
       </div>
 
@@ -215,10 +280,9 @@ function BrowserCard({
           {subtitle}
         </p>
 
-        {/* KPI row (replaces empty boxes) */}
         <div className="mt-4 grid grid-cols-3 gap-2">
           {[
-            { k: "Clinics", v: "24", c: "text-emerald-300" },
+            { k: "Sites", v: "24", c: "text-emerald-300" },
             { k: "Booked", v: "18", c: "text-sky-300" },
             { k: "No-shows", v: "2", c: "text-purple-300" },
           ].map((x) => (
@@ -232,30 +296,19 @@ function BrowserCard({
           ))}
         </div>
 
-        {/* “Queue” list */}
         <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-3">
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold text-neutral-200">
-              Today’s queue
+              Today’s schedule
             </p>
             <span className="text-[10px] text-neutral-400">Live</span>
           </div>
 
           <div className="mt-2 space-y-2">
             {[
-              {
-                t: "Hypertension Review",
-                at: "14:10",
-                s: "In progress",
-                dot: "bg-emerald-400",
-              },
-              { t: "Travel Clinic", at: "14:30", s: "Next", dot: "bg-sky-400" },
-              {
-                t: "Pharmacy First",
-                at: "15:00",
-                s: "Triage",
-                dot: "bg-purple-400",
-              },
+              { t: "Follow-up Review", at: "14:10", s: "In progress", dot: "bg-emerald-400" },
+              { t: "Walk-in Clinic", at: "14:30", s: "Next", dot: "bg-sky-400" },
+              { t: "Triage Check", at: "15:00", s: "Triage", dot: "bg-purple-400" },
             ].map((r) => (
               <div
                 key={r.t}
@@ -280,7 +333,6 @@ function BrowserCard({
           </div>
         </div>
 
-        {/* Mini chart */}
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
           <div className="flex items-center justify-between">
             <p className="text-[11px] font-semibold text-neutral-200">
@@ -314,17 +366,15 @@ function MobileCard() {
   return (
     <GlassShell tint="cyan">
       <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-        <span className="text-[10px] text-neutral-200">Patient portal</span>
+        <span className="text-[10px] text-neutral-200">Client portal</span>
         <span className="text-[10px] text-neutral-400">Secure</span>
       </div>
 
       <div className="p-5 space-y-3">
         <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-          <p className="text-xs font-semibold text-white">
-            Book an appointment
-          </p>
+          <p className="text-xs font-semibold text-white">Book an appointment</p>
           <p className="mt-1 text-[11px] text-neutral-300">
-            Choose a service, complete triage, confirm slot.
+            Choose a service, complete triage, confirm a slot.
           </p>
           <div className="mt-2 flex items-center gap-2">
             <span className="text-[10px] text-neutral-400">Flow:</span>
@@ -366,6 +416,18 @@ function MobileCard() {
 export default function Home() {
   const reduce = useReducedMotion();
 
+  const [brand, setBrand] = useState<TenantBranding>(DEFAULT_BRAND);
+
+  useEffect(() => {
+    const fromStorage = readBrandingFromStorage();
+    const fromHost = inferBrandFromHost();
+    setBrand((prev) => ({
+      ...prev,
+      ...fromHost,
+      ...fromStorage,
+    }));
+  }, []);
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -383,7 +445,6 @@ export default function Home() {
     offset: ["start end", "end start"],
   });
 
-  // Parallax values (smoothed) — no jank
   const rawY1 = useTransform(
     scrollYProgress,
     [0, 1],
@@ -406,13 +467,13 @@ export default function Home() {
     () => [
       {
         id: "faq1",
-        q: "What does Pharmacy Express specialise in?",
-        a: "Pharmacy Express is built for modern pharmacy workflows: patient onboarding, triage (RAF), appointment booking, order handling, consultation documentation, follow-ups and reporting—across NHS and private services.",
+        q: "What does this platform specialise in?",
+        a: "This platform is built for modern care workflows: onboarding, triage (RAF), appointment booking, order handling, structured documentation, follow-ups and reporting—across private and public service models.",
       },
       {
         id: "faq2",
-        q: "Who is the platform for?",
-        a: "Independent pharmacies, groups and PCNs who need consistent clinical workflows, fewer manual steps, reliable patient communication and better visibility across sites.",
+        q: "Who is it for?",
+        a: "Independent providers, groups and networks who need consistent workflows, fewer manual steps, reliable client communication and better visibility across locations.",
       },
       {
         id: "faq3",
@@ -426,8 +487,8 @@ export default function Home() {
       },
       {
         id: "faq5",
-        q: "What makes Pharmacy Express different?",
-        a: "It is pharmacy-first: real-world clinic operations, multi-site visibility, patient safety prompts, automation where it matters, and clean operator UX for busy teams.",
+        q: "What makes it different?",
+        a: "It is operations-first: real-world scheduling, multi-site visibility, safety prompts, automation where it matters, and a clean operator UX for busy teams.",
       },
     ],
     []
@@ -436,7 +497,6 @@ export default function Home() {
   return (
     <LazyMotion features={domAnimation}>
       <div className="relative min-h-screen overflow-x-hidden bg-gradient-to-b from-[#05091c] via-[#050313] to-[#020617] text-white">
-        {/* Keyframes for smooth float (CSS, not JS) */}
         <style jsx global>{`
           .float-a {
             will-change: transform;
@@ -486,7 +546,6 @@ export default function Home() {
           }
         `}</style>
 
-        {/* Background glows (keep, but lighter) */}
         <div className="pointer-events-none fixed inset-0 -z-20">
           <div className="absolute -top-44 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-gradient-to-br from-blue-600/40 via-emerald-500/22 to-purple-600/32 blur-[140px]" />
           <div className="absolute top-[520px] left-[-240px] h-[520px] w-[520px] rounded-full bg-blue-500/16 blur-[160px]" />
@@ -494,7 +553,6 @@ export default function Home() {
           <div className="absolute bottom-[-220px] left-1/2 h-[520px] w-[760px] -translate-x-1/2 rounded-full bg-purple-700/20 blur-[160px]" />
         </div>
 
-        {/* Subtle grid overlay */}
         <div className="pointer-events-none fixed inset-0 -z-10 opacity-[0.14]">
           <div className="h-full w-full bg-[linear-gradient(to_right,rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:120px_120px]" />
         </div>
@@ -510,10 +568,10 @@ export default function Home() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold tracking-tight">
-                      Pharmacy Express
+                      {brand.name}
                     </div>
                     <div className="text-[11px] text-neutral-400">
-                      Connected Pharmacy Platform
+                      {brand.tagline}
                     </div>
                   </div>
                 </div>
@@ -570,9 +628,7 @@ export default function Home() {
                   }}
                   className="flex items-center gap-2"
                 >
-                  <Pill tone="blue">
-                    AI + workflow automation for pharmacies
-                  </Pill>
+                  <Pill tone="blue">AI + workflow automation</Pill>
                 </m.div>
 
                 <m.h1
@@ -584,7 +640,7 @@ export default function Home() {
                 >
                   Powering the future of{" "}
                   <span className="bg-gradient-to-r from-blue-400 via-emerald-400 to-purple-400 bg-clip-text text-transparent">
-                    pharmacy intelligence
+                    operations intelligence
                   </span>
                 </m.h1>
 
@@ -595,10 +651,9 @@ export default function Home() {
                   }}
                   className="max-w-xl text-sm leading-relaxed text-neutral-200 sm:text-base"
                 >
-                  Deliver cutting-edge consultations, triage and booking flows
-                  that integrate seamlessly with real-world pharmacy
-                  operations—helping teams move faster with safer, consistent
-                  outcomes.
+                  Deliver modern consultations, triage and booking flows that
+                  integrate seamlessly with real-world operations—helping teams
+                  move faster with safer, consistent outcomes.
                 </m.p>
 
                 <m.div
@@ -624,7 +679,6 @@ export default function Home() {
                   </a>
                 </m.div>
 
-                {/* Stats row */}
                 <m.div
                   variants={{
                     hidden: { opacity: 0, y: 8 },
@@ -652,12 +706,11 @@ export default function Home() {
                 </m.div>
               </m.div>
 
-              {/* Right: stacked “screens” — smooth + not sticker */}
+              {/* Right */}
               <div className="relative">
                 <div className="pointer-events-none absolute -inset-2 rounded-[38px] bg-gradient-to-br from-blue-500/28 via-purple-500/16 to-emerald-500/16 blur-[22px]" />
 
                 <div className="relative h-[520px] sm:h-[560px] lg:h-[600px]">
-                  {/* Top browser (parallax outer, float inner) */}
                   <m.div
                     style={{ y: parallaxY }}
                     className="absolute right-0 top-6 w-[88%] sm:w-[82%] transform-gpu"
@@ -673,15 +726,15 @@ export default function Home() {
                         className="origin-bottom-left"
                       >
                         <BrowserCard
-                          title="One platform for every clinic workflow"
+                          title="One platform for every workflow"
                           subtitle="Templates, triage, booking, orders and documentation—built to keep your team consistent and fast."
-                          badge="Clinic suite"
+                          badge={brand.productLabel}
+                          domainLabel={brand.domainLabel}
                         />
                       </m.div>
                     </div>
                   </m.div>
 
-                  {/* Mobile (parallax outer, float inner) */}
                   <m.div
                     style={{ y: parallaxY2 }}
                     className="absolute left-0 bottom-0 w-[72%] sm:w-[66%] transform-gpu"
@@ -702,7 +755,6 @@ export default function Home() {
                     </div>
                   </m.div>
 
-                  {/* Floating status pill */}
                   <m.div
                     className="absolute right-10 bottom-16 hidden sm:block transform-gpu"
                     initial={{ opacity: 0, y: 8, scale: 0.98 }}
@@ -714,9 +766,7 @@ export default function Home() {
                         <CalendarClock className="h-4 w-4 text-emerald-300" />
                         <span className="font-medium">Next session</span>
                         <span className="text-neutral-400">•</span>
-                        <span className="text-neutral-300">
-                          Flu clinic 16:00
-                        </span>
+                        <span className="text-neutral-300">Review 16:00</span>
                       </div>
                       <div className="mt-1 text-[11px] text-neutral-400">
                         Auto-reminders enabled • Capacity balanced
@@ -733,19 +783,19 @@ export default function Home() {
             <Reveal>
               <div className="mx-auto max-w-4xl text-center">
                 <div className="flex justify-center">
-                  <Pill tone="purple">About Pharmacy Express</Pill>
+                  <Pill tone="purple">About the platform</Pill>
                 </div>
                 <h2 className="mt-5 text-balance text-3xl font-semibold sm:text-4xl">
                   Empowering{" "}
                   <span className="bg-gradient-to-r from-emerald-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
-                    pharmacies
+                    teams
                   </span>{" "}
                   with smart automation
                 </h2>
                 <p className="mt-4 text-sm text-neutral-300 leading-relaxed">
-                  We believe technology should amplify clinical teams—not
-                  replace them. Our workflows reduce manual work, standardise
-                  care and provide clear visibility across sites.
+                  We believe technology should amplify service teams—not replace
+                  them. Our workflows reduce manual work, standardise delivery
+                  and provide clear visibility across locations.
                 </p>
               </div>
             </Reveal>
@@ -760,18 +810,16 @@ export default function Home() {
                 </div>
                 <p className="mt-3 text-sm text-neutral-300 leading-relaxed">
                   From triage and appointment selection to structured notes and
-                  follow-ups, Pharmacy Express keeps the entire journey
-                  consistent—reducing rework and improving the patient
+                  follow-ups, the platform keeps the entire journey
+                  consistent—reducing rework and improving the client
                   experience.
                 </p>
 
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   {[
                     {
-                      icon: (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-300" />
-                      ),
-                      t: "Standardised clinical flows",
+                      icon: <CheckCircle2 className="h-4 w-4 text-emerald-300" />,
+                      t: "Standardised workflows",
                       d: "Evidence-based templates and prompts.",
                     },
                     {
@@ -785,10 +833,8 @@ export default function Home() {
                       d: "Audit trails and role-based access.",
                     },
                     {
-                      icon: (
-                        <CalendarClock className="h-4 w-4 text-emerald-300" />
-                      ),
-                      t: "Patient self-booking",
+                      icon: <CalendarClock className="h-4 w-4 text-emerald-300" />,
+                      t: "Self-booking",
                       d: "Less phone work, fewer no-shows.",
                     },
                   ].map((x) => (
@@ -815,9 +861,7 @@ export default function Home() {
           {/* CORE VALUES */}
           <section className="mt-20 sm:mt-24">
             <Reveal className="text-center">
-              <h3 className="text-xl font-semibold text-white">
-                Our core values
-              </h3>
+              <h3 className="text-xl font-semibold text-white">Our core values</h3>
               <p className="mt-2 text-sm text-neutral-400">
                 What guides how we design workflows and experiences.
               </p>
@@ -828,17 +872,17 @@ export default function Home() {
                 {
                   icon: Zap,
                   title: "Innovation first",
-                  desc: "We ship practical automation that removes friction from everyday clinic operations.",
+                  desc: "We ship practical automation that removes friction from everyday operations.",
                 },
                 {
                   icon: Lock,
                   title: "Reliability built-in",
-                  desc: "Predictable workflows, consistent data and an operator UX designed for real clinics.",
+                  desc: "Predictable workflows, consistent data and an operator UX designed for real teams.",
                 },
                 {
                   icon: Sparkles,
                   title: "Human-centred design",
-                  desc: "We design for speed and clarity—so teams can focus on patients, not clicks.",
+                  desc: "We design for speed and clarity—so teams can focus on outcomes, not clicks.",
                 },
               ].map((c, idx) => {
                 const Icon = c.icon;
@@ -871,8 +915,7 @@ export default function Home() {
                 </span>
               </h2>
               <p className="mt-3 text-sm text-neutral-300">
-                Modules that work together across triage, booking, orders and
-                outcomes.
+                Modules that work together across triage, booking, orders and outcomes.
               </p>
             </Reveal>
 
@@ -901,7 +944,7 @@ export default function Home() {
                 {
                   icon: Sparkles,
                   title: "Automation",
-                  desc: "Reminders, follow-ups, notes generation and workflow triggers.",
+                  desc: "Reminders, follow-ups, note generation and workflow triggers.",
                 },
                 {
                   icon: Puzzle,
@@ -924,8 +967,7 @@ export default function Home() {
                       </p>
                       <div className="mt-4 h-px w-full bg-gradient-to-r from-white/0 via-white/10 to-white/0" />
                       <p className="mt-3 text-[12px] text-neutral-400">
-                        Built to be adopted quickly without disrupting daily
-                        operations.
+                        Built to be adopted quickly without disrupting daily operations.
                       </p>
                     </div>
                   </Reveal>
@@ -941,11 +983,10 @@ export default function Home() {
                 <Pill>Get started</Pill>
               </div>
               <h2 className="mt-4 text-balance text-2xl font-semibold sm:text-3xl">
-                Ready to streamline consultations and bookings?
+                Ready to streamline workflows and bookings?
               </h2>
               <p className="mt-3 text-sm text-neutral-300">
-                Use the dashboard to configure services, flows and
-                schedules—then go live.
+                Use the dashboard to configure services, flows and schedules—then go live.
               </p>
               <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                 <Link
@@ -973,54 +1014,39 @@ export default function Home() {
                   <div className="h-9 w-9 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center">
                     <Sparkles className="h-4 w-4 text-emerald-300" />
                   </div>
-                  <div className="text-sm font-semibold">Pharmacy Express</div>
+                  <div className="text-sm font-semibold">{brand.name}</div>
                 </div>
                 <p className="mt-3 max-w-sm text-sm text-neutral-400">
-                  A connected platform for consultations, scheduling and clinic
-                  operations.
+                  {brand.footerBlurb}
                 </p>
                 <p className="mt-4 text-[11px] text-neutral-500">
-                  © {new Date().getFullYear()} Pharmacy Express. All rights
-                  reserved.
+                  © {new Date().getFullYear()} {brand.name}. All rights reserved.
                 </p>
               </div>
 
               <div className="grid grid-cols-2 gap-8 text-sm sm:grid-cols-3">
                 <div>
-                  <p className="text-xs font-semibold text-neutral-200">
-                    Product
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-200">Product</p>
                   <ul className="mt-3 space-y-2 text-sm text-neutral-400">
                     <li>
-                      <a
-                        className="hover:text-white transition"
-                        href="#features"
-                      >
+                      <a className="hover:text-white transition" href="#features">
                         Features
                       </a>
                     </li>
                     <li>
-                      <a
-                        className="hover:text-white transition"
-                        href="#solutions"
-                      >
+                      <a className="hover:text-white transition" href="#solutions">
                         Solutions
                       </a>
                     </li>
                     <li>
-                      <Link
-                        className="hover:text-white transition"
-                        href={authHref}
-                      >
+                      <Link className="hover:text-white transition" href={authHref}>
                         Dashboard
                       </Link>
                     </li>
                   </ul>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-neutral-200">
-                    Company
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-200">Company</p>
                   <ul className="mt-3 space-y-2 text-sm text-neutral-400">
                     <li>
                       <a className="hover:text-white transition" href="#about">
@@ -1028,22 +1054,17 @@ export default function Home() {
                       </a>
                     </li>
                     <li>
-                      <a
-                        className="hover:text-white transition"
-                        href="#contact"
-                      >
+                      <a className="hover:text-white transition" href="#contact">
                         Contact
                       </a>
                     </li>
                   </ul>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-neutral-200">
-                    Support
-                  </p>
+                  <p className="text-xs font-semibold text-neutral-200">Support</p>
                   <ul className="mt-3 space-y-2 text-sm text-neutral-400">
                     <li className="text-neutral-500">
-                      Email: <span className="text-neutral-300">support@…</span>
+                      Email: <span className="text-neutral-300">{brand.supportEmail}</span>
                     </li>
                     <li className="text-neutral-500">
                       Hours: <span className="text-neutral-300">Mon–Fri</span>
