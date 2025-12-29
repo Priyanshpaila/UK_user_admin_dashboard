@@ -68,7 +68,7 @@ export default function LoginPage() {
           
           <div className="text-left">
             <h1 className="text-xl font-semibold tracking-tight">
-              Pharmacy Express Admin
+              Admin
             </h1>
             <p className="text-[11px] text-neutral-400">
               Sign in to manage services & consultations
@@ -142,7 +142,7 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-4 text-center text-[11px] text-neutral-500">
-          Only authorised Pharmacy Express staff can sign in. Contact your
+          Only authorised staff can sign in. Contact your
           administrator if you need access.
         </p>
       </div>

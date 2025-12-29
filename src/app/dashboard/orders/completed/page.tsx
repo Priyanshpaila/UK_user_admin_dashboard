@@ -872,7 +872,7 @@ function pickFirstNonEmptyString(...values: unknown[]): string | null {
  * - Memoized: prevents duplicate network calls.
  * - Safe: never throws.
  */
-export async function getPdfHeaderName(opts?: {
+ async function getPdfHeaderName(opts?: {
   fallback?: string; // e.g. "Pharmacy Express"
   useHostnameFallback?: boolean;
 }): Promise<string | null> {

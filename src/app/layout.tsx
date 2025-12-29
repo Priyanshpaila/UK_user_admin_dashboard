@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   title: "Admin Dashboard",
   description: "Responsive dashboard",
   icons: {
-    icon: "/icon.png",
+    icon: "/3.png",
   },
 };
 

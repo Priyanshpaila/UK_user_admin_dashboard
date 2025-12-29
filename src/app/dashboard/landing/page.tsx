@@ -45,6 +45,7 @@ type HomeBuilderState = {
     logoUrl: string;
     logoAlt: string;
     searchPlaceholder: string;
+    icon?: string;
     navLinks: NavLink[];
   };
   hero: {
@@ -291,6 +292,7 @@ export default function LandingBuilderPage() {
         navbar: {
           logoUrl: content.navbar?.logoUrl ?? "/logo.png",
           logoAlt: content.navbar?.logoAlt ?? "Pharmacy Express logo",
+          icon: content.navbar?.icon ?? "",
           searchPlaceholder:
             content.navbar?.searchPlaceholder ??
             "Search for treatments e.g. weight loss, migraines",
@@ -372,8 +374,7 @@ export default function LandingBuilderPage() {
           cardBody:
             content.safeSecure?.cardBody ??
             "Pharmacy Express is registered with the GPhC, the regulator for pharmacists in the UK. They ensure we prioritise your safety and meet the highest standards.",
-          cardButtonLabel:
-            content.safeSecure?.cardButtonLabel ?? "Verify now",
+          cardButtonLabel: content.safeSecure?.cardButtonLabel ?? "Verify now",
           cardButtonHref:
             content.safeSecure?.cardButtonHref ??
             "https://www.pharmacyregulation.org/registers/pharmacy/registrationnumber/9012468",
@@ -439,8 +440,7 @@ export default function LandingBuilderPage() {
             "https://www.google.com/maps/place/53%C2%B041'57.4%22N+1%C2%B030'37.9%22W",
           directionsLabel:
             content.contact?.directionsLabel ?? "Open directions",
-          copyButtonLabel:
-            content.contact?.copyButtonLabel ?? "Copy address",
+          copyButtonLabel: content.contact?.copyButtonLabel ?? "Copy address",
           callButtonLabel:
             content.contact?.callButtonLabel ?? "Call 01924 971414",
           phoneHref: content.contact?.phoneHref ?? "tel:01924971414",
@@ -565,7 +565,7 @@ export default function LandingBuilderPage() {
 
   const handleImageUpload = async (
     file: File,
-    target: "navbar.logoUrl" | "hero.backgroundImage"
+    target: "navbar.logoUrl" | "hero.backgroundImage" | "navbar.icon"
   ) => {
     if (!file) return;
     try {
@@ -583,6 +583,8 @@ export default function LandingBuilderPage() {
 
       if (target === "navbar.logoUrl") {
         updateSection("navbar", (s) => ({ ...s, logoUrl: url }));
+      } else if (target === "navbar.icon") {
+        updateSection("navbar", (s) => ({ ...s, icon: url })); // 👈 NEW
       } else {
         updateSection("hero", (s) => ({ ...s, backgroundImage: url }));
       }
@@ -715,11 +717,7 @@ export default function LandingBuilderPage() {
                   ) : (
                     <Save className="h-3.5 w-3.5" />
                   )}
-                  {saving
-                    ? "Saving…"
-                    : isDirty
-                    ? "Save changes"
-                    : "Saved"}
+                  {saving ? "Saving…" : isDirty ? "Save changes" : "Saved"}
                 </button>
               </div>
             </div>
@@ -837,6 +835,53 @@ export default function LandingBuilderPage() {
                     }))
                   }
                 />
+              </div>
+              {/* Favicon / browser tab icon */}
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <TextInput
+                    label="Favicon / browser icon URL"
+                    value={data.navbar.icon || ""}
+                    onChange={(e) =>
+                      updateSection("navbar", (s) => ({
+                        ...s,
+                        icon: e.target.value,
+                      }))
+                    }
+                  />
+                  <div className="space-y-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      disabled={uploadingFor === "navbar.icon"}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          await handleImageUpload(file, "navbar.icon");
+                        }
+                        e.target.value = "";
+                      }}
+                      className="block w-full text-xs text-neutral-300
+          file:mr-3 file:rounded-md file:border-0 file:bg-neutral-800
+          file:px-3 file:py-1.5 file:text-xs file:font-medium
+          file:text-neutral-100 hover:file:bg-neutral-700"
+                    />
+                    <div className="flex justify-between text-[11px] text-neutral-500">
+                      <span className="truncate">
+                        {data.navbar.icon
+                          ? `Current: ${data.navbar.icon}`
+                          : "No favicon selected"}
+                      </span>
+                      {uploadingFor === "navbar.icon" && (
+                        <span className="text-sky-400">Uploading…</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-neutral-500">
+                      This icon will be used as the browser tab icon (favicon).
+                      Recommended: square PNG, 32×32 or 64×64.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="mt-4 space-y-2">
@@ -1752,9 +1797,7 @@ export default function LandingBuilderPage() {
                           updateSection("testimonials", (s) => ({
                             ...s,
                             items: s.items.map((it, i) =>
-                              i === idx
-                                ? { ...it, name: e.target.value }
-                                : it
+                              i === idx ? { ...it, name: e.target.value } : it
                             ),
                           }))
                         }
@@ -1798,9 +1841,7 @@ export default function LandingBuilderPage() {
                         updateSection("testimonials", (s) => ({
                           ...s,
                           items: s.items.map((it, i) =>
-                            i === idx
-                              ? { ...it, content: e.target.value }
-                              : it
+                            i === idx ? { ...it, content: e.target.value } : it
                           ),
                         }))
                       }

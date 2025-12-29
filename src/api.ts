@@ -1387,6 +1387,9 @@ export type DynamicNavbarContent = {
     label: string;
     href: string;
     external?: boolean;
+
+    /** e.g. "Home", "ShoppingCart", "User", "HelpCircle" */
+    icon?: string;
   }[];
 };
 
