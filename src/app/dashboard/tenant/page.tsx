@@ -20,7 +20,10 @@ import {
   createPharmacistApi,
   PharmacistPayload,
   getPlatformTenantsApi,
+  deletePharmacistApi,
+  deleteTenantApi,
   type PlatformTenantDto,
+  PlatformTenantPharmacist,
 } from "../../../api";
 
 export default function CreateTenantPage() {
@@ -43,8 +46,19 @@ export default function CreateTenantPage() {
   // 🔹 Modal
   const [selectedTenant, setSelectedTenant] =
     useState<PlatformTenantDto | null>(null);
+  const [selectedPharmacist, setSelectedPharmacist] =
+    useState<PlatformTenantPharmacist | null>(null);
 
-  const closeModal = () => setSelectedTenant(null);
+  const [isDeleteTenantModalOpen, setDeleteTenantModalOpen] = useState(false);
+  const [tenantPassword, setTenantPassword] = useState("");
+  const [isDeletePharmacistModalOpen, setDeletePharmacistModalOpen] =
+    useState(false);
+
+  const closeModal = () => {
+    setSelectedTenant(null);
+    setDeleteTenantModalOpen(false);
+    setDeletePharmacistModalOpen(false);
+  };
 
   const formatDateTime = (iso?: string) => {
     if (!iso) return "-";
@@ -149,11 +163,43 @@ export default function CreateTenantPage() {
     }
   };
 
+  const handleDeleteTenant = async () => {
+    if (tenantPassword !== "rri12345") {
+      toast.error("Incorrect password!");
+      return;
+    }
+    try {
+      await deleteTenantApi(selectedTenant?.slug!);
+      toast.success("Tenant deleted successfully");
+      loadTenants();
+      closeModal();
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to delete tenant");
+    }
+  };
+
+  const handleDeletePharmacist = async () => {
+    try {
+      await deletePharmacistApi(
+        selectedTenant?.slug!,
+        selectedPharmacist?.tenant_user_id!
+      );
+      toast.success("Pharmacist deleted successfully");
+      loadTenants();
+      closeModal();
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to delete pharmacist");
+    }
+  };
+
   const totalTenants = tenants.length;
   const totalPharmacists = useMemo(
     () =>
       tenants.reduce(
-        (sum, t) => sum + (Array.isArray(t.pharmacists) ? t.pharmacists.length : 0),
+        (sum, t) =>
+          sum + (Array.isArray(t.pharmacists) ? t.pharmacists.length : 0),
         0
       ),
     [tenants]
@@ -168,8 +214,8 @@ export default function CreateTenantPage() {
             Tenants & Pharmacists
           </h1>
           <p className="mt-1 text-sm text-neutral-400">
-            Create new tenant subdomains and manage pharmacists for each
-            tenant from a single place.
+            Create new tenant subdomains and manage pharmacists for each tenant
+            from a single place.
           </p>
         </div>
 
@@ -250,7 +296,7 @@ export default function CreateTenantPage() {
             </div>
           )}
 
-          {/* Create Pharmacist (shown after tenant flag – same logic as before) */}
+          {/* Create Pharmacist */}
           {tenantCreated && (
             <div className="rounded-2xl border border-neutral-800 bg-neutral-900/70 p-6 shadow-xl shadow-black/40">
               <div className="mb-4 flex items-center justify-between">
@@ -259,7 +305,11 @@ export default function CreateTenantPage() {
                     Create pharmacist user
                   </h2>
                   <p className="mt-1 text-xs text-neutral-400">
-                    Link a pharmacist to the tenant <span className="font-semibold text-emerald-400">{subdomain}</span>.
+                    Link a pharmacist to the tenant{" "}
+                    <span className="font-semibold text-emerald-400">
+                      {subdomain}
+                    </span>
+                    .
                   </p>
                 </div>
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sky-500/10 text-sky-400">
@@ -267,10 +317,7 @@ export default function CreateTenantPage() {
                 </div>
               </div>
 
-              <form
-                onSubmit={(e) => e.preventDefault()}
-                className="space-y-4"
-              >
+              <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <input
                     type="text"
@@ -467,6 +514,13 @@ export default function CreateTenantPage() {
                 >
                   {selectedTenant.status}
                 </span>
+                {/* Button to delete tenant */}
+                <button
+                  onClick={() => setDeleteTenantModalOpen(true)}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 px-2 py-1 text-sm font-light transition duration-300"
+                >
+                  Delete Tenant
+                </button>
                 <button
                   type="button"
                   onClick={closeModal}
@@ -560,11 +614,15 @@ export default function CreateTenantPage() {
                             </p>
                           )}
                         </div>
-                        {p.tenant_user_id && (
-                          <span className="ml-3 rounded-full bg-neutral-900 px-2 py-0.5 text-[10px] font-mono text-neutral-400">
-                            {p.tenant_user_id.slice(0, 6)}…
-                          </span>
-                        )}
+                        <button
+                          onClick={() => {
+                            setSelectedPharmacist(p);
+                            setDeletePharmacistModalOpen(true);
+                          }}
+                          className="ml-3 text-sm text-red-400 hover:text-red-500"
+                        >
+                          Delete Pharmacist
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -574,6 +632,69 @@ export default function CreateTenantPage() {
                   </p>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Tenant Confirmation Modal */}
+      {isDeleteTenantModalOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+          <div className="max-w-md w-full rounded-3xl bg-neutral-950 p-6 shadow-xl shadow-black/70">
+            <h3 className="text-lg font-semibold text-white">
+              Confirm Deletion
+            </h3>
+            <p className="mt-2 text-xs text-neutral-400">
+              Enter password to delete tenant {selectedTenant?.slug}
+            </p>
+            <input
+              type="password"
+              value={tenantPassword}
+              onChange={(e) => setTenantPassword(e.target.value)}
+              className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-emerald-500"
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={handleDeleteTenant}
+                className="w-full rounded-xl bg-red-600 text-white py-2"
+              >
+                Delete Tenant
+              </button>
+              <button
+                onClick={() => setDeleteTenantModalOpen(false)}
+                className="w-full rounded-xl bg-neutral-600 text-white py-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Pharmacist Confirmation Modal */}
+      {isDeletePharmacistModalOpen && selectedPharmacist && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+          <div className="max-w-md w-full rounded-3xl bg-neutral-950 p-6 shadow-xl shadow-black/70">
+            <h3 className="text-lg font-semibold text-white">
+              Confirm Deletion
+            </h3>
+            <p className="mt-2 text-xs text-neutral-400">
+              Are you sure you want to delete{" "}
+              {selectedPharmacist.name}?
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={handleDeletePharmacist}
+                className="w-full rounded-xl bg-red-600 text-white py-2"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setDeletePharmacistModalOpen(false)}
+                className="w-full rounded-xl bg-neutral-600 text-white py-2"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
