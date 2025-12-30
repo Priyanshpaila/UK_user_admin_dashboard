@@ -1955,6 +1955,35 @@ export default function EditServicePage() {
           {/* Service Medicines */}
           <SectionCard title="Service Products">
             <div className="space-y-5">
+                  {/* Already linked medicines */}
+              <div className="space-y-2">
+              
+                {loadingMeds ? (
+                  <div className="text-xs text-neutral-500 flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                  </div>
+                ) : linkedMedicines.length === 0 ? (
+                  <div className="text-xs text-neutral-500">
+                    No medicines linked to this service yet.
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {linkedMedicines.map((m) => (
+                      <span
+                        key={m._id}
+                        className="inline-flex items-center gap-1 rounded-full bg-neutral-900 px-3 py-1 text-xs text-neutral-100 border border-neutral-700 shadow-sm"
+                      >
+                        {m.name}
+                        {m.strength && (
+                          <span className="text-neutral-400">
+                            · {m.strength}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="h-px bg-neutral-800" />
 
               {medsLoadError && (

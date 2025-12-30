@@ -1939,3 +1939,60 @@ export async function createZoomMeetingApi(
   // supports either direct response or { data: ... }
   return (res?.data ?? res) as ZoomMeetingDto;
 }
+
+
+export async function deleteTenantApi(tenantSlug: string) {
+  const base = ENV_BASE_URL || "http://localhost:8000/api"; // Use ENV_BASE_URL directly for this API
+  const url = `${base}/platform-tenants/${tenantSlug}`;
+
+  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  const headers: HeadersInit = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to delete tenant: ${res.status}`);
+  }
+
+  return res.json(); // Returns the response from the backend
+}
+
+
+// Function to delete a pharmacist for a particular tenant
+export async function deletePharmacistApi(tenantSlug: string, pharmacistId: string) {
+  const base = ENV_BASE_URL || "http://localhost:8000/api"; // Use ENV_BASE_URL directly for this API
+  const url = `${base}/platform-tenants/${tenantSlug}/pharmacist/${pharmacistId}`;
+
+  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  const headers: HeadersInit = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to delete pharmacist: ${res.status}`);
+  }
+
+  return res.json(); // Returns the response from the backend
+}
