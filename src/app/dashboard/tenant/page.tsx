@@ -24,6 +24,7 @@ import {
   deleteTenantApi,
   type PlatformTenantDto,
   PlatformTenantPharmacist,
+  updateTenantIntegrationApi,
 } from "../../../api";
 
 export default function CreateTenantPage() {
@@ -53,6 +54,48 @@ export default function CreateTenantPage() {
   const [tenantPassword, setTenantPassword] = useState("");
   const [isDeletePharmacistModalOpen, setDeletePharmacistModalOpen] =
     useState(false);
+  const [isFillCredentialsModalOpen, setFillCredentialsModalOpen] =
+    useState(false);
+
+  // Credentials states
+  const [emailProvider, setEmailProvider] = useState("smtp");
+  const [emailHost, setEmailHost] = useState("smtp-relay.brevo.com");
+  const [emailPort, setEmailPort] = useState(587);
+  const [emailSecure, setEmailSecure] = useState(false);
+  const [emailUsername, setEmailUsername] = useState("");
+  const [emailPassword, setEmailPassword] = useState("");
+  const [emailFromName, setEmailFromName] = useState("Pharmacy Express");
+  const [emailFromEmail, setEmailFromEmail] = useState("info@safescript.co.uk");
+
+  const [paymentProvider, setPaymentProvider] = useState("ryft");
+  const [ryftApiBase, setRyftApiBase] = useState("https://api.ryftpay.com");
+  const [ryftSecretKey, setRyftSecretKey] = useState("");
+  const [ryftWebhookSecret, setRyftWebhookSecret] = useState("");
+  const [ryftPublicKey, setRyftPublicKey] = useState("");
+  const [ryftMerchantName, setRyftMerchantName] = useState(
+    "Safescript Pharmacy"
+  );
+  const [ryftMerchantCountry, setRyftMerchantCountry] = useState("GB");
+
+  const [zoomAccountId, setZoomAccountId] = useState("");
+  const [zoomClientId, setZoomClientId] = useState("");
+  const [zoomClientSecret, setZoomClientSecret] = useState("");
+  const [zoomDefaultUser, setZoomDefaultUser] = useState("me");
+  const [zoomBaseUrl, setZoomBaseUrl] = useState("https://api.zoom.us/v2");
+
+  const [shippingProvider, setShippingProvider] = useState("royalmail");
+  const [royalmailApiBase, setRoyalmailApiBase] = useState(
+    "https://api.parcel.royalmail.com/api/v1"
+  );
+  const [royalmailApiKey, setRoyalmailApiKey] = useState("");
+  const [royalmailApiKeyHeader, setRoyalmailApiKeyHeader] =
+    useState("x-api-key");
+  const [royalmailTokenUrl, setRoyalmailTokenUrl] = useState("");
+  const [royalmailClientId, setRoyalmailClientId] = useState("");
+  const [royalmailClientSecret, setRoyalmailClientSecret] = useState("");
+  const [royalmailAccountNumber, setRoyalmailAccountNumber] = useState("");
+  const [royalmailDefaultServiceCode, setRoyalmailDefaultServiceCode] =
+    useState("tracked24");
 
   const closeModal = () => {
     setSelectedTenant(null);
@@ -191,6 +234,53 @@ export default function CreateTenantPage() {
     } catch (err: any) {
       console.error(err);
       toast.error("Failed to delete pharmacist");
+    }
+  };
+
+  // Handle the fill credentials form and update integration
+  const handleFillCredentials = async () => {
+    const integrationData = {
+      email_provider: emailProvider,
+      email_host: emailHost,
+      email_port: emailPort,
+      email_secure: emailSecure,
+      email_username: emailUsername,
+      email_password: emailPassword,
+      email_fromName: emailFromName,
+      email_fromEmail: emailFromEmail,
+
+      payment_provider: paymentProvider,
+      ryft_apiBase: ryftApiBase,
+      ryft_secretKey: ryftSecretKey,
+      ryft_webhookSecret: ryftWebhookSecret,
+      ryft_publicKey: ryftPublicKey,
+      ryft_merchantName: ryftMerchantName,
+      ryft_merchantCountry: ryftMerchantCountry,
+
+      zoom_accountId: zoomAccountId,
+      zoom_clientId: zoomClientId,
+      zoom_clientSecret: zoomClientSecret,
+      zoom_defaultUser: zoomDefaultUser,
+      zoom_baseUrl: zoomBaseUrl,
+
+      shipping_provider: shippingProvider,
+      royalmail_apiBase: royalmailApiBase,
+      royalmail_apiKeyHeader: royalmailApiKeyHeader,
+      royalmail_apiKey: royalmailApiKey,
+      royalmail_tokenUrl: royalmailTokenUrl,
+      royalmail_clientId: royalmailClientId,
+      royalmail_clientSecret: royalmailClientSecret,
+      royalmail_accountNumber: royalmailAccountNumber,
+      royalmail_defaultServiceCode: royalmailDefaultServiceCode,
+    };
+
+    try {
+      await updateTenantIntegrationApi(selectedTenant?.slug!, integrationData);
+      toast.success("Integration credentials updated successfully!");
+      closeModal();
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to update credentials");
     }
   };
 
@@ -516,11 +606,19 @@ export default function CreateTenantPage() {
                 </span>
                 {/* Button to delete tenant */}
                 <button
+                  type="button"
+                  onClick={() => setFillCredentialsModalOpen(true)}
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 px-2 py-1 text-sm font-light transition duration-300"
+                >
+                  Fill Credentials
+                </button>
+                <button
                   onClick={() => setDeleteTenantModalOpen(true)}
                   className="inline-flex items-center justify-center gap-2 rounded-full bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 px-2 py-1 text-sm font-light transition duration-300"
                 >
                   Delete Tenant
                 </button>
+
                 <button
                   type="button"
                   onClick={closeModal}
@@ -679,8 +777,7 @@ export default function CreateTenantPage() {
               Confirm Deletion
             </h3>
             <p className="mt-2 text-xs text-neutral-400">
-              Are you sure you want to delete{" "}
-              {selectedPharmacist.name}?
+              Are you sure you want to delete {selectedPharmacist.name}?
             </p>
             <div className="mt-4 flex gap-2">
               <button
@@ -692,6 +789,312 @@ export default function CreateTenantPage() {
               <button
                 onClick={() => setDeletePharmacistModalOpen(false)}
                 className="w-full rounded-xl bg-neutral-600 text-white py-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isFillCredentialsModalOpen && selectedTenant && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4">
+          <div className="max-w-6xl w-full max-h-[80vh] overflow-y-auto rounded-3xl bg-neutral-950 p-6 shadow-xl shadow-black/70">
+            <h3 className="text-lg font-semibold text-white">
+              Fill Credentials
+            </h3>
+            <div className="mt-3 space-y-6">
+              {/* Email Provider Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-neutral-300">
+                    Email Provider
+                  </h4>
+                  <input
+                    type="text"
+                    value={emailProvider}
+                    onChange={(e) => setEmailProvider(e.target.value)}
+                    placeholder="Email Provider"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={emailHost}
+                    onChange={(e) => setEmailHost(e.target.value)}
+                    placeholder="Email Host"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="number"
+                    value={emailPort}
+                    onChange={(e) => setEmailPort(Number(e.target.value))}
+                    placeholder="Email Port"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="email"
+                    value={emailUsername}
+                    onChange={(e) => setEmailUsername(e.target.value)}
+                    placeholder="Email Username"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="password"
+                    value={emailPassword}
+                    onChange={(e) => setEmailPassword(e.target.value)}
+                    placeholder="Email Password"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={emailFromName}
+                    onChange={(e) => setEmailFromName(e.target.value)}
+                    placeholder="Email From Name"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="email"
+                    value={emailFromEmail}
+                    onChange={(e) => setEmailFromEmail(e.target.value)}
+                    placeholder="Email From Email"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+              </div>
+
+              {/* Payment Provider Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-neutral-300">
+                    Payment Provider
+                  </h4>
+                  <input
+                    type="text"
+                    value={paymentProvider}
+                    onChange={(e) => setPaymentProvider(e.target.value)}
+                    placeholder="Payment Provider"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftApiBase}
+                    onChange={(e) => setRyftApiBase(e.target.value)}
+                    placeholder="Ryft API Base"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftSecretKey}
+                    onChange={(e) => setRyftSecretKey(e.target.value)}
+                    placeholder="Ryft Secret Key"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftWebhookSecret}
+                    onChange={(e) => setRyftWebhookSecret(e.target.value)}
+                    placeholder="Ryft Webhook Secret"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftPublicKey}
+                    onChange={(e) => setRyftPublicKey(e.target.value)}
+                    placeholder="Ryft Public Key"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftMerchantName}
+                    onChange={(e) => setRyftMerchantName(e.target.value)}
+                    placeholder="Ryft Merchant Name"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={ryftMerchantCountry}
+                    onChange={(e) => setRyftMerchantCountry(e.target.value)}
+                    placeholder="Ryft Merchant Country"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+              </div>
+
+              {/* Zoom Provider Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-neutral-300">
+                    Zoom Provider
+                  </h4>
+                  <input
+                    type="text"
+                    value={zoomAccountId}
+                    onChange={(e) => setZoomAccountId(e.target.value)}
+                    placeholder="Zoom Account ID"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={zoomClientId}
+                    onChange={(e) => setZoomClientId(e.target.value)}
+                    placeholder="Zoom Client ID"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={zoomClientSecret}
+                    onChange={(e) => setZoomClientSecret(e.target.value)}
+                    placeholder="Zoom Client Secret"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={zoomDefaultUser}
+                    onChange={(e) => setZoomDefaultUser(e.target.value)}
+                    placeholder="Zoom Default User"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={zoomBaseUrl}
+                    onChange={(e) => setZoomBaseUrl(e.target.value)}
+                    placeholder="Zoom Base URL"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+              </div>
+
+              {/* Shipping Provider Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="text-sm font-semibold text-neutral-300">
+                    Shipping Provider
+                  </h4>
+                  <input
+                    type="text"
+                    value={shippingProvider}
+                    onChange={(e) => setShippingProvider(e.target.value)}
+                    placeholder="Shipping Provider"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailApiBase}
+                    onChange={(e) => setRoyalmailApiBase(e.target.value)}
+                    placeholder="RoyalMail API Base"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailApiKey}
+                    onChange={(e) => setRoyalmailApiKey(e.target.value)}
+                    placeholder="RoyalMail API Key"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailApiKeyHeader}
+                    onChange={(e) => setRoyalmailApiKeyHeader(e.target.value)}
+                    placeholder="RoyalMail API Key Header"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailTokenUrl}
+                    onChange={(e) => setRoyalmailTokenUrl(e.target.value)}
+                    placeholder="RoyalMail Token URL"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailClientId}
+                    onChange={(e) => setRoyalmailClientId(e.target.value)}
+                    placeholder="RoyalMail Client ID"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailClientSecret}
+                    onChange={(e) => setRoyalmailClientSecret(e.target.value)}
+                    placeholder="RoyalMail Client Secret"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailAccountNumber}
+                    onChange={(e) => setRoyalmailAccountNumber(e.target.value)}
+                    placeholder="RoyalMail Account Number"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    value={royalmailDefaultServiceCode}
+                    onChange={(e) =>
+                      setRoyalmailDefaultServiceCode(e.target.value)
+                    }
+                    placeholder="RoyalMail Default Service Code"
+                    className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleFillCredentials}
+                className="w-full rounded-xl bg-blue-600 text-white py-2 mt-4"
+              >
+                Save Credentials
+              </button>
+
+              <button
+                onClick={() => setFillCredentialsModalOpen(false)}
+                className="w-full rounded-xl bg-neutral-600 text-white py-2 mt-2"
               >
                 Cancel
               </button>

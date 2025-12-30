@@ -257,6 +257,57 @@ export async function createPharmacistApi(
   });
 }
 
+
+
+// New PUT API for tenant integration
+export async function updateTenantIntegrationApi(
+  subdomain: string,
+  integrationData: {
+    email_provider: string;
+    email_host: string;
+    email_port: number;
+    email_secure: boolean;
+    email_username: string;
+    email_password: string;
+    email_fromName: string;
+    email_fromEmail: string;
+    payment_provider: string;
+    ryft_apiBase: string;
+    ryft_secretKey: string;
+    ryft_webhookSecret: string;
+    ryft_publicKey: string;
+    ryft_merchantName: string;
+    ryft_merchantCountry: string;
+    zoom_accountId: string;
+    zoom_clientId: string;
+    zoom_clientSecret: string;
+    zoom_defaultUser: string;
+    zoom_baseUrl: string;
+    shipping_provider: string;
+    royalmail_apiBase: string;
+    royalmail_apiKeyHeader: string;
+    royalmail_apiKey: string;
+    royalmail_tokenUrl: string;
+    royalmail_clientId: string;
+    royalmail_clientSecret: string;
+    royalmail_accountNumber: string;
+    royalmail_defaultServiceCode: string;
+  }
+) {
+  const protocol =
+    typeof window !== "undefined" ? window.location.protocol : "http:";
+
+  const baseOnly = stripProtocol(ENV_BASE_ONLY_URL || "192.168.13.75:8000/api");
+
+  // Tenant backend URL
+  const base = `${protocol}//${subdomain}.${baseOnly}`;
+
+  return jsonFetch<any>(`${base}/integrations`, {
+    method: "PUT",
+    body: JSON.stringify(integrationData),
+  });
+}
+
 /* ------------------- Medicines APIs ------------------- */
 
 /** One variation row on a medicine */
