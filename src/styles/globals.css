@@ -127,3 +127,25 @@ body {
   .rbc-calendar { font-size: 12px; }
   .rbc-event { font-size: 11px; }
 }
+
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 10px;  /* Set the width of the scrollbar */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #4B5563; /* Darker grey for thumb */
+  border-radius: 10px;  /* Round the edges */
+  border: 2px solid #2D3748; /* Dark border around thumb */
+}
+
+::-webkit-scrollbar-track {
+  background: #1F2937; /* Darker background for the track */
+  border-radius: 10px;  /* Round the edges of the track */
+}
+
+/* Optional: On hover effect */
+::-webkit-scrollbar-thumb:hover {
+  background-color: #2D3748;  /* Lighter grey on hover */
+}
