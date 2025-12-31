@@ -3930,6 +3930,7 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
   }
 
   const u: any = user;
+  console.log("Rendering patient profile card for user:", u);
   const fullName =
     u.name ||
     u.fullName ||
@@ -3944,6 +3945,19 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
   const dobLabel = formatDobWithAge(u.dob);
   const createdAt = u.createdAt || u.created_at || null;
   const updatedAt = u.updatedAt || u.updated_at || null;
+
+  // Format the verification status fields
+  const idVerifiedLabel = u.id_verified ? (
+    <span className="text-green-500">Yes</span>
+  ) : (
+    <span className="text-red-500">No</span>
+  );
+
+  const scrVerifiedLabel = u.scr_verified ? (
+    <span className="text-green-500">Yes</span>
+  ) : (
+    <span className="text-red-500">No</span>
+  );
 
   return (
     <div className="space-y-3 rounded-xl border border-neutral-800 bg-neutral-900/40 px-3 py-3">
@@ -4018,7 +4032,17 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
         </div>
       </dl>
 
+      {/* Display verification status */}
       <div className="flex flex-wrap gap-4 border-t border-neutral-800 pt-2 text-[11px] text-neutral-500">
+        <span>
+          ID Verified: <span className="font-semibold">{idVerifiedLabel}</span>
+        </span>
+        <span>
+          SCR Verified:{" "}
+          <span className="font-semibold">{scrVerifiedLabel}</span>
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-4   text-[11px] text-neutral-500">
         <span>
           Created:{" "}
           <span className="text-neutral-200">
