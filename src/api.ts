@@ -2047,3 +2047,50 @@ export async function deletePharmacistApi(tenantSlug: string, pharmacistId: stri
 
   return res.json(); // Returns the response from the backend
 }
+
+
+/**
+ * Change password API
+ * @param userId The user ID for which the password needs to be changed
+ * @param currentPassword The current password of the user
+ * @param newPassword The new password the user wants to set
+ * @param confirmPassword The confirmation of the new password
+ */
+export async function changePasswordApi(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string
+) {
+  const base = getBackendBase(); // Get the backend base URL dynamically
+  const url = `${base}/users/changePassword/${userId}`;
+
+  const payload = {
+    currentPassword,
+    newPassword,
+    confirmPassword,
+  };
+
+  const token = localStorage.getItem("session_token"); // Adjust this based on your token storage method
+  if (!token) {
+    throw new Error("No authentication token found.");
+  }
+
+  const headers: HeadersInit = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Failed to change password: ${res.status}`);
+  }
+
+  return res.json(); // Returns the response from the backend
+}

@@ -6,6 +6,7 @@ import {
   updateUserWithFormDataApi,
   type UserDto,
   getBackendBase,
+  changePasswordApi,
 } from "../../../api";
 import {
   Loader2,
@@ -71,6 +72,15 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState<string>("");
+  const [newPassword, setNewPassword] = useState<string>("");
+  const [confirmPassword, setConfirmPassword] = useState<string>("");
+  const [passwordChangeError, setPasswordChangeError] = useState<string | null>(
+    null
+  );
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState<
+    string | null
+  >(null);
 
   const [form, setForm] = useState<ProfileFormState>({
     firstName: "",
@@ -146,6 +156,28 @@ export default function ProfilePage() {
   useEffect(() => {
     setupCanvasBackground();
   }, []);
+
+  const handleChangePassword = async () => {
+    if (newPassword !== confirmPassword) {
+      setPasswordChangeError("Passwords do not match.");
+      return;
+    }
+
+    try {
+      if (!userId) return;
+      await changePasswordApi(
+        userId,
+        currentPassword,
+        newPassword,
+        confirmPassword
+      );
+      setPasswordChangeSuccess("Password changed successfully!");
+      setPasswordChangeError(null); // Clear any previous errors
+    } catch (err: any) {
+      setPasswordChangeError(err?.message || "Failed to change password.");
+      setPasswordChangeSuccess(null);
+    }
+  };
 
   const handleSignatureStart = (
     e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>
@@ -561,6 +593,81 @@ export default function ProfilePage() {
                   placeholder="United Kingdom"
                 />
               </div>
+            </div>
+          </SectionCard>
+          <SectionCard
+            title="Change Password"
+            subtitle="Change your account password. Ensure it's secure and not reused across other services."
+          >
+            <div className="space-y-4">
+              {/* Current Password */}
+              <div>
+                <label className="text-xs font-medium text-neutral-300">
+                  Current Password
+                </label>
+                <input
+                  type="password"
+                  name="currentPassword"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="mt-1 w-full rounded-lg bg-neutral-900/70 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                  placeholder="Current password"
+                />
+              </div>
+
+              {/* New Password */}
+              <div>
+                <label className="text-xs font-medium text-neutral-300">
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  name="newPassword"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="mt-1 w-full rounded-lg bg-neutral-900/70 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                  placeholder="New password"
+                />
+              </div>
+
+              {/* Confirm Password */}
+              <div>
+                <label className="text-xs font-medium text-neutral-300">
+                  Confirm New Password
+                </label>
+                <input
+                  type="password"
+                  name="confirmPassword"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="mt-1 w-full rounded-lg bg-neutral-900/70 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+                  placeholder="Confirm new password"
+                />
+              </div>
+
+              {/* Error Message */}
+              {passwordChangeError && (
+                <div className="text-red-500 text-xs">
+                  {passwordChangeError}
+                </div>
+              )}
+
+              {/* Success Message */}
+              {passwordChangeSuccess && (
+                <div className="text-green-500 text-xs">
+                  {passwordChangeSuccess}
+                </div>
+              )}
+
+              {/* Save Button */}
+              <button
+                type="button"
+                onClick={handleChangePassword}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs sm:text-sm font-medium text-white shadow-lg shadow-blue-900/40 hover:bg-blue-500 disabled:opacity-60 transition-colors"
+              >
+                <Save size={16} />
+                Change Password
+              </button>
             </div>
           </SectionCard>
         </div>
