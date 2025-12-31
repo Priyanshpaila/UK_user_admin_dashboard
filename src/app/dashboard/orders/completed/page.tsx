@@ -2841,20 +2841,45 @@ async function exportPrivatePrescriptionPdf(
     "Dispense"
   );
 
+
   // Get the width and height of the page
   const pageW = getPageWidth(doc);
   const pageH = getPageHeight(doc);
 
-  // Set the position for the text at the bottom
-  const margin = 10; // Margin from bottom
-  const startX = margin;
-  const startY = pageH - margin - 20; // Position it 20 units from the bottom
+  // Save the current graphics state (so other content isn't affected)
+  (doc as any).saveGraphicsState?.();
 
-  // Add the "DO NOT DISPENSE" text at the bottom in light grey color
+  // Create a new GState instance and set opacity
+  const GStateCtor = (doc as any).GState;
+  const gState = GStateCtor ? new GStateCtor({ opacity: 0.3 }) : null;
+
+  // Set the GState with the opacity value
+  if (gState && (doc as any).setGState) {
+    (doc as any).setGState(gState);
+  }
+
+  // Set up the "DO NOT DISPENSE" text with reduced opacity using Graphics State
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(30);
-  doc.setTextColor(200, 200, 200); // Light grey color
-  doc.text("DO NOT DISPENSE", pageW / 2, startY, { align: "center" });
+  doc.setFontSize(60);
+
+  // Set the text color to light gray (this is for the watermark text)
+  doc.setTextColor(200, 200, 200); // Light gray color for watermark
+
+  // Add the "DO NOT DISPENSE" text diagonally like a watermark
+  const startX = pageW / 1.5;
+  const startY = pageH / 1.5; // Position at the center of the page
+
+  // Rotate and add the "DO NOT DISPENSE" watermark text
+  doc.text("DO NOT DISPENSE", startX, startY, { angle: 45, align: "center" });
+
+  // Restore the graphics state to reset opacity (so other content isn't affected)
+  doc.restoreGraphicsState();
+
+  // Add other content on top of the watermark (normal text)
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(12);
+  doc.setTextColor(0, 0, 0); // Black color for regular text
+  doc.text("Private Prescription", 20, 40);
 
   const filename = `PrivatePrescription_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
