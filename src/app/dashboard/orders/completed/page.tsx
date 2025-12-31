@@ -143,8 +143,7 @@ function formatMoneyFromMinorSafe(minor: number | null | undefined): string {
 }
 
 type PdfBranding = {
-  logoDataUrl: string | null;
-  headerName: string; // derived from logoAlt
+  logoDataUrl: string | null; // derived from logoAlt
   rawLogoUrl: string | null;
   rawLogoAlt: string | null;
 };
@@ -182,7 +181,6 @@ async function getPdfBranding(): Promise<PdfBranding> {
 
   const fallback: PdfBranding = {
     logoDataUrl: DEFAULT_PDF_LOGO_DATA_URL,
-    headerName: DEFAULT_HEADER_NAME,
     rawLogoUrl: null,
     rawLogoAlt: null,
   };
@@ -211,7 +209,6 @@ async function getPdfBranding(): Promise<PdfBranding> {
     if (!rawLogoUrl) {
       cachedPdfBranding = {
         logoDataUrl: DEFAULT_PDF_LOGO_DATA_URL,
-        headerName,
         rawLogoUrl: null,
         rawLogoAlt,
       };
@@ -222,7 +219,6 @@ async function getPdfBranding(): Promise<PdfBranding> {
     if (typeof rawLogoUrl === "string" && rawLogoUrl.startsWith("data:")) {
       cachedPdfBranding = {
         logoDataUrl: rawLogoUrl,
-        headerName,
         rawLogoUrl,
         rawLogoAlt,
       };
@@ -238,7 +234,6 @@ async function getPdfBranding(): Promise<PdfBranding> {
 
     cachedPdfBranding = {
       logoDataUrl,
-      headerName,
       rawLogoUrl: resolvedLogoUrl,
       rawLogoAlt,
     };
@@ -664,55 +659,55 @@ async function fetchImageDataUrl(url: string): Promise<string | null> {
 }
 
 /* ----------------- PDF Helpers ----------------- */
-function drawDocWatermark(
-  doc: jsPDF,
-  text: string,
-  opts?: { opacity?: number; fontSize?: number }
-) {
-  const pageW = getPageWidth(doc);
-  const pageH = getPageHeight(doc);
+// function drawDocWatermark(
+//   doc: jsPDF,
+//   text: string,
+//   opts?: { opacity?: number; fontSize?: number }
+// ) {
+//   const pageW = getPageWidth(doc);
+//   const pageH = getPageHeight(doc);
 
-  const opacity = opts?.opacity ?? 0.02; // ✅ very low opacity
-  const fontSize = opts?.fontSize ?? 60;
+//   const opacity = opts?.opacity ?? 0.02; // ✅ very low opacity
+//   const fontSize = opts?.fontSize ?? 60;
 
-  // If jsPDF GState exists, use real opacity
-  let usedGState = false;
-  try {
-    const GStateCtor = (doc as any).GState;
-    if (GStateCtor && (doc as any).setGState) {
-      const gs = new GStateCtor({ opacity });
-      (doc as any).setGState(gs);
-      usedGState = true;
-    }
-  } catch {
-    usedGState = false;
-  }
+//   // If jsPDF GState exists, use real opacity
+//   let usedGState = false;
+//   try {
+//     const GStateCtor = (doc as any).GState;
+//     if (GStateCtor && (doc as any).setGState) {
+//       const gs = new GStateCtor({ opacity });
+//       (doc as any).setGState(gs);
+//       usedGState = true;
+//     }
+//   } catch {
+//     usedGState = false;
+//   }
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(fontSize);
+//   doc.setFont("helvetica", "bold");
+//   doc.setFontSize(fontSize);
 
-  // If no opacity support, make the color extremely light
-  if (!usedGState) doc.setTextColor(245, 247, 250);
-  else doc.setTextColor(235, 238, 242);
+//   // If no opacity support, make the color extremely light
+//   if (!usedGState) doc.setTextColor(245, 247, 250);
+//   else doc.setTextColor(235, 238, 242);
 
-  (doc as any).text(text, pageW / 2, pageH / 2, {
-    align: "center",
-    angle: 35,
-  } as any);
+//   (doc as any).text(text, pageW / 2, pageH / 2, {
+//     align: "center",
+//     angle: 35,
+//   } as any);
 
-  // Reset best-effort
-  if (usedGState) {
-    try {
-      const GStateCtor = (doc as any).GState;
-      if (GStateCtor && (doc as any).setGState) {
-        const gs = new GStateCtor({ opacity: 1 });
-        (doc as any).setGState(gs);
-      }
-    } catch {
-      // ignore
-    }
-  }
-}
+//   // Reset best-effort
+//   if (usedGState) {
+//     try {
+//       const GStateCtor = (doc as any).GState;
+//       if (GStateCtor && (doc as any).setGState) {
+//         const gs = new GStateCtor({ opacity: 1 });
+//         (doc as any).setGState(gs);
+//       }
+//     } catch {
+//       // ignore
+//     }
+//   }
+// }
 function getPrivateRxDateSource(order: OrderDto) {
   const meta: any = (order as any).meta || {};
   return (
@@ -741,7 +736,7 @@ function writePharmacistDeclarationBlock(
   const radius = 2.5;
 
   // Estimate height (safe), add page if needed
-  const estimatedH = 56;
+  const estimatedH = 65;
   ensureSpace(doc, cursor, estimatedH);
 
   // Outer rounded box
@@ -810,8 +805,6 @@ function writePharmacistDeclarationBlock(
   const sigY = y + 1.2;
 
   doc.setDrawColor(203, 213, 225);
-  doc.setLineWidth(0.4);
-  doc.line(sigLineX1, sigY + 12, sigLineX2, sigY + 12);
 
   if (signatureDataUrl) {
     try {
@@ -872,7 +865,7 @@ function pickFirstNonEmptyString(...values: unknown[]): string | null {
  * - Memoized: prevents duplicate network calls.
  * - Safe: never throws.
  */
- async function getPdfHeaderName(opts?: {
+async function getPdfHeaderName(opts?: {
   fallback?: string; // e.g. "Pharmacy Express"
   useHostnameFallback?: boolean;
 }): Promise<string | null> {
@@ -975,7 +968,7 @@ function drawPdfHeader(doc: jsPDF, header: PdfHeaderState) {
         guessImageFormat(header.logoDataUrl),
         MARGIN_X,
         headerY - 6,
-        26,
+        46,
         12
       );
     } catch {}
@@ -986,7 +979,6 @@ function drawPdfHeader(doc: jsPDF, header: PdfHeaderState) {
   doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
 
   // ✅ use dynamic brandName (fallback to PHARMACY_INFO.name)
-  doc.text(header.brandName || PHARMACY_INFO.name, MARGIN_X + 32, headerY - 2);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
@@ -1841,10 +1833,10 @@ function writePrivateRxTopCards(
     lu.pharmacy_name ||
     lu.pharmacyName ||
     lu.tenant?.name ||
+    lu.firstName ||
     lu.companyName ||
     lu.organisationName ||
     lu.organizationName ||
-    PHARMACY_INFO.name ||
     "—";
 
   const pharmacyAddrLines = formatPharmacyAddressLines(loggedInUser);
@@ -2077,7 +2069,7 @@ function writeDeclarationSection(
   cursor.y += 4;
 
   if (signatureDataUrl) {
-    ensureSpace(doc, cursor, 30);
+    ensureSpace(doc, cursor, 20);
     doc.setFontSize(9);
     doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
     doc.text("Pharmacist signature", MARGIN_X, cursor.y);
@@ -2767,7 +2759,7 @@ async function buildPrivatePrescriptionDoc(
   doc.setFontSize(9);
   doc.setTextColor(PDF_TEXT_MUTED.r, PDF_TEXT_MUTED.g, PDF_TEXT_MUTED.b);
 
-  const footer = `For queries contact ${PHARMACY_INFO.name} on ${PHARMACY_INFO.tel} or ${PHARMACY_INFO.email}.`;
+  const footer = `For queries contact your pharmacist.`;
   const footerLines = doc.splitTextToSize(
     footer,
     getPageWidth(doc) - 2 * MARGIN_X
@@ -2779,6 +2771,61 @@ async function buildPrivatePrescriptionDoc(
   });
 
   return { doc, reference };
+}
+
+function drawDocWatermark(
+  doc: jsPDF,
+  text: string,
+  opts?: { opacity?: number; fontSize?: number }
+) {
+  const pageW = getPageWidth(doc);
+  const pageH = getPageHeight(doc);
+
+  const opacity = opts?.opacity ?? 0.1; // Slightly more visible
+  const fontSize = opts?.fontSize ?? 60;
+
+  // Apply watermark using jsPDF's opacity (with GState)
+  let usedGState = false;
+  try {
+    const GStateCtor = (doc as any).GState;
+    if (GStateCtor && (doc as any).setGState) {
+      const gs = new GStateCtor({ opacity });
+      (doc as any).setGState(gs);
+      usedGState = true;
+    }
+  } catch (err) {
+    usedGState = false;
+  }
+
+  // Set watermark font and text color
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(fontSize);
+
+  if (!usedGState) {
+    // Use a light color for watermark if opacity isn't supported
+    doc.setTextColor(245, 247, 250); // Light grey
+  } else {
+    doc.setTextColor(235, 238, 242); // Slightly darker grey
+  }
+
+  // Add watermark text diagonally at a 35-degree angle
+  doc.text(text, pageW / 2, pageH / 2, {
+    align: "center",
+    angle: 35, // Watermark angle
+  });
+
+  // Reset opacity
+  if (usedGState) {
+    try {
+      const GStateCtor = (doc as any).GState;
+      if (GStateCtor && (doc as any).setGState) {
+        const gs = new GStateCtor({ opacity: 1 });
+        (doc as any).setGState(gs);
+      }
+    } catch (err) {
+      // Handle errors silently
+    }
+  }
 }
 
 async function exportPrivatePrescriptionPdf(
@@ -2793,6 +2840,22 @@ async function exportPrivatePrescriptionPdf(
     pharmacist,
     "Dispense"
   );
+
+  // Get the width and height of the page
+  const pageW = getPageWidth(doc);
+  const pageH = getPageHeight(doc);
+
+  // Set the position for the text at the bottom
+  const margin = 10; // Margin from bottom
+  const startX = margin;
+  const startY = pageH - margin - 20; // Position it 20 units from the bottom
+
+  // Add the "DO NOT DISPENSE" text at the bottom in light grey color
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(30);
+  doc.setTextColor(200, 200, 200); // Light grey color
+  doc.text("DO NOT DISPENSE", pageW / 2, startY, { align: "center" });
+
   const filename = `PrivatePrescription_${reference}.pdf`;
   return finalisePdf(doc, filename, mode);
 }
