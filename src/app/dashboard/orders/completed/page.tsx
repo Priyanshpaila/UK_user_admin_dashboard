@@ -2116,7 +2116,7 @@ function writeRecordSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
   const meta: any = (order as any).meta || {};
   const record = meta.recordOfSupply;
 
-  writeSectionTitle(doc, cursor, "Record of Supply");
+  // writeSectionTitle(doc, cursor, "Record of Supply");
 
   if (!record) {
     ensureSpace(doc, cursor);
@@ -2633,6 +2633,7 @@ async function exportRecordPdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
+  writeGreenTitle(doc, cursor, "Record of Supply");
   writeRecordSection(doc, cursor, order);
 
   const filename = `RecordOfSupply_${reference}.pdf`;
@@ -3438,6 +3439,7 @@ async function exportAllClinicalPdf(
 
   // Render RAF as sectioned Q/A tables (jsPDF)
   await writeRafOnlySection(doc, cursor, items);
+  writeGreenTitle(doc, cursor, "Consultation Details");
   writeRecordSection(doc, cursor, order);
 
   const filename = `Clinical_${reference}.pdf`;
@@ -3739,7 +3741,7 @@ async function writeRafOnlySection(
   cursor: PdfCursor,
   items: RafItem[]
 ) {
-  writeGreenTitle(doc, cursor, "Clinical Assessment");
+  // writeGreenTitle(doc, cursor, "Clinical Assessment");
   cursor.y += 2;
 
   // Group by section (preserve order of first appearance)
@@ -3768,149 +3770,7 @@ async function writeRafOnlySection(
   }
 }
 
-// function drawQaTable(doc: jsPDF, cursor: PdfCursor, rows: RafItem[]) {
-//   const pageW = getPageWidth(doc);
-//   const pageH = getPageHeight(doc);
 
-//   const x = MARGIN_X;
-//   const tableW = pageW - 2 * MARGIN_X;
-
-//   const border = PDF_BORDER;
-//   const headerBg = { r: 232, g: 245, b: 233 }; // light green tint
-
-//   const colQ = tableW * 0.62;
-//   const colA = tableW - colQ;
-
-//   const padX = 2.2;
-//   const padY = 2.5;
-//   const lineH = 4.2;
-//   const headerH = 8;
-
-//   const drawHeader = () => {
-//     ensureSpace(doc, cursor, headerH + 2);
-
-//     // background
-//     doc.setFillColor(headerBg.r, headerBg.g, headerBg.b);
-//     doc.rect(x, cursor.y, tableW, headerH, "F");
-
-//     // border
-//     doc.setDrawColor(border.r, border.g, border.b);
-//     doc.setLineWidth(0.35);
-//     doc.rect(x, cursor.y, tableW, headerH, "S");
-
-//     // vertical divider
-//     doc.line(x + colQ, cursor.y, x + colQ, cursor.y + headerH);
-
-//     // text
-//     doc.setFont("helvetica", "bold");
-//     doc.setFontSize(9.5);
-//     doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-//     doc.text("Question", x + padX, cursor.y + 5.6);
-//     doc.text("Answer", x + colQ + padX, cursor.y + 5.6);
-
-//     cursor.y += headerH;
-//   };
-
-//   if (!rows.length) return;
-
-//   drawHeader();
-
-//   doc.setFont("helvetica", "normal");
-//   doc.setFontSize(9.8);
-//   doc.setTextColor(PDF_TEXT_DARK.r, PDF_TEXT_DARK.g, PDF_TEXT_DARK.b);
-
-//   const bottomMargin = 18;
-
-//   for (const r of rows) {
-//     const q = String(r.question || "—").trim() || "—";
-//     const a = String(r.answer || "No response provided").trim() || "No response provided";
-
-//     const qLines = doc.splitTextToSize(q, colQ - padX * 2) as string[];
-//     const aLines = doc.splitTextToSize(a, colA - padX * 2) as string[];
-
-//     // If a single row is too tall, split it into multiple row blocks
-//     const totalLines = Math.max(qLines.length, aLines.length, 1);
-//     let lineIndex = 0;
-
-//     while (lineIndex < totalLines) {
-//       const remainingH = pageH - bottomMargin - cursor.y;
-
-//       // If not enough space for at least one line, go next page and repeat header
-//       if (remainingH < padY * 2 + lineH + 2) {
-//         addPageWithHeader(doc, cursor);
-//         drawHeader();
-//         continue;
-//       }
-
-//       const maxLinesThisPage = Math.max(
-//         1,
-//         Math.floor((remainingH - padY * 2) / lineH)
-//       );
-
-//       const segQ = qLines.slice(lineIndex, lineIndex + maxLinesThisPage);
-//       const segA = aLines.slice(lineIndex, lineIndex + maxLinesThisPage);
-//       const segLines = Math.max(segQ.length, segA.length, 1);
-
-//       const rowH = padY * 2 + segLines * lineH;
-
-//       // row rect
-//       doc.setDrawColor(border.r, border.g, border.b);
-//       doc.setLineWidth(0.35);
-//       doc.setFillColor(255, 255, 255);
-//       doc.rect(x, cursor.y, tableW, rowH, "FD");
-
-//       // divider
-//       doc.line(x + colQ, cursor.y, x + colQ, cursor.y + rowH);
-
-//       // text
-//       const textTop = cursor.y + padY + 3.2;
-
-//       for (let i = 0; i < segLines; i++) {
-//         const qTxt = segQ[i] || "";
-//         const aTxt = segA[i] || "";
-
-//         if (qTxt) doc.text(qTxt, x + padX, textTop + i * lineH);
-//         if (aTxt) doc.text(aTxt, x + colQ + padX, textTop + i * lineH);
-//       }
-
-//       cursor.y += rowH;
-//       lineIndex += maxLinesThisPage;
-//     }
-//   }
-
-//   cursor.y += 6;
-// }
-
-// function normaliseRafItems(raw: any[], order: OrderDto): RafItem[] {
-//   // Primary: whatever your getRiskAssessmentItems(order) returns
-//   const arr = Array.isArray(raw) ? raw : [];
-
-//   const out: RafItem[] = [];
-//   for (const it of arr) {
-//     const section =
-//       (it?.section ||
-//         it?.group ||
-//         it?.category ||
-//         it?.block ||
-//         it?.title ||
-//         "Clinical Assessment") + "";
-
-//     const question = (it?.question || it?.q || it?.label || it?.name || "") + "";
-//     const answerVal = it?.answer ?? it?.a ?? it?.value ?? it?.response;
-
-//     if (!question.trim()) continue;
-
-//     out.push({
-//       section: section.trim() || "Clinical Assessment",
-//       question: question.trim(),
-//       answer: stringifyRafAnswer(answerVal),
-//     });
-//   }
-
-//   // If your RAF is stored differently, you can extend this fallback later,
-//   // but do NOT change your current pipeline unless you need it.
-//   return out;
-// }
 
 function stringifyRafAnswer(v: any): string {
   if (v === null || v === undefined) return "No response provided";
