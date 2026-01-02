@@ -95,6 +95,47 @@ const slugify = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+/**
+ * Prefer schema type, but keep this for fallback mode when schema isn't available.
+ * RAF keys in DB look like: textarea_qo8bnjr, radio_0x7slnb, date_8kxlfwy, file_hhmtpex ...
+ * We must read only before "_" to get the field type.
+ */
+function getFieldTypeFromRafKey(key: string): QuestionType {
+  const raw = String(key || "").trim().toLowerCase();
+  const i = raw.indexOf("_");
+  const prefix = (i === -1 ? raw : raw.slice(0, i)).trim();
+
+  switch (prefix) {
+    case "text":
+      return "text";
+    case "textarea":
+      return "textarea";
+    case "number":
+      return "number";
+    case "boolean":
+    case "yesno":
+      return "boolean";
+    case "select":
+    case "dropdown":
+      return "select";
+    case "multiselect":
+    case "multi":
+    case "checkboxes":
+    case "checkbox":
+      return "multiselect";
+    case "radio":
+      return "radio";
+    case "date":
+    case "datepicker":
+      return "date";
+    case "file":
+    case "upload":
+      return "file";
+    default:
+      return "text";
+  }
+}
+
 function resolveFileUrl(pathOrUrl?: string | null): string {
   if (!pathOrUrl) return "";
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -498,6 +539,47 @@ function looseEqual(a: any, b: any): boolean {
   return va === vb;
 }
 
+function coerceInitialValueForType(type: QuestionType, v: any) {
+  if (v === undefined || v === null) return type === "multiselect" ? [] : "";
+
+  if (type === "multiselect") {
+    if (Array.isArray(v)) return v;
+    if (typeof v === "string") {
+      // you store "a, b, c" in answer but raw array in raw sometimes
+      return v
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+    return [];
+  }
+
+  if (type === "boolean") {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (["yes", "true", "y", "1"].includes(s)) return true;
+      if (["no", "false", "n", "0"].includes(s)) return false;
+    }
+    return "";
+  }
+
+  if (type === "number") {
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)))
+      return Number(v);
+    return "";
+  }
+
+  if (type === "file") {
+    // keep structured as-is
+    return v;
+  }
+
+  // text/textarea/date/select/radio -> string
+  return typeof v === "string" ? v : String(v ?? "");
+}
+
 /* ------------------------------------------------------------------ */
 /* Main component                                                     */
 /* ------------------------------------------------------------------ */
@@ -573,8 +655,11 @@ export default function RiskAssessmentTab({ order }: Props) {
             const existing = mergedMap.get(r.key);
 
             // If existing is file-like (raw upload objects), do NOT overwrite it with a string
-            if (existing && isFileLikeValue(existing.value) && !isFileLikeValue(r.value)) {
-              // keep existing structured file data
+            if (
+              existing &&
+              isFileLikeValue(existing.value) &&
+              !isFileLikeValue(r.value)
+            ) {
               return;
             }
 
@@ -583,10 +668,7 @@ export default function RiskAssessmentTab({ order }: Props) {
         }
 
         const mergedList = Array.from(mergedMap.values());
-
-        if (!cancelled) {
-          setQaList(mergedList);
-        }
+        if (!cancelled) setQaList(mergedList);
 
         // 3) Load schema (clinic form) if we have formId
         if (formId) {
@@ -596,17 +678,21 @@ export default function RiskAssessmentTab({ order }: Props) {
 
             setForm(f);
 
-            const schemaSource = (f as any).raf_schema ?? (f as any).schema;
+            // ✅ IMPORTANT: your form stores real schema in `schema` (raf_schema is empty in your example)
+            const schemaSource = (f as any).schema ?? (f as any).raf_schema;
             const qs = toQuestionArray(schemaSource);
             if (!cancelled) setQuestions(qs);
           } catch (err: any) {
             console.error("Failed to fetch RAF clinic form", err);
             if (!cancelled) {
-              setError(err?.message || "Failed to load risk assessment form schema.");
+              setError(
+                err?.message || "Failed to load risk assessment form schema."
+              );
             }
           }
         } else if (!qaArray.length) {
-          if (!cancelled) setError("No RAF form or answers found for this order.");
+          if (!cancelled)
+            setError("No RAF form or answers found for this order.");
         }
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load RAF data.");
@@ -638,16 +724,23 @@ export default function RiskAssessmentTab({ order }: Props) {
       if (idx !== -1) {
         const prevVal = prev[idx]?.value;
         if (isFileLikeValue(prevVal) && !isFileLikeValue(nextValue)) {
-          return prev; // ignore accidental stringification
+          return prev;
         }
       }
 
       if (idx === -1) {
-        return [...prev, { key, question: questionLabel || key, value: nextValue }];
+        return [
+          ...prev,
+          { key, question: questionLabel || key, value: nextValue },
+        ];
       }
 
       const clone = [...prev];
-      clone[idx] = { ...clone[idx], question: questionLabel || key, value: nextValue };
+      clone[idx] = {
+        ...clone[idx],
+        question: questionLabel || key,
+        value: nextValue,
+      };
       return clone;
     });
   }
@@ -702,7 +795,17 @@ export default function RiskAssessmentTab({ order }: Props) {
       visibleQuestions.some(
         (q) =>
           !q.isLayoutOnly &&
-          ["text", "textarea", "number", "boolean", "select", "multiselect", "radio", "date", "file"].includes(q.type)
+          [
+            "text",
+            "textarea",
+            "number",
+            "boolean",
+            "select",
+            "multiselect",
+            "radio",
+            "date",
+            "file",
+          ].includes(q.type)
       ),
     [visibleQuestions]
   );
@@ -716,7 +819,7 @@ export default function RiskAssessmentTab({ order }: Props) {
     );
   }
 
-  // Schema mode (dynamic renderer)
+  // ✅ SCHEMA MODE: render EXACTLY according to schema types/options + populate answers
   if (hasSchema && hasSchemaRealQuestions) {
     return (
       <div className="space-y-4">
@@ -740,14 +843,17 @@ export default function RiskAssessmentTab({ order }: Props) {
         <div className="max-h-[560px] overflow-y-auto pr-2 space-y-3">
           {visibleQuestions.map((q, idx) => {
             const fieldKey = q.key || q.id;
+
+            // answers are stored by key in order.meta.formsQA.raf.qa[].key
             const ans = fieldKey ? qaByKey.get(fieldKey) : undefined;
-            const existingVal = ans?.value;
+
+            // populate value with minimal coercion per schema type
+            const existingVal = coerceInitialValueForType(q.type, ans?.value);
 
             // Section header (whenever it changes)
             const prev = visibleQuestions[idx - 1];
             const showSection =
-              q.sectionTitle &&
-              (!prev || prev.sectionTitle !== q.sectionTitle);
+              q.sectionTitle && (!prev || prev.sectionTitle !== q.sectionTitle);
 
             return (
               <React.Fragment key={fieldKey || idx}>
@@ -790,18 +896,19 @@ export default function RiskAssessmentTab({ order }: Props) {
         )}
 
         <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-          <p className="text-sm text-neutral-200 font-medium">
-            Saved RAF answers
-          </p>
+          <p className="text-sm text-neutral-200 font-medium">Saved RAF answers</p>
           <p className="mt-1 text-xs text-neutral-400 leading-relaxed">
             Schema for this form wasn’t available, so answers are shown in a simplified view.
-            File uploads are rendered from <span className="text-neutral-200">raw</span> data and are not editable here.
+            File uploads are rendered from{" "}
+            <span className="text-neutral-200">raw</span> data and are not editable here.
           </p>
         </div>
 
         <div className="max-h-[560px] overflow-y-auto pr-2 space-y-3">
           {qaList.map((qa, idx) => {
             const isFile = isFileLikeValue(qa.value);
+            const inferredType = getFieldTypeFromRafKey(qa.key);
+
             return (
               <div
                 key={qa.key || idx}
@@ -812,12 +919,15 @@ export default function RiskAssessmentTab({ order }: Props) {
                 </p>
 
                 <div className="mt-2">
-                  {isFile ? (
+                  {isFile || inferredType === "file" ? (
                     <FileAttachments value={qa.value} />
                   ) : (
                     <FallbackEditor
+                      type={inferredType}
                       value={qa.value}
-                      onChange={(val) => setValueForKey(qa.key, qa.question, val)}
+                      onChange={(val) =>
+                        setValueForKey(qa.key, qa.question, val)
+                      }
                     />
                   )}
                 </div>
@@ -845,20 +955,21 @@ export default function RiskAssessmentTab({ order }: Props) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Fallback Editor (keeps types stable where possible)                 */
+/* Fallback Editor (when schema isn't available)                       */
 /* ------------------------------------------------------------------ */
 
 function FallbackEditor({
+  type,
   value,
   onChange,
 }: {
+  type: QuestionType;
   value: any;
   onChange: (val: any) => void;
 }) {
   const baseInput =
     "w-full rounded-md bg-neutral-950 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
 
-  // boolean-ish
   const toBool = (v: any): boolean | null => {
     if (typeof v === "boolean") return v;
     if (typeof v === "string") {
@@ -869,8 +980,19 @@ function FallbackEditor({
     return null;
   };
 
-  const boolVal = toBool(value);
-  if (boolVal !== null) {
+  const toArray = (v: any): string[] => {
+    if (Array.isArray(v)) return v.map((x) => String(x));
+    if (typeof v === "string") {
+      return v
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  if (type === "boolean") {
+    const boolVal = toBool(value);
     return (
       <div className="inline-flex gap-2 rounded-full bg-neutral-950/80 p-1 text-sm">
         <button
@@ -895,13 +1017,12 @@ function FallbackEditor({
     );
   }
 
-  // array of primitives -> edit as comma-separated but store array
-  if (Array.isArray(value) && value.every((x) => typeof x !== "object")) {
-    const display = value.join(", ");
+  if (type === "multiselect") {
+    const arr = toArray(value);
     return (
       <textarea
         className={baseInput + " min-h-[80px] resize-y"}
-        value={display}
+        value={arr.join(", ")}
         onChange={(e) =>
           onChange(
             e.target.value
@@ -915,13 +1036,18 @@ function FallbackEditor({
     );
   }
 
-  // number
-  if (typeof value === "number") {
+  if (type === "number") {
+    const v =
+      typeof value === "number"
+        ? String(value)
+        : typeof value === "string"
+        ? value
+        : "";
     return (
       <input
         type="number"
         className={baseInput}
-        value={Number.isFinite(value) ? String(value) : ""}
+        value={v}
         onChange={(e) =>
           onChange(e.target.value === "" ? "" : Number(e.target.value))
         }
@@ -929,11 +1055,34 @@ function FallbackEditor({
     );
   }
 
-  // default text/textarea
+  if (type === "date") {
+    const v = typeof value === "string" ? value : "";
+    return (
+      <input
+        type="date"
+        className={baseInput}
+        value={v}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+
+  if (type === "textarea") {
+    return (
+      <textarea
+        className={baseInput + " min-h-[90px] resize-y"}
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Answer…"
+      />
+    );
+  }
+
   return (
-    <textarea
-      className={baseInput + " min-h-[90px] resize-y"}
-      value={value ?? ""}
+    <input
+      type="text"
+      className={baseInput}
+      value={typeof value === "string" ? value : value ?? ""}
       onChange={(e) => onChange(e.target.value)}
       placeholder="Answer…"
     />
@@ -1009,6 +1158,7 @@ function FileAttachments({ value }: { value: any }) {
 
 /* ------------------------------------------------------------------ */
 /* Question row renderer (schema mode)                                 */
+/* Uses schema type/options + populates from qaByKey                   */
 /* ------------------------------------------------------------------ */
 
 function QuestionRow({
@@ -1037,9 +1187,7 @@ function QuestionRow({
     return (
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-2 text-sm font-semibold text-neutral-100">
-            {q.label}
-          </p>
+          <p className="mb-2 text-sm font-semibold text-neutral-100">{q.label}</p>
         )}
         {q.contentHtml ? (
           <div
@@ -1060,9 +1208,7 @@ function QuestionRow({
     return (
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-2 text-sm font-semibold text-neutral-100">
-            {q.label}
-          </p>
+          <p className="mb-2 text-sm font-semibold text-neutral-100">{q.label}</p>
         )}
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -1072,13 +1218,9 @@ function QuestionRow({
             className="max-h-72 w-auto rounded-lg border border-neutral-800 object-contain bg-neutral-950"
           />
         ) : (
-          <p className="text-sm text-neutral-500">
-            No image configured for this block.
-          </p>
+          <p className="text-sm text-neutral-500">No image configured for this block.</p>
         )}
-        {q.helpText && (
-          <p className="mt-2 text-sm text-neutral-400">{q.helpText}</p>
-        )}
+        {q.helpText && <p className="mt-2 text-sm text-neutral-400">{q.helpText}</p>}
       </div>
     );
   }
@@ -1122,10 +1264,9 @@ function QuestionRow({
         {q.label}{" "}
         {q.required && <span className="text-rose-400 font-semibold">*</span>}
       </label>
+
       {q.helpText && (
-        <p className="mb-3 text-sm text-neutral-400 leading-relaxed">
-          {q.helpText}
-        </p>
+        <p className="mb-3 text-sm text-neutral-400 leading-relaxed">{q.helpText}</p>
       )}
 
       {q.type === "text" && (
