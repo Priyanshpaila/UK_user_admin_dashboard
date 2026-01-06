@@ -1167,7 +1167,6 @@ const ADVICE_LIST_STYLE: "bullets" | "numbered" = "bullets"; // or "numbered"
 function extractAdvicePoints(order: OrderDto): string[] {
   const meta: any = (order as any).meta || {};
   const advice = meta.pharmacistAdvice;
-  console.log("Extracting advice from:", advice);
   const adviceState: Record<string, any[]> = advice?.adviceState || {};
 
   const points: string[] = [];
@@ -1718,7 +1717,7 @@ function formatPharmacyAddressLines(loggedInUser?: UserDto | null): string[] {
     .filter(Boolean);
 }
 
-function writePrivateRxTopCards(
+async function writePrivateRxTopCards(
   doc: jsPDF,
   cursor: PdfCursor,
   order: OrderDto,
@@ -1753,31 +1752,19 @@ function writePrivateRxTopCards(
 
   // ---------------- Logged-in user (left card) ----------------
   const lu: any = loggedInUser || {};
+  const home = await getDynamicHomePageApi("home");
 
   const pharmacyName =
-    lu.pharmacy_name ||
-    lu.pharmacyName ||
-    lu.tenant?.name ||
+    home?.navbar?.companyName ||
     lu.firstName ||
-    lu.companyName ||
-    lu.organisationName ||
-    lu.organizationName ||
     "—";
 
-  const pharmacyAddrLines = formatPharmacyAddressLines(loggedInUser);
-  const pharmacyAddress = pharmacyAddrLines.length
-    ? pharmacyAddrLines.join(", ")
-    : (PHARMACY_INFO.addressLines || []).join(", ") || "—";
+  // const pharmacyAddrLines = formatPharmacyAddressLines(loggedInUser);
+  const pharmacyAddress = home?.navbar?.companyAddress || "—";
 
-  const pharmacyTel =
-    lu.tel ||
-    lu.phone ||
-    lu.phoneNumber ||
-    lu.mobile ||
-    PHARMACY_INFO.tel ||
-    "—";
+  const pharmacyTel = home?.navbar?.companyPhone || "—";
 
-  const pharmacyEmail = lu.email || PHARMACY_INFO.email || "—";
+  const pharmacyEmail = home?.navbar?.supportEmail || "—";
 
   const leftRows: PdfInfoRow[] = [
     { label: "Name", value: pharmacyName },
@@ -2118,8 +2105,8 @@ function finalisePdf(
 
 function getLoginUrl() {
   if (typeof window === "undefined")
-    return "https://pharmacy-express.co.uk/account";
-  return `${window.location.origin}/account`;
+    return "https://safescript.co.uk/";
+  return `${window.location.origin}/`;
 }
 
 async function exportInvoicePdf(
@@ -2137,7 +2124,7 @@ async function exportInvoicePdf(
       new Date().toISOString()
   );
 
-  const subtitle = `Invoice No: ${invoiceNo}  |  VAT No: ${PHARMACY_INFO.vatNo}  |  Date: ${invoiceDate}`;
+  const subtitle = `Invoice No: ${invoiceNo}   |  Date: ${invoiceDate}`;
 
   const [logoDataUrl, brandName] = await Promise.all([
     getPdfLogoDataUrl(),
@@ -2557,7 +2544,7 @@ async function exportRecordPdf(
 
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
-  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
+  await writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
   writeGreenTitle(doc, cursor, "Record of Supply");
   writeRecordSection(doc, cursor, order);
 
@@ -2617,7 +2604,7 @@ async function buildPrivatePrescriptionDoc(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // ✅ Restore patient + order details block
-  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
+  await writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
 
   // ✅ Medicines
   writeSectionTitle(doc, cursor, "Medicine Prescribed");
@@ -3340,7 +3327,7 @@ async function exportAllClinicalPdf(
   const cursor: PdfCursor = { y: TOP_CONTENT_Y };
 
   // Keep existing top cards
-  writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
+  await writePrivateRxTopCards(doc, cursor, order, user, pharmacist);
 
   // RAF items (your existing normaliser)
   const items = normaliseRafItems(getRiskAssessmentItems(order), order);
@@ -3737,7 +3724,6 @@ function PatientProfileCard({ user }: { user: UserDto | null }) {
   }
 
   const u: any = user;
-  console.log("Rendering patient profile card for user:", u);
   const fullName =
     u.name ||
     u.fullName ||
@@ -4429,9 +4415,7 @@ export default function Page() {
           kind
         ).toLowerCase()} for your recent consultation (${
           (order as any).service_name || "service"
-        }) with ${PHARMACY_INFO.name}.\n\n` +
-        `If you have any questions, please contact us on ${PHARMACY_INFO.tel} or reply to this email.\n\n` +
-        `Kind regards,\n${PHARMACY_INFO.name}`;
+        }) ` ;
 
       const loginUrl = getLoginUrl();
       const home = await getDynamicHomePageApi("home");

@@ -1435,6 +1435,8 @@ export type DynamicNavbarContent = {
   logoAlt?: string;
   searchPlaceholder?: string;
   companyName?: string;
+  companyAddress?: string;
+  companyPhone?: string;
   supportEmail?: string;
   navLinks?: {
     label: string;

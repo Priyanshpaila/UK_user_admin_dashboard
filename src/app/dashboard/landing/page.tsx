@@ -46,6 +46,8 @@ type HomeBuilderState = {
     logoAlt: string;
     companyName: string;
     supportEmail: string;
+    companyAddress: string;
+    companyPhone: string;
     searchPlaceholder: string;
     icon?: string;
     navLinks: NavLink[];
@@ -295,6 +297,10 @@ export default function LandingBuilderPage() {
           logoUrl: content.navbar?.logoUrl ?? "/logo.png",
           logoAlt: content.navbar?.logoAlt ?? "Pharmacy Express logo",
           companyName: content.navbar?.companyName ?? "Pharmacy Express",
+          companyAddress:
+            content.navbar?.companyAddress ??
+            "Pharmacy Express, Unit 4 The Office Campus, Paragon Business Park, Wakefield, West Yorkshire WF1 2UY",
+          companyPhone: content.navbar?.companyPhone ?? "01924 971414",
           supportEmail: content.navbar?.supportEmail ?? "info@safescript.co.uk",
           icon: content.navbar?.icon ?? "",
           searchPlaceholder:
@@ -841,7 +847,7 @@ export default function LandingBuilderPage() {
                 />
               </div>
               {/* Favicon / browser tab icon */}
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
+              <div className="mt-4 grid gap-4 md:grid-cols-4">
                 <div className="space-y-2">
                   <TextInput
                     label="Favicon / browser icon URL"
@@ -885,28 +891,57 @@ export default function LandingBuilderPage() {
                       Recommended: square PNG, 32×32 or 64×64.
                     </p>
                   </div>
-                  <TextInput
-                    label="Company name"
-                    value={data.navbar.companyName}
-                    onChange={(e) =>
-                      updateSection("navbar", (s) => ({
-                        ...s,
-                        companyName: e.target.value,
-                      }))
-                    }
-                  />
-                  <TextInput
-                    label="Support email"
-                    value={data.navbar.supportEmail}
-                    onChange={(e) =>
-                      updateSection("navbar", (s) => ({
-                        ...s,
-                        supportEmail: e.target.value,
-                      }))
-                    }
-                  />
+
+
                 </div>
               </div>
+
+                                <div className="flex justify-between mt-4 w-full">
+                    <TextInput
+                      label="Pharmacy name"
+                      value={data.navbar.companyName}
+                      onChange={(e) =>
+                        updateSection("navbar", (s) => ({
+                          ...s,
+                          companyName: e.target.value,
+                        }))
+                      }
+                      className="w-full"
+                    />
+                    <TextInput
+                      label="Paharmacy Phone"
+                      value={data.navbar.companyPhone}
+                      onChange={(e) =>
+                        updateSection("navbar", (s) => ({
+                          ...s,
+                          companyPhone: e.target.value,
+                        }))
+                      }
+                      className="w-full"
+                    />
+                    <TextInput
+                      label="Pharmacy Address"
+                      value={data.navbar.companyAddress}
+                      onChange={(e) =>
+                        updateSection("navbar", (s) => ({
+                          ...s,
+                          companyAddress: e.target.value,
+                        }))
+                      }
+                      className="w-full"
+                    />
+                    <TextInput
+                      label="Support email"
+                      value={data.navbar.supportEmail}
+                      onChange={(e) =>
+                        updateSection("navbar", (s) => ({
+                          ...s,
+                          supportEmail: e.target.value,
+                        }))
+                      }
+                      className="w-full"
+                    />
+                  </div>
 
               <div className="mt-4 space-y-2">
                 <Label>Navigation links</Label>

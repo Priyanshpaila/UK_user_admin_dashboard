@@ -109,29 +109,16 @@ async function getPharmacyDetails(): Promise<PharmacyDetails> {
 
   try {
     const me: any = await getCurrentUserApi();
+    const home = await getDynamicHomePageApi("home");
 
     // Adjust mapping based on how your backend stores pharmacy info.
-    const name =
-      me?.pharmacy_name ||
-      me?.firstName ||
-      me?.pharmacyName ||
-      me?.companyName ||
-      me?.tenant_name ||
-      me?.name ||
-      me?.fullName ||
-      fallbackName;
+    const name = home?.navbar?.companyName || me?.firstName || fallbackName;
 
-    const addressLines = buildAddressFromUser(me);
+    const addr = home?.navbar?.companyAddress || "—";
 
-    const phone =
-      me?.pharmacy_phone ||
-      me?.pharmacyPhone ||
-      me?.phone ||
-      me?.phoneNumber ||
-      "";
+    const phone = home?.navbar?.companyPhone || "—";
 
-    const email =
-      me?.pharmacy_email || me?.pharmacyEmail || me?.email || fallbackEmail;
+    const email = home?.navbar?.supportEmail || "—";
 
     const gphcNumber = me?.gphc_number || me?.gphcNumber || "";
     const vatNumber = me?.vat_number || me?.vatNumber || fallbackVat;
@@ -139,7 +126,7 @@ async function getPharmacyDetails(): Promise<PharmacyDetails> {
     // If user doesn’t actually have pharmacy fields, we still return minimal.
     return {
       name: String(name || fallbackName),
-      addressLines: addressLines.length ? addressLines : [],
+      addressLines: splitAddressLines(String(addr || "")),
       phone: phone ? String(phone) : undefined,
       email: email ? String(email) : undefined,
       gphcNumber: gphcNumber ? String(gphcNumber) : undefined,
@@ -946,8 +933,6 @@ async function generateInvoicePdfFromOrder(
       );
     } catch {}
   }
-
-
 
   doc.setFontSize(20);
   doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
