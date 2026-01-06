@@ -1164,40 +1164,52 @@ function getOrderedItemsForPdf(order: OrderDto): PdfOrderedItem[] {
 type AdvicePoint = string;
 const ADVICE_LIST_STYLE: "bullets" | "numbered" = "bullets"; // or "numbered"
 
-function extractAdvicePoints(order: OrderDto): AdvicePoint[] {
+function extractAdvicePoints(order: OrderDto): string[] {
   const meta: any = (order as any).meta || {};
   const advice = meta.pharmacistAdvice;
+  console.log("Extracting advice from:", advice);
   const adviceState: Record<string, any[]> = advice?.adviceState || {};
 
   const points: string[] = [];
 
+  // Helper function to check if a line is a checkbox
   const isCheckboxLine = (line: string) => /^checkbox\b/i.test(line.trim());
 
+  // Helper function to strip prefixes like bullets or numbers
   const stripPrefix = (line: string) =>
     line
       .replace(/^[•\u2022-]\s*/g, "")
       .replace(/^\(?\d+[\).\]]\s*/g, "")
       .trim();
 
+  // Extracting advice points from the adviceState
   for (const arr of Object.values(adviceState || {})) {
     for (const raw of arr || []) {
       const s = String(raw ?? "")
         .replace(/\r/g, "")
         .trim();
+
       if (!s) continue;
 
-      const lines = s
-        .split(/\n+/)
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .filter((x) => !isCheckboxLine(x))
-        .map(stripPrefix)
-        .filter(Boolean);
+      // If the line is a checkbox, treat the entire content as one single point
+      if (isCheckboxLine(s)) {
+        points.push(s);  // Treat as one point and add to the list
+        continue; // Skip further processing for this checkbox
+      }
 
-      points.push(...lines);
+      // Otherwise, process normal lines
+      const lines = s
+        .split(/\n+/) // Split by newline to handle multi-line entries
+        .map((x) => x.trim())
+        .filter(Boolean) // Remove empty lines
+        .map(stripPrefix) // Strip unnecessary prefixes
+        .filter(Boolean); // Remove any empty lines after stripping
+
+      points.push(lines.join(' ')); // Join the lines into a single string
     }
   }
 
+  // Remove duplicates and return the points
   const seen = new Set<string>();
   return points.filter((p) => {
     const k = p.trim();
@@ -1206,6 +1218,7 @@ function extractAdvicePoints(order: OrderDto): AdvicePoint[] {
     return true;
   });
 }
+
 
 function writeAdviceSection(doc: jsPDF, cursor: PdfCursor, order: OrderDto) {
   const points = extractAdvicePoints(order);
