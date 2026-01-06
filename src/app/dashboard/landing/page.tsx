@@ -44,6 +44,8 @@ type HomeBuilderState = {
   navbar: {
     logoUrl: string;
     logoAlt: string;
+    companyName: string;
+    supportEmail: string;
     searchPlaceholder: string;
     icon?: string;
     navLinks: NavLink[];
@@ -292,6 +294,8 @@ export default function LandingBuilderPage() {
         navbar: {
           logoUrl: content.navbar?.logoUrl ?? "/logo.png",
           logoAlt: content.navbar?.logoAlt ?? "Pharmacy Express logo",
+          companyName: content.navbar?.companyName ?? "Pharmacy Express",
+          supportEmail: content.navbar?.supportEmail ?? "info@safescript.co.uk",
           icon: content.navbar?.icon ?? "",
           searchPlaceholder:
             content.navbar?.searchPlaceholder ??
@@ -881,6 +885,26 @@ export default function LandingBuilderPage() {
                       Recommended: square PNG, 32×32 or 64×64.
                     </p>
                   </div>
+                  <TextInput
+                    label="Company name"
+                    value={data.navbar.companyName}
+                    onChange={(e) =>
+                      updateSection("navbar", (s) => ({
+                        ...s,
+                        companyName: e.target.value,
+                      }))
+                    }
+                  />
+                  <TextInput
+                    label="Support email"
+                    value={data.navbar.supportEmail}
+                    onChange={(e) =>
+                      updateSection("navbar", (s) => ({
+                        ...s,
+                        supportEmail: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
               </div>
 

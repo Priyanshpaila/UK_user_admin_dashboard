@@ -50,97 +50,9 @@ function toMinorCurrency(v: any): number | null {
   if (Number.isInteger(n)) return n;
   return Math.round(n * 100);
 }
-function extractOrderedItems(order: any): OrderedItemRow[] {
-  const candidates =
-    order?.items ??
-    order?.order_items ??
-    order?.orderItems ??
-    order?.lines ??
-    order?.products ??
-    order?.medicines ??
-    order?.medicine_items ??
-    order?.medicineItems ??
-    order?.cart?.items ??
-    [];
 
-  if (!Array.isArray(candidates)) return [];
 
-  return candidates
-    .map((it: any) => {
-      const name =
-        it?.medicine_name ||
-        it?.medicineName ||
-        it?.product_name ||
-        it?.productName ||
-        it?.name ||
-        it?.title ||
-        it?.medicine?.name ||
-        it?.product?.name ||
-        "";
 
-      const variation =
-        it?.variation_title ||
-        it?.variationTitle ||
-        it?.variation_name ||
-        it?.variationName ||
-        it?.variation?.title ||
-        it?.variant ||
-        it?.strength ||
-        it?.dose ||
-        "";
-
-      const qtyRaw = it?.qty ?? it?.quantity ?? it?.count ?? it?.units ?? 1;
-      const qty = Math.max(1, Number(qtyRaw) || 1);
-
-      const unitMinor =
-        toMinorCurrency(
-          it?.unit_price_minor ??
-            it?.unitPriceMinor ??
-            it?.unit_price ??
-            it?.unitPrice ??
-            it?.price_minor ??
-            it?.priceMinor ??
-            it?.price
-        ) ?? null;
-
-      const totalMinor =
-        unitMinor !== null ? Math.round(unitMinor * qty) : null;
-
-      const cleanName = String(name).trim();
-      if (!cleanName) return null;
-
-      return {
-        name: cleanName,
-        variation: String(variation || "").trim() || undefined,
-        qty,
-        unitPriceMinor: unitMinor,
-        totalMinor,
-      } as OrderedItemRow;
-    })
-    .filter(Boolean) as OrderedItemRow[];
-}
-function addWrappedText(
-  doc: jsPDF,
-  text: string,
-  x: number,
-  y: number,
-  maxWidth: number,
-  lineHeight = 4.5
-) {
-  const lines = doc.splitTextToSize(text || "—", maxWidth);
-  doc.text(lines, x, y);
-  return y + lines.length * lineHeight;
-}
-
-function formatMoneyFromMinorSafe(minor: number | null | undefined): string {
-  if (minor === null || minor === undefined) return "—";
-
-  // If you already have formatMoneyFromMinor, use that instead.
-  // return formatMoneyFromMinor(minor);
-
-  const pounds = (minor / 100).toFixed(2);
-  return `£${pounds}`;
-}
 
 type PdfBranding = {
   logoDataUrl: string | null; // derived from logoAlt
@@ -2842,7 +2754,6 @@ async function exportPrivatePrescriptionPdf(
     "Dispense"
   );
 
-
   // Get the width and height of the page
   const pageW = getPageWidth(doc);
   const pageH = getPageHeight(doc);
@@ -3770,8 +3681,6 @@ async function writeRafOnlySection(
   }
 }
 
-
-
 function stringifyRafAnswer(v: any): string {
   if (v === null || v === undefined) return "No response provided";
   if (typeof v === "boolean") return v ? "Yes" : "No";
@@ -4512,6 +4421,10 @@ export default function Page() {
         `Kind regards,\n${PHARMACY_INFO.name}`;
 
       const loginUrl = getLoginUrl();
+      const home = await getDynamicHomePageApi("home");
+      const companyName = home?.navbar?.companyName ?? null;
+
+      const supportEmail = home?.navbar?.supportEmail ?? null;
 
       await sendEmailApi({
         to: email,
@@ -4522,7 +4435,8 @@ export default function Page() {
           name: patientName || "Patient",
           email,
           loginUrl,
-          supportEmail: PHARMACY_INFO.email,
+          supportEmail: supportEmail,
+          companyName: companyName,
           year: new Date().getFullYear(),
           message,
         },
@@ -4639,6 +4553,10 @@ export default function Page() {
 
       const ccList = parseEmails(emailCc);
       const bccList = parseEmails(emailBcc);
+      const home = await getDynamicHomePageApi("home");
+      const companyName = home?.navbar?.companyName ?? null;
+
+      const supportEmail = home?.navbar?.supportEmail ?? null;
 
       await sendEmailApi({
         to: toList,
@@ -4651,7 +4569,8 @@ export default function Page() {
           name: friendlyName,
           email: toList.join(", "),
           loginUrl,
-          supportEmail: PHARMACY_INFO.email,
+          supportEmail: supportEmail,
+          companyName: companyName,
           year: new Date().getFullYear(),
           message: emailMessage,
         },

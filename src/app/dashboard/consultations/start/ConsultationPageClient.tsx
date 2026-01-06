@@ -7,6 +7,9 @@ import {
   updateOrderStatusApi,
   sendEmailApi,
   type OrderDto,
+  getDynamicHomePageApi,
+  getCurrentUserApi,
+  getBackendBase,
 } from "../../../../api";
 import {
   Loader2,
@@ -42,6 +45,191 @@ function formatDateTime(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+type PharmacyDetails = {
+  name: string;
+  addressLines: string[]; // split lines for PDF
+  phone?: string;
+  email?: string;
+  gphcNumber?: string;
+  vatNumber?: string;
+};
+
+function splitAddressLines(raw?: string): string[] {
+  if (!raw) return [];
+  // allow commas or newlines
+  return raw
+    .split(/\n|,/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function buildAddressFromUser(u: any): string[] {
+  // If your "pharmacy profile" is stored on user object, adapt these keys.
+  // Prefer a single string like `pharmacy_address`, else assemble from pieces.
+  const direct =
+    u?.pharmacy_address ||
+    u?.pharmacyAddress ||
+    u?.address ||
+    u?.address_line1 ||
+    "";
+
+  const directLines = splitAddressLines(direct);
+  if (directLines.length) return directLines;
+
+  // assemble common address fields (if you store them)
+  const parts = [
+    u?.address_line1,
+    u?.address_line2,
+    u?.city,
+    u?.county,
+    u?.postalcode,
+    u?.country,
+  ]
+    .map((x: any) => String(x ?? "").trim())
+    .filter(Boolean);
+
+  return parts;
+}
+
+/**
+ * Fetch pharmacy details from current user (tenant context).
+ * Fallback order:
+ *  1) getCurrentUserApi() (preferred)
+ *  2) getDynamicHomePageApi("home") (branding)
+ *  3) env defaults
+ */
+async function getPharmacyDetails(): Promise<PharmacyDetails> {
+  // env fallbacks (you can rename keys as you like)
+  const fallbackVat = process.env.NEXT_PUBLIC_VAT_NUMBER || "274797643";
+  const fallbackEmail =
+    process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "info@pharmacy-express.co.uk";
+  const fallbackName = "Pharmacy";
+
+  try {
+    const me: any = await getCurrentUserApi();
+
+    // Adjust mapping based on how your backend stores pharmacy info.
+    const name =
+      me?.pharmacy_name ||
+      me?.firstName ||
+      me?.pharmacyName ||
+      me?.companyName ||
+      me?.tenant_name ||
+      me?.name ||
+      me?.fullName ||
+      fallbackName;
+
+    const addressLines = buildAddressFromUser(me);
+
+    const phone =
+      me?.pharmacy_phone ||
+      me?.pharmacyPhone ||
+      me?.phone ||
+      me?.phoneNumber ||
+      "";
+
+    const email =
+      me?.pharmacy_email || me?.pharmacyEmail || me?.email || fallbackEmail;
+
+    const gphcNumber = me?.gphc_number || me?.gphcNumber || "";
+    const vatNumber = me?.vat_number || me?.vatNumber || fallbackVat;
+
+    // If user doesn’t actually have pharmacy fields, we still return minimal.
+    return {
+      name: String(name || fallbackName),
+      addressLines: addressLines.length ? addressLines : [],
+      phone: phone ? String(phone) : undefined,
+      email: email ? String(email) : undefined,
+      gphcNumber: gphcNumber ? String(gphcNumber) : undefined,
+      vatNumber: vatNumber ? String(vatNumber) : undefined,
+    };
+  } catch (err) {
+    // fallback to Dynamic Home Page (tenant branding)
+    try {
+      const home: any = await getDynamicHomePageApi("home");
+      const name =
+        home?.navbar?.companyName ||
+        home?.navbar?.brandName ||
+        home?.navbar?.logoAlt ||
+        fallbackName;
+
+      const email =
+        home?.navbar?.supportEmail || home?.supportEmail || fallbackEmail;
+
+      // if you store address/phone in footer.contact (adapt as needed)
+      const addr =
+        home?.footer?.contact?.addressLabel || home?.contact?.address || "";
+
+      const phone =
+        home?.footer?.contact?.phoneLabel || home?.contact?.phone || "";
+
+      return {
+        name: String(name || fallbackName),
+        addressLines: splitAddressLines(String(addr || "")),
+        phone: phone ? String(phone) : undefined,
+        email: email ? String(email) : undefined,
+        vatNumber: fallbackVat,
+      };
+    } catch {
+      // hard fallback
+      return {
+        name: fallbackName,
+        addressLines: [],
+        phone: undefined,
+        email: fallbackEmail,
+        vatNumber: fallbackVat,
+      };
+    }
+  }
+}
+
+/* ---------------- PDF branding helpers ---------------- */
+
+type PdfBranding = {
+  brandName: string;
+  logoDataUrl?: string | null;
+};
+
+function sanitizeHeaderName(v?: string | null): string {
+  if (!v) return "";
+  return v
+    .replace(/logo|image/gi, "")
+    .replace(/\.(png|jpg|jpeg|svg|webp)$/gi, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+}
+
+async function getPdfBranding(): Promise<PdfBranding> {
+  try {
+    const home: any = await getDynamicHomePageApi("home");
+
+    const rawName =
+      home?.navbar?.headerName ||
+      home?.navbar?.brandName ||
+      home?.navbar?.logoAlt ||
+      "";
+
+    const brandName =
+      sanitizeHeaderName(rawName) ||
+      sanitizeHeaderName(home?.name) ||
+      "Pharmacy";
+
+    let logoDataUrl: string | null = null;
+
+    const logoPath = home?.navbar?.logoUrl || home?.branding?.logo || null;
+
+    if (logoPath) {
+      const resolvedUrl = resolveImageUrl(logoPath);
+      logoDataUrl = await loadImageAsDataUrl(resolvedUrl);
+    }
+
+    return { brandName, logoDataUrl };
+  } catch (err) {
+    console.warn("PDF branding fallback used", err);
+    return { brandName: "Pharmacy", logoDataUrl: null };
+  }
 }
 
 function getDisplayPatientName(order: OrderDto): string {
@@ -250,6 +438,17 @@ function extractPharmacistDeclarationForPdf(
     signatureUrl,
   };
 }
+function resolveImageUrl(imagePath?: string | null): string {
+  if (!imagePath) return "";
+  if (/^https?:\/\//i.test(imagePath)) return imagePath;
+
+  const normalizedPath = imagePath.startsWith("/")
+    ? imagePath
+    : `/${imagePath}`;
+  const baseWithApi = getBackendBase(); // often ends with /api
+  const cleanBase = baseWithApi.replace(/\/api\/?$/, "");
+  return `${cleanBase}${normalizedPath}`;
+}
 
 async function loadImageAsDataUrl(url?: string | null): Promise<string | null> {
   if (!url || typeof window === "undefined") return null;
@@ -330,12 +529,21 @@ async function generateRecordOfSupplyPdf(
   const headerTopY = 40;
 
   // Brand text
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(15, 23, 42);
-  doc.text("PHARMACY", margin, headerTopY);
-  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
-  doc.text("EXPRESS", margin + 98, headerTopY);
+  const { brandName, logoDataUrl } = await getPdfBranding();
+
+  // Logo (if present)
+  if (logoDataUrl) {
+    try {
+      doc.addImage(
+        logoDataUrl,
+        undefined as any,
+        margin,
+        headerTopY - 18,
+        48,
+        18
+      );
+    } catch {}
+  }
 
   // Title
   doc.setFontSize(20);
@@ -394,21 +602,22 @@ async function generateRecordOfSupplyPdf(
     doc.text(label, xLeft, yLeft);
 
     doc.setFont("helvetica", "normal");
-    const lines = doc.splitTextToSize(String(v || ""), cardWidth - labelWidthLeft - 24);
+    const lines = doc.splitTextToSize(
+      String(v || ""),
+      cardWidth - labelWidthLeft - 24
+    );
     doc.text(lines, xLeft + labelWidthLeft, yLeft);
 
     yLeft += lineHeight * Math.max(1, lines.length);
   };
-
-  putRowLeft("Name:", "Pharmacy Express");
-  putRowLeft("Address:", [
-    "Unit 4, The Office Campus",
-    "Paragon Business Park,",
-    "Wakefield, West Yorkshire",
-    "WF1 2UY",
-  ]);
-  putRowLeft("Tel:", "01924 971414");
-  putRowLeft("Email:", "info@pharmacy-express.co.uk");
+  const pharmacy = await getPharmacyDetails();
+  putRowLeft("Name:", pharmacy.name || "—");
+  putRowLeft(
+    "Address:",
+    pharmacy.addressLines?.length ? pharmacy.addressLines : "—"
+  );
+  if (pharmacy.phone) putRowLeft("Tel:", pharmacy.phone);
+  if (pharmacy.email) putRowLeft("Email:", pharmacy.email);
 
   // Patient Information (right)
   const rightX = margin + cardWidth + cardGap;
@@ -441,7 +650,10 @@ async function generateRecordOfSupplyPdf(
     doc.text(label, xRight, yRight);
 
     doc.setFont("helvetica", "normal");
-    const lines = doc.splitTextToSize(String(v || ""), cardWidth - labelWidthRight - 24);
+    const lines = doc.splitTextToSize(
+      String(v || ""),
+      cardWidth - labelWidthRight - 24
+    );
     doc.text(lines, xRight + labelWidthRight, yRight);
 
     yRight += lineHeight * Math.max(1, lines.length);
@@ -589,17 +801,15 @@ async function generateRecordOfSupplyPdf(
   const lineY = sigLabelY + 4;
   const lineStartX = valueX;
   const lineEndX = margin + contentWidth - 40;
-
   doc.setDrawColor(148, 163, 184);
   doc.line(lineStartX, lineY, lineEndX, lineY);
-
   // Signature image above the line (if available)
   if (signatureUrl) {
-    const dataUrl = await loadImageAsDataUrl(signatureUrl);
+    const dataUrl = await resolveImageUrl(signatureUrl);
     if (dataUrl) {
-      const sigHeight = 32;
+      const sigHeight = 3;
       const sigWidth = 140;
-      const sigY = lineY - sigHeight + 2;
+      const sigY = lineY - sigHeight + 6;
       const sigX = lineStartX;
 
       try {
@@ -622,7 +832,7 @@ async function generateRecordOfSupplyPdf(
   doc.setFontSize(8);
   doc.setTextColor(156, 163, 175);
   doc.text(
-    "This record of supply was generated from your consultation at Pharmacy Express.",
+    `This record of supply was generated from your consultation at ${brandName}.`,
     margin,
     footerY,
     { maxWidth: contentWidth }
@@ -639,7 +849,6 @@ async function generateRecordOfSupplyPdf(
   }
   return file;
 }
-
 
 async function generateInvoicePdfFromOrder(
   order: OrderDto,
@@ -722,12 +931,23 @@ async function generateInvoicePdfFromOrder(
 
   const headerTopY = 40;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(15, 23, 42);
-  doc.text("PHARMACY", margin, headerTopY);
-  doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
-  doc.text("EXPRESS", margin + 98, headerTopY);
+  const { brandName, logoDataUrl } = await getPdfBranding();
+
+  // Logo (if present)
+  if (logoDataUrl) {
+    try {
+      doc.addImage(
+        logoDataUrl,
+        undefined as any,
+        margin,
+        headerTopY - 18,
+        48,
+        18
+      );
+    } catch {}
+  }
+
+
 
   doc.setFontSize(20);
   doc.setTextColor(GREEN.r, GREEN.g, GREEN.b);
@@ -790,15 +1010,18 @@ async function generateInvoicePdfFromOrder(
     y += lineHeight * Math.max(1, lines.length);
   };
 
-  putRowLeft("Name", "Pharmacy Express");
-  putRowLeft("Address", [
-    "Unit 4, The Office Campus",
-    "Paragon Business Park,",
-    "Wakefield, West Yorkshire",
-    "WF1 2UY",
-  ]);
-  putRowLeft("Tel", "01924 971414");
-  putRowLeft("Email", "info@pharmacy-express.co.uk");
+  const pharmacy = await getPharmacyDetails();
+
+  putRowLeft("Name:", pharmacy.name || "—");
+
+  // Address lines (if missing, show —)
+  putRowLeft(
+    "Address:",
+    pharmacy.addressLines?.length ? pharmacy.addressLines : "—"
+  );
+
+  if (pharmacy.phone) putRowLeft("Tel:", pharmacy.phone);
+  if (pharmacy.email) putRowLeft("Email:", pharmacy.email);
 
   // Bill To content
   let yRight = cardsTop + 38;
@@ -947,7 +1170,7 @@ async function generateInvoicePdfFromOrder(
   const footerY = pageHeight - 32;
   doc.setFontSize(9);
   doc.setTextColor(150, 150, 150);
-  doc.text("Thank you for choosing Pharmacy Express.", margin, footerY);
+  doc.text(`Thank you for choosing ${brandName}.`, margin, footerY);
 
   const blob = doc.output("blob");
   const fileName = `${ref}-invoice.pdf`;
@@ -960,7 +1183,6 @@ async function generateInvoicePdfFromOrder(
   }
   return file;
 }
-
 
 async function sendConsultationSummaryEmail(
   order: OrderDto,
