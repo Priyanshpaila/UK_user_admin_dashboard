@@ -759,7 +759,7 @@ export default function CreateServicePage() {
         "max_bookable_quantity",
         String(payload.max_bookable_quantity)
       );
-      fd.append("allow_reorder", String(payload.allow_reorder));
+      fd.append("allow_reorder", payload.allow_reorder ? "true" : "false");
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
 

@@ -1544,7 +1544,8 @@ export default function EditServicePage() {
       fd.append("description", payload.description);
       fd.append("status", payload.status);
       fd.append("max_bookable_quantity", String(payload.max_bookable_quantity));
-      fd.append("allow_reorder", String(payload.allow_reorder));
+      fd.append("allow_reorder", payload.allow_reorder ? "true" : "false");
+
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
 
@@ -1564,15 +1565,15 @@ export default function EditServicePage() {
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(txt || "Failed to save medicine");
+        throw new Error(txt || "Failed to save product");
       }
 
       await loadMeds({ forceLinked: true });
-      toast.success(editingMed ? "Medicine updated" : "Medicine created");
+      toast.success(editingMed ? "product updated" : "product created");
       closeMedModal();
     } catch (err: any) {
       console.error(err);
-      setMedError(err?.message || "Failed to save medicine");
+      setMedError(err?.message || "Failed to save product");
     } finally {
       setMedSubmitting(false);
     }
@@ -1607,7 +1608,7 @@ export default function EditServicePage() {
             </h1>
             <p className="text-sm text-neutral-500 mt-1">
               Update how this service appears to patients and tune its booking
-              journey & linked medicines.
+              journey & linked products.
             </p>
           </div>
         </div>
