@@ -826,7 +826,7 @@ export default function CreateServicePage() {
       formData.append("status", "published");
       formData.append("service_type", serviceType);
 
-      formData.append("showInHomePage", JSON.stringify(showInHomePage));
+      formData.append("showInHomePage", showInHomePage);
       formData.append("appointment_medium", appointmentMedium);
 
       formData.append("booking_flow", JSON.stringify(booking));
@@ -1043,7 +1043,7 @@ export default function CreateServicePage() {
                   {appointmentMedium === "offline" ? "Offline" : "Online"}
                 </button>
               </div>
-              // Add toggle button UI for showInHomePage
+              
               <div className="flex items-center gap-2">
                 <label className="text-xs font-medium text-neutral-300">
                   Show in Home Page
