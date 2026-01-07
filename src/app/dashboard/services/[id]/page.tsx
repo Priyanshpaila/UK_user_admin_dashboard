@@ -59,7 +59,7 @@ type Medicine = {
   description?: string;
   status: string;
   max_bookable_quantity?: number;
-  allow_reorder?: boolean;
+  allow_reorder?: string;
   is_virtual?: boolean;
   variations: Variation[];
   image?: string;
@@ -665,6 +665,9 @@ export default function EditServicePage() {
   const [appointmentMedium, setAppointmentMedium] = useState<
     "offline" | "online"
   >("offline");
+  const [showInHomePage, setShowInHomePage] = useState<"false" | "true">(
+    "false"
+  );
 
   // ------------------- NEW: Clinic forms + assignment state -------------------
   const [clinicForms, setClinicForms] = useState<ClinicFormLite[]>([]);
@@ -775,9 +778,11 @@ export default function EditServicePage() {
       map[t].push(f);
     }
     Object.keys(map).forEach((k) => {
-      map[k] = map[k].slice().sort((a, b) =>
-        String(a.name || "").localeCompare(String(b.name || ""))
-      );
+      map[k] = map[k]
+        .slice()
+        .sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || ""))
+        );
     });
     return map;
   }, [clinicFormsFiltered]);
@@ -827,7 +832,9 @@ export default function EditServicePage() {
   const [medSlugManuallyEdited, setMedSlugManuallyEdited] = useState(false);
   const [medSubmitting, setMedSubmitting] = useState(false);
   const [medError, setMedError] = useState<string | null>(null);
-  const [medAllowReorder, setMedAllowReorder] = useState<boolean>(true);
+  const [medAllowReorder, setMedAllowReorder] = useState<"false" | "true">(
+    "false"
+  );
 
   // ✅ unlink popup state
   const [unlinkingMedicineId, setUnlinkingMedicineId] = useState<string | null>(
@@ -878,6 +885,12 @@ export default function EditServicePage() {
           data.appointment_medium || data.appointmentMedium || "offline"
         );
         setAppointmentMedium(am === "online" ? "online" : "offline");
+
+        const sh = String(
+          data.show_in_home_page || data.showInHomePage || "false"
+        );
+
+        setShowInHomePage(sh === "true" ? "true" : "false");
 
         // IMAGE HANDLING
         if (data.image) {
@@ -986,7 +999,8 @@ export default function EditServicePage() {
    */
   const loadMeds = useCallback(
     async (opts?: { forceLinked?: boolean }) => {
-      if (!id) return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+      if (!id)
+        return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
 
       // abort previous
       medsAbortRef.current?.abort();
@@ -1004,7 +1018,10 @@ export default function EditServicePage() {
         try {
           const medsRes = await getMedicinesApi();
           if (mySeq !== medsReqSeqRef.current) {
-            return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+            return {
+              all: [] as Medicine[],
+              linked: [] as LinkedServiceMedicine[],
+            };
           }
           allList = unwrapArray<Medicine>(medsRes);
           setAllMedicines(allList);
@@ -1041,7 +1058,10 @@ export default function EditServicePage() {
             });
 
             if (mySeq !== medsReqSeqRef.current) {
-              return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
+              return {
+                all: [] as Medicine[],
+                linked: [] as LinkedServiceMedicine[],
+              };
             }
 
             if (res.status === 404) {
@@ -1054,9 +1074,7 @@ export default function EditServicePage() {
                 );
               }
               setMedsLoadError(
-                (prev) =>
-                  prev ??
-                  "No product is linked to this service."
+                (prev) => prev ?? "No product is linked to this service."
               );
               normalized = [];
             } else if (!res.ok) {
@@ -1083,7 +1101,7 @@ export default function EditServicePage() {
 
         setLinkedServiceMedicines(normalized);
 
-        const source = allList.length ? allList : (allMedsRef.current || []);
+        const source = allList.length ? allList : allMedsRef.current || [];
 
         setLinkedMedicines(
           normalized.map((x) => ({
@@ -1092,10 +1110,7 @@ export default function EditServicePage() {
               x.name ||
               source.find((m) => m._id === x.medicineId)?.name ||
               "Unknown",
-            sku:
-              x.sku ||
-              source.find((m) => m._id === x.medicineId)?.sku ||
-              "",
+            sku: x.sku || source.find((m) => m._id === x.medicineId)?.sku || "",
             strength:
               x.strength ??
               source.find((m) => m._id === x.medicineId)?.strength ??
@@ -1145,9 +1160,11 @@ export default function EditServicePage() {
       formData.append("appointment_medium", appointmentMedium);
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
-
-      // ✅ UPDATED: save selected form assignments
-      formData.append("forms_assignment", JSON.stringify(formsAssignmentObject));
+      formData.append("showInHomePage", showInHomePage);
+      formData.append(
+        "forms_assignment",
+        JSON.stringify(formsAssignmentObject)
+      );
 
       if (imageFile) {
         formData.append("image", imageFile);
@@ -1273,7 +1290,9 @@ export default function EditServicePage() {
   }, [linkedServiceMedicines]);
 
   const selectedIds = useMemo(() => {
-    return new Set(serviceMedicineRows.map((r) => r.medicineId).filter(Boolean));
+    return new Set(
+      serviceMedicineRows.map((r) => r.medicineId).filter(Boolean)
+    );
   }, [serviceMedicineRows]);
 
   // ✅ Confirm unlink (intelligent handling)
@@ -1346,7 +1365,7 @@ export default function EditServicePage() {
     setMedSkuManuallyEdited(false);
     setMedSlugManuallyEdited(false);
     setMedError(null);
-    setMedAllowReorder(true);
+    setMedAllowReorder("true");
     setIsMedModalOpen(true);
   };
 
@@ -1375,9 +1394,7 @@ export default function EditServicePage() {
       variations: mappedVariations,
     });
 
-    setMedAllowReorder(
-      typeof med.allow_reorder === "boolean" ? med.allow_reorder : true
-    );
+      setMedAllowReorder(med.allow_reorder === "true" ? "true" : "false");
 
     setMedImageFile(null);
     setMedExistingImagePath(med.image || null);
@@ -1544,7 +1561,7 @@ export default function EditServicePage() {
       fd.append("description", payload.description);
       fd.append("status", payload.status);
       fd.append("max_bookable_quantity", String(payload.max_bookable_quantity));
-      fd.append("allow_reorder", payload.allow_reorder ? "true" : "false");
+      fd.append("allow_reorder", payload.allow_reorder);
 
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
@@ -1723,6 +1740,34 @@ export default function EditServicePage() {
                     {appointmentMedium === "offline" ? "Offline" : "Online"}
                   </button>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="text-xs font-medium text-neutral-300">
+                    Show on Home Page
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowInHomePage((prev) =>
+                        prev === "true" ? "false" : "true"
+                      )
+                    }
+                    className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+                      showInHomePage === "true"
+                        ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+                        : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-[10px] w-[10px] rounded-full ${
+                        showInHomePage === "true"
+                          ? "bg-emerald-400"
+                          : "bg-neutral-500"
+                      }`}
+                    />
+                    {showInHomePage === "true" ? "Visible" : "Hidden"}
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -1812,7 +1857,9 @@ export default function EditServicePage() {
               </div>
 
               {clinicFormsLoading && (
-                <p className="text-xs text-neutral-500">Loading clinic forms…</p>
+                <p className="text-xs text-neutral-500">
+                  Loading clinic forms…
+                </p>
               )}
 
               {!clinicFormsLoading && clinicFormsFiltered.length === 0 && (
@@ -1956,9 +2003,8 @@ export default function EditServicePage() {
           {/* Service Medicines */}
           <SectionCard title="Service Products">
             <div className="space-y-5">
-                  {/* Already linked medicines */}
+              {/* Already linked medicines */}
               <div className="space-y-2">
-              
                 {loadingMeds ? (
                   <div className="text-xs text-neutral-500 flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -2464,7 +2510,8 @@ export default function EditServicePage() {
                         placeholder="mounjaro-tirzepatide"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Auto-generated from name, but you can override if needed.
+                        Auto-generated from name, but you can override if
+                        needed.
                       </p>
                     </div>
 
@@ -2507,24 +2554,22 @@ export default function EditServicePage() {
                       <label className="mb-1 block text-xs font-medium text-neutral-300">
                         Allow re-order
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => setMedAllowReorder((prev) => !prev)}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                          medAllowReorder
-                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                            : "bg-neutral-800 text-neutral-300 border border-neutral-600"
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-[10px] w-[10px] rounded-full ${
-                            medAllowReorder ? "bg-emerald-400" : "bg-neutral-500"
-                          }`}
-                        />
-                        {medAllowReorder
-                          ? "Re-order allowed"
-                          : "Re-order not allowed"}
-                      </button>
+<button
+  type="button"
+  onClick={() => setMedAllowReorder((prev) => (prev === "true" ? "false" : "true"))}
+  className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+    medAllowReorder === "true"
+      ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+      : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+  }`}
+>
+  <span
+    className={`inline-block h-[10px] w-[10px] rounded-full ${
+      medAllowReorder === "true" ? "bg-emerald-400" : "bg-neutral-500"
+    }`}
+  />
+  {medAllowReorder === "true" ? "Re-order allowed" : "Re-order not allowed"}
+</button>
                       <p className="mt-1 text-[11px] text-neutral-500">
                         Toggle to control whether this product can be ordered
                         again by patients.
@@ -2766,7 +2811,9 @@ export default function EditServicePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                document.getElementById("med-image-input")?.click()
+                                document
+                                  .getElementById("med-image-input")
+                                  ?.click()
                               }
                               className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
                             >

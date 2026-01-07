@@ -47,7 +47,7 @@ type Medicine = {
   description?: string;
   status: string; // "published" | "draft" | ...
   max_bookable_quantity?: number;
-  allow_reorder?: boolean;
+  allow_reorder?: string;
   is_virtual?: boolean;
   variations: Variation[];
   image?: string;
@@ -338,6 +338,9 @@ export default function CreateServicePage() {
   const [appointmentMedium, setAppointmentMedium] = useState<
     "offline" | "online"
   >("offline");
+    const [showInHomePage, setShowInHomePage] = useState<
+      "false" | "true"
+    >("false");
 
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -382,7 +385,9 @@ export default function CreateServicePage() {
           ? localStorage.getItem("session_token")
           : null;
 
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+      const headers: HeadersInit = token
+        ? { Authorization: `Bearer ${token}` }
+        : {};
 
       const res = await fetch(`${base}/clinic-forms`, { headers });
       if (!res.ok) {
@@ -430,9 +435,13 @@ export default function CreateServicePage() {
     }
     // sensible defaults if backend returned empty form_type
     if (set.size === 0) {
-      ["raf", "advice", "reorder", "clinical_notes", "pharmacist_declaration"].forEach((t) =>
-        set.add(t)
-      );
+      [
+        "raf",
+        "advice",
+        "reorder",
+        "clinical_notes",
+        "pharmacist_declaration",
+      ].forEach((t) => set.add(t));
     }
     return Array.from(set);
   }, [clinicFormsFiltered]);
@@ -446,9 +455,11 @@ export default function CreateServicePage() {
     }
     // stable sort by name
     Object.keys(map).forEach((k) => {
-      map[k] = map[k].slice().sort((a, b) =>
-        String(a.name || "").localeCompare(String(b.name || ""))
-      );
+      map[k] = map[k]
+        .slice()
+        .sort((a, b) =>
+          String(a.name || "").localeCompare(String(b.name || ""))
+        );
     });
     return map;
   }, [clinicFormsFiltered]);
@@ -544,7 +555,9 @@ export default function CreateServicePage() {
   const [medSlugManuallyEdited, setMedSlugManuallyEdited] = useState(false);
   const [medSubmitting, setMedSubmitting] = useState(false);
   const [medError, setMedError] = useState<string | null>(null);
-  const [medAllowReorder, setMedAllowReorder] = useState<boolean>(true);
+  const [medAllowReorder, setMedAllowReorder] = useState<
+      "false" | "true"
+    >("false");
 
   const openMedCreate = () => {
     setEditingMed(null);
@@ -558,7 +571,7 @@ export default function CreateServicePage() {
     setMedSkuManuallyEdited(false);
     setMedSlugManuallyEdited(false);
     setMedError(null);
-    setMedAllowReorder(true);
+    setMedAllowReorder("false");
     setIsMedModalOpen(true);
   };
 
@@ -587,9 +600,7 @@ export default function CreateServicePage() {
       variations: mappedVariations,
     });
 
-    setMedAllowReorder(
-      typeof med.allow_reorder === "boolean" ? med.allow_reorder : true
-    );
+ setMedAllowReorder(med.allow_reorder === "true" ? "true" : "false");
 
     setMedImageFile(null);
     setMedExistingImagePath(med.image || null);
@@ -755,11 +766,8 @@ export default function CreateServicePage() {
       fd.append("slug", payload.slug);
       fd.append("description", payload.description);
       fd.append("status", payload.status);
-      fd.append(
-        "max_bookable_quantity",
-        String(payload.max_bookable_quantity)
-      );
-      fd.append("allow_reorder", payload.allow_reorder ? "true" : "false");
+      fd.append("max_bookable_quantity", String(payload.max_bookable_quantity));
+      fd.append("allow_reorder", payload.allow_reorder);
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
 
@@ -818,14 +826,16 @@ export default function CreateServicePage() {
       formData.append("status", "published");
       formData.append("service_type", serviceType);
 
-      // ✅ NEW: send appointment_medium
+      formData.append("showInHomePage", JSON.stringify(showInHomePage));
       formData.append("appointment_medium", appointmentMedium);
 
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
 
-      // ✅ UPDATED: send selected forms assignment instead of {}
-      formData.append("forms_assignment", JSON.stringify(formsAssignmentObject));
+      formData.append(
+        "forms_assignment",
+        JSON.stringify(formsAssignmentObject)
+      );
 
       if (imageFile) {
         formData.append("image", imageFile);
@@ -986,7 +996,6 @@ export default function CreateServicePage() {
                   />
                 </div>
               </div>
-
               {/* Service Type */}
               <div>
                 <label className="text-xs font-medium text-neutral-300">
@@ -1006,7 +1015,6 @@ export default function CreateServicePage() {
                   Choose whether this is an NHS or private service.
                 </p>
               </div>
-
               {/* ✅ NEW: Appointment medium toggle */}
               <div>
                 <label className="text-xs font-medium mr-5 text-neutral-300">
@@ -1035,7 +1043,29 @@ export default function CreateServicePage() {
                   {appointmentMedium === "offline" ? "Offline" : "Online"}
                 </button>
               </div>
+              // Add toggle button UI for showInHomePage
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-neutral-300">
+                  Show in Home Page
+                </label>
+<button
+  type="button"
+  onClick={() => setShowInHomePage((prev) => (prev === "true" ? "false" : "true"))}
+  className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+    showInHomePage === "true"
+      ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+      : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+  }`}
+>
+  <span
+    className={`inline-block h-[10px] w-[10px] rounded-full ${
+      showInHomePage === "true" ? "bg-emerald-400" : "bg-neutral-500"
+    }`}
+  />
+  {showInHomePage === "true" ? "Visible" : "Hidden"}
+</button>
 
+              </div>
               <div>
                 <label className="text-xs font-medium text-neutral-300">
                   Description
@@ -1048,7 +1078,6 @@ export default function CreateServicePage() {
                   className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 />
               </div>
-
               <div>
                 <label className="text-xs font-medium text-neutral-300">
                   CTA Button Text
@@ -1123,7 +1152,9 @@ export default function CreateServicePage() {
               </div>
 
               {clinicFormsLoading && (
-                <p className="text-xs text-neutral-500">Loading clinic forms…</p>
+                <p className="text-xs text-neutral-500">
+                  Loading clinic forms…
+                </p>
               )}
 
               {!clinicFormsLoading && clinicFormsFiltered.length === 0 && (
@@ -1228,7 +1259,9 @@ export default function CreateServicePage() {
                               metaBits.push(`svc:${f.service_slug}`);
                             if (f.treatment_slug)
                               metaBits.push(`trt:${f.treatment_slug}`);
-                            const meta = metaBits.length ? ` • ${metaBits.join(" • ")}` : "";
+                            const meta = metaBits.length
+                              ? ` • ${metaBits.join(" • ")}`
+                              : "";
 
                             return (
                               <option key={f._id} value={f._id}>
@@ -1631,7 +1664,8 @@ export default function CreateServicePage() {
                         placeholder="mounjaro-tirzepatide"
                       />
                       <p className="mt-1 text-[11px] text-neutral-500">
-                        Auto-generated from name, but you can override if needed.
+                        Auto-generated from name, but you can override if
+                        needed.
                       </p>
                     </div>
 
@@ -1674,24 +1708,22 @@ export default function CreateServicePage() {
                       <label className="mb-1 block text-xs font-medium text-neutral-300">
                         Allow re-order
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => setMedAllowReorder((prev) => !prev)}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                          medAllowReorder
-                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                            : "bg-neutral-800 text-neutral-300 border border-neutral-600"
-                        }`}
-                      >
-                        <span
-                          className={`inline-block h-[10px] w-[10px] rounded-full ${
-                            medAllowReorder ? "bg-emerald-400" : "bg-neutral-500"
-                          }`}
-                        />
-                        {medAllowReorder
-                          ? "Re-order allowed"
-                          : "Re-order not allowed"}
-                      </button>
+<button
+  type="button"
+  onClick={() => setMedAllowReorder((prev) => (prev === "true" ? "false" : "true"))}
+  className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+    medAllowReorder === "true"
+      ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+      : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+  }`}
+>
+  <span
+    className={`inline-block h-[10px] w-[10px] rounded-full ${
+      medAllowReorder === "true" ? "bg-emerald-400" : "bg-neutral-500"
+    }`}
+  />
+  {medAllowReorder === "true" ? "Re-order allowed" : "Re-order not allowed"}
+</button>
                       <p className="mt-1 text-[11px] text-neutral-500">
                         Toggle to control whether this product can be ordered
                         again by patients.
@@ -1933,7 +1965,9 @@ export default function CreateServicePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                document.getElementById("med-image-input")?.click()
+                                document
+                                  .getElementById("med-image-input")
+                                  ?.click()
                               }
                               className="inline-flex items-center justify-center rounded-md border border-neutral-700 bg-neutral-900/80 px-3 py-1.5 text-xs font-medium text-neutral-100 hover:bg-neutral-800 transition-colors"
                             >
