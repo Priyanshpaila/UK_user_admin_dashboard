@@ -257,8 +257,6 @@ export async function createPharmacistApi(
   });
 }
 
-
-
 // New PUT API for tenant integration
 export async function updateTenantIntegrationApi(
   subdomain: string,
@@ -284,14 +282,11 @@ export async function updateTenantIntegrationApi(
     zoom_defaultUser: string;
     zoom_baseUrl: string;
     shipping_provider: string;
-    royalmail_apiBase: string;
-    royalmail_apiKeyHeader: string;
-    royalmail_apiKey: string;
-    royalmail_tokenUrl: string;
-    royalmail_clientId: string;
-    royalmail_clientSecret: string;
-    royalmail_accountNumber: string;
-    royalmail_defaultServiceCode: string;
+    clickanddrop_base: string;
+    clickanddrop_apiKey: string;
+    clickanddrop_defaultService: string;
+    clickanddrop_defaultPackage: string;
+    clickanddrop_minWeightG: number;
   }
 ) {
   const protocol =
@@ -1995,7 +1990,6 @@ export async function createZoomMeetingApi(
   return (res?.data ?? res) as ZoomMeetingDto;
 }
 
-
 export async function deleteTenantApi(tenantSlug: string) {
   const base = ENV_BASE_URL || "http://localhost:8000/api"; // Use ENV_BASE_URL directly for this API
   const url = `${base}/platform-tenants/${tenantSlug}`;
@@ -2023,9 +2017,11 @@ export async function deleteTenantApi(tenantSlug: string) {
   return res.json(); // Returns the response from the backend
 }
 
-
 // Function to delete a pharmacist for a particular tenant
-export async function deletePharmacistApi(tenantSlug: string, pharmacistId: string) {
+export async function deletePharmacistApi(
+  tenantSlug: string,
+  pharmacistId: string
+) {
   const base = ENV_BASE_URL || "http://localhost:8000/api"; // Use ENV_BASE_URL directly for this API
   const url = `${base}/platform-tenants/${tenantSlug}/pharmacist/${pharmacistId}`;
 
@@ -2051,7 +2047,6 @@ export async function deletePharmacistApi(tenantSlug: string, pharmacistId: stri
 
   return res.json(); // Returns the response from the backend
 }
-
 
 /**
  * Change password API

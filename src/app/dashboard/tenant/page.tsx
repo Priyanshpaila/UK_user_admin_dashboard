@@ -86,19 +86,16 @@ export default function CreateTenantPage() {
   const [zoomDefaultUser, setZoomDefaultUser] = useState("me");
   const [zoomBaseUrl, setZoomBaseUrl] = useState("https://api.zoom.us/v2");
 
-  const [shippingProvider, setShippingProvider] = useState("royalmail");
-  const [royalmailApiBase, setRoyalmailApiBase] = useState(
+  const [shippingProvider, setShippingProvider] = useState("clickanddrop");
+  const [clickanddropBase, setClickanddropBase] = useState(
     "https://api.parcel.royalmail.com/api/v1"
   );
-  const [royalmailApiKey, setRoyalmailApiKey] = useState("");
-  const [royalmailApiKeyHeader, setRoyalmailApiKeyHeader] =
-    useState("x-api-key");
-  const [royalmailTokenUrl, setRoyalmailTokenUrl] = useState("");
-  const [royalmailClientId, setRoyalmailClientId] = useState("");
-  const [royalmailClientSecret, setRoyalmailClientSecret] = useState("");
-  const [royalmailAccountNumber, setRoyalmailAccountNumber] = useState("");
-  const [royalmailDefaultServiceCode, setRoyalmailDefaultServiceCode] =
-    useState("tracked24");
+  const [clickanddropApiKey, setClickanddropApiKey] = useState("");
+  const [clickanddropDefaultService, setClickanddropDefaultService] =
+    useState("RM24");
+  const [clickanddropDefaultPackage, setClickanddropDefaultPackage] =
+    useState("Parcel");
+  const [clickanddropMinWeightG, setClickanddropMinWeightG] = useState(2000);
 
   const closeModal = () => {
     setSelectedTenant(null);
@@ -267,14 +264,11 @@ export default function CreateTenantPage() {
       zoom_baseUrl: zoomBaseUrl,
 
       shipping_provider: shippingProvider,
-      royalmail_apiBase: royalmailApiBase,
-      royalmail_apiKeyHeader: royalmailApiKeyHeader,
-      royalmail_apiKey: royalmailApiKey,
-      royalmail_tokenUrl: royalmailTokenUrl,
-      royalmail_clientId: royalmailClientId,
-      royalmail_clientSecret: royalmailClientSecret,
-      royalmail_accountNumber: royalmailAccountNumber,
-      royalmail_defaultServiceCode: royalmailDefaultServiceCode,
+      clickanddrop_base: clickanddropBase,
+      clickanddrop_apiKey: clickanddropApiKey,
+      clickanddrop_defaultService: clickanddropDefaultService,
+      clickanddrop_defaultPackage: clickanddropDefaultPackage,
+      clickanddrop_minWeightG: clickanddropMinWeightG,
     };
 
     try {
@@ -597,38 +591,42 @@ export default function CreateTenantPage() {
                   </span>
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-2">
-                <span
-                  className={`rounded-full px-3 py-1 text-[11px] font-semibold ${
-                    selectedTenant.status === "active"
-                      ? "bg-emerald-500/10 text-emerald-300"
-                      : "bg-neutral-700 text-neutral-200"
-                  }`}
-                >
-                  {selectedTenant.status}
-                </span>
-                {/* Button to delete tenant */}
-                <button
-                  type="button"
-                  onClick={() => setFillCredentialsModalOpen(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 px-4 py-2 text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105 shadow-md hover:shadow-lg"
-                >
-                  Fill Credentials
-                </button>
-                <button
-                  onClick={() => setDeleteTenantModalOpen(true)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 px-4 py-2 text-sm font-medium transition duration-300 ease-in-out transform hover:scale-105 shadow-md hover:shadow-lg"
-                >
-                  Delete Tenant
-                </button>
+              <div className="flex flex-col items-end gap-3">
+                <div className="flex gap-2 ">
+                  <span
+                    className={`flex rounded-full justify-center items-center px-3 py-1 text-[11px] font-semibold ${
+                      selectedTenant.status === "active"
+                        ? "bg-emerald-500/10 text-emerald-300"
+                        : "bg-neutral-700 text-neutral-200"
+                    }`}
+                  >
+                    {selectedTenant.status}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-neutral-900 text-neutral-400 hover:bg-neutral-800 hover:text-white"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                <div className="flex gap-2">
+                  {/* Button to delete tenant */}
+                  <button
+                    type="button"
+                    onClick={() => setFillCredentialsModalOpen(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 px-3 py-1 text-sm font-normal transition duration-300 ease-in-out transform hover:scale-105 shadow-md hover:shadow-lg"
+                  >
+                    Fill Credentials
+                  </button>
+                  <button
+                    onClick={() => setDeleteTenantModalOpen(true)}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 px-3 py-1 text-sm font-normal transition duration-300 ease-in-out transform hover:scale-105 shadow-md hover:shadow-lg"
+                  >
+                    Delete Tenant
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1026,76 +1024,51 @@ export default function CreateTenantPage() {
                   <div>
                     <input
                       type="text"
-                      value={royalmailApiBase}
-                      onChange={(e) => setRoyalmailApiBase(e.target.value)}
-                      placeholder="RoyalMail API Base"
+                      value={clickanddropBase}
+                      onChange={(e) => setClickanddropBase(e.target.value)}
+                      placeholder="ClickAndDrop Base URL"
                       className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
                     />
                   </div>
                   <div>
                     <input
                       type="text"
-                      value={royalmailApiKey}
-                      onChange={(e) => setRoyalmailApiKey(e.target.value)}
-                      placeholder="RoyalMail API Key"
+                      value={clickanddropApiKey}
+                      onChange={(e) => setClickanddropApiKey(e.target.value)}
+                      placeholder="ClickAndDrop API Key"
                       className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
                     />
                   </div>
                   <div>
                     <input
                       type="text"
-                      value={royalmailApiKeyHeader}
-                      onChange={(e) => setRoyalmailApiKeyHeader(e.target.value)}
-                      placeholder="RoyalMail API Key Header"
-                      className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={royalmailTokenUrl}
-                      onChange={(e) => setRoyalmailTokenUrl(e.target.value)}
-                      placeholder="RoyalMail Token URL"
-                      className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={royalmailClientId}
-                      onChange={(e) => setRoyalmailClientId(e.target.value)}
-                      placeholder="RoyalMail Client ID"
-                      className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={royalmailClientSecret}
-                      onChange={(e) => setRoyalmailClientSecret(e.target.value)}
-                      placeholder="RoyalMail Client Secret"
-                      className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
-                    />
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={royalmailAccountNumber}
+                      value={clickanddropDefaultService}
                       onChange={(e) =>
-                        setRoyalmailAccountNumber(e.target.value)
+                        setClickanddropDefaultService(e.target.value)
                       }
-                      placeholder="RoyalMail Account Number"
+                      placeholder="Default Service (e.g. RM24)"
                       className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
                     />
                   </div>
                   <div>
                     <input
                       type="text"
-                      value={royalmailDefaultServiceCode}
+                      value={clickanddropDefaultPackage}
                       onChange={(e) =>
-                        setRoyalmailDefaultServiceCode(e.target.value)
+                        setClickanddropDefaultPackage(e.target.value)
                       }
-                      placeholder="RoyalMail Default Service Code"
+                      placeholder="Default Package (e.g. Parcel)"
+                      className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+                    />
+                  </div>
+                  <div>
+                    <input
+                      type="number"
+                      value={clickanddropMinWeightG}
+                      onChange={(e) =>
+                        setClickanddropMinWeightG(Number(e.target.value))
+                      }
+                      placeholder="Min Weight (g)"
                       className="w-full rounded-xl border border-neutral-700 bg-neutral-950 px-3 py-2.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
                     />
                   </div>
