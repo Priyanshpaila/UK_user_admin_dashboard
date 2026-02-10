@@ -8,6 +8,7 @@ import React, {
   useRef,
 } from "react";
 import { useRouter, useParams } from "next/navigation";
+import Link from "next/link";
 import {
   Loader2,
   Save,
@@ -19,17 +20,17 @@ import {
   Trash2,
   ChevronDown,
 } from "lucide-react";
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
+
 import {
   getServiceApi,
   getBackendBase,
   getMedicinesApi,
   createServiceMedicineApi,
-  deleteServiceMedicineApi, // ✅ unlink
+  deleteServiceMedicineApi, // unlink by service_medicine_id
 } from "../../../../api";
-import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
-import { toast, ToastContainer } from "react-toastify";
-import Link from "next/link";
-import "react-toastify/dist/ReactToastify.css";
 
 const DEFAULT_FLOW_OPTIONS = [
   "Treatments",
@@ -39,8 +40,7 @@ const DEFAULT_FLOW_OPTIONS = [
   "Payment",
 ];
 
-/* ---------- Shared medicine types (same as create page) ---------- */
-
+/* ---------- Shared medicine types ---------- */
 type Variation = {
   _id?: string;
   title: string;
@@ -110,13 +110,12 @@ function slugifyMed(input: string): string {
     .replace(/(^-|-$)+/g, "");
 }
 
-/* ------------------- NEW: Forms assignment helpers/types ------------------- */
-
+/* ------------------- Forms assignment helpers/types ------------------- */
 type ClinicFormLite = {
   _id: string;
   name?: string;
   description?: string;
-  form_type?: string; // "raf" | "advice" | ...
+  form_type?: string;
   service_slug?: string;
   service_id?: string;
   treatment_slug?: string;
@@ -131,6 +130,25 @@ type FormAssignmentRow = {
   form_type: string;
   form_id: string;
 };
+
+function normalizeFormType(v: any) {
+  return String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+}
+
+function parseFormIds(v: any): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  const s = String(v).trim();
+  if (!s) return [];
+  // supports "id1,id2"
+  return s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 function createId(prefix = "id") {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -148,18 +166,26 @@ function unwrapArray<T = any>(res: any): T[] {
   if (!res) return [];
   if (Array.isArray(res)) return res;
 
-  // common shapes:
   if (Array.isArray(res.data)) return res.data;
-  if (Array.isArray(res.data?.data)) return res.data.data; // { data: { data: [] } }
-  if (Array.isArray(res.data?.docs)) return res.data.docs; // paginate libs
+  if (Array.isArray(res.data?.data)) return res.data.data;
+  if (Array.isArray(res.data?.docs)) return res.data.docs;
   if (Array.isArray(res.docs)) return res.docs;
   if (Array.isArray(res.items)) return res.items;
 
   return [];
 }
 
-/* --------------------- Shared UI components ---------------------- */
+function baseForImagesFromApiBase(apiBase: string) {
+  // if api base is .../api, convert to origin root
+  return apiBase.replace(/\/api\/?$/, "");
+}
 
+function getTokenSafe() {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("session_token");
+}
+
+/* --------------------- Shared UI components ---------------------- */
 function SectionCard({
   title,
   subtitle,
@@ -177,9 +203,9 @@ function SectionCard({
             <h2 className="text-lg font-semibold tracking-wide text-neutral-50">
               {title}
             </h2>
-            {subtitle && (
+            {subtitle ? (
               <p className="text-xs text-neutral-500 mt-0.5">{subtitle}</p>
-            )}
+            ) : null}
           </div>
         </div>
         {children}
@@ -187,6 +213,16 @@ function SectionCard({
     </section>
   );
 }
+
+type FlowEditorProps = {
+  title: string;
+  list: string[];
+  setList: React.Dispatch<React.SetStateAction<string[]>>;
+  customStep: string;
+  setCustomStep: React.Dispatch<React.SetStateAction<string>>;
+  selectedOption: string;
+  setSelectedOption: React.Dispatch<React.SetStateAction<string>>;
+};
 
 function FlowEditor({
   title,
@@ -196,19 +232,18 @@ function FlowEditor({
   setCustomStep,
   selectedOption,
   setSelectedOption,
-}: any) {
+}: FlowEditorProps) {
   const reorderList = (result: any) => {
     if (!result.destination) return;
 
     const updated = [...list];
     const [removed] = updated.splice(result.source.index, 1);
     updated.splice(result.destination.index, 0, removed);
-
     setList(updated);
   };
 
   const removeStep = (i: number) => {
-    const updated = list.filter((_: any, idx: number) => idx !== i);
+    const updated = list.filter((_, idx) => idx !== i);
     setList(updated);
   };
 
@@ -280,24 +315,24 @@ function FlowEditor({
                 {...provided.droppableProps}
                 className="space-y-2"
               >
-                {list.length === 0 && (
+                {list.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/70 px-4 py-3 text-xs text-neutral-500">
                     No steps added yet. Choose from the dropdown above or add a
                     custom step to begin.
                   </div>
-                )}
+                ) : null}
 
-                {list.map((step: string, idx: number) => (
+                {list.map((step, idx) => (
                   <Draggable
                     key={`${title}-${idx}`}
                     draggableId={`${title}-${idx}`}
                     index={idx}
                   >
-                    {(provided, snapshot) => (
+                    {(provided2, snapshot) => (
                       <div
-                        ref={provided.innerRef}
-                        {...provided.draggableProps}
-                        {...provided.dragHandleProps}
+                        ref={provided2.innerRef}
+                        {...provided2.draggableProps}
+                        {...provided2.dragHandleProps}
                         className={`flex items-center justify-between gap-3 rounded-lg border bg-neutral-900/90 px-3 py-2.5 text-sm shadow-sm transition-all ${
                           snapshot.isDragging
                             ? "border-blue-500/60 shadow-[0_12px_30px_rgba(0,0,0,0.9)] scale-[1.01]"
@@ -338,7 +373,6 @@ function FlowEditor({
 }
 
 /* ---- Types for service-medicine mapping UI ---- */
-
 type MedicineOption = {
   _id: string;
   sku: string;
@@ -355,10 +389,6 @@ type ServiceMedicineRow = {
   active: boolean;
 };
 
-/**
- * ✅ Linked mapping normalized:
- * We need BOTH medicineId and service_medicine_id (linkId) for unlink.
- */
 type LinkedServiceMedicine = {
   medicineId: string;
   linkId: string; // service_medicine_id
@@ -367,10 +397,6 @@ type LinkedServiceMedicine = {
   strength?: string | null;
 };
 
-/**
- * ✅ Robust normalizer for linked API response.
- * Works with common shapes.
- */
 function normalizeLinkedServiceMedicines(input: any): LinkedServiceMedicine[] {
   const arr = Array.isArray(input) ? input : input?.data || [];
   if (!Array.isArray(arr)) return [];
@@ -382,15 +408,15 @@ function normalizeLinkedServiceMedicines(input: any): LinkedServiceMedicine[] {
       typeof item?.service_medicine_id === "string"
         ? item.service_medicine_id
         : typeof item?.serviceMedicineId === "string"
-        ? item.serviceMedicineId
-        : "";
+          ? item.serviceMedicineId
+          : "";
 
     const medicineIdFromExplicit =
       typeof item?.medicine_id === "string"
         ? item.medicine_id
         : typeof item?.medicineId === "string"
-        ? item.medicineId
-        : "";
+          ? item.medicineId
+          : "";
 
     const medicineIdFromNested =
       typeof item?.medicine?._id === "string" ? item.medicine._id : "";
@@ -428,38 +454,25 @@ function normalizeLinkedServiceMedicines(input: any): LinkedServiceMedicine[] {
       typeof item?.strength === "string"
         ? item.strength
         : typeof item?.medicine?.strength === "string"
-        ? item.medicine.strength
-        : null;
+          ? item.medicine.strength
+          : null;
 
     if (medicineId) {
-      out.push({
-        medicineId,
-        linkId,
-        name,
-        sku,
-        strength,
-      });
+      out.push({ medicineId, linkId, name, sku, strength });
     }
   }
 
-  // de-dupe by medicineId (prefer one with linkId)
+  // de-dupe by medicineId (prefer the one with linkId)
   const map = new Map<string, LinkedServiceMedicine>();
   for (const row of out) {
     const prev = map.get(row.medicineId);
-    if (!prev) {
-      map.set(row.medicineId, row);
-      continue;
-    }
-    if (!prev.linkId && row.linkId) {
-      map.set(row.medicineId, row);
-    }
+    if (!prev) map.set(row.medicineId, row);
+    else if (!prev.linkId && row.linkId) map.set(row.medicineId, row);
   }
-
   return Array.from(map.values());
 }
 
 /* -------------------- Custom Dropdown (supports Unlink button) -------------------- */
-
 function MedicineDropdown({
   value,
   onChange,
@@ -484,7 +497,7 @@ function MedicineDropdown({
 
   const selected = useMemo(
     () => allMedicines.find((m) => m._id === value) || null,
-    [allMedicines, value]
+    [allMedicines, value],
   );
 
   useEffect(() => {
@@ -522,7 +535,7 @@ function MedicineDropdown({
         />
       </button>
 
-      {open && (
+      {open ? (
         <div className="absolute z-[55] mt-2 w-full rounded-xl border border-neutral-800 bg-neutral-950 shadow-[0_18px_55px_rgba(0,0,0,0.9)] overflow-hidden">
           <div className="max-h-64 overflow-auto py-1">
             {allMedicines.length === 0 ? (
@@ -583,16 +596,16 @@ function MedicineDropdown({
                           setOpen(false);
                           onRequestUnlink(m._id);
                         }}
-                        disabled={unlinkBusy}
+                        disabled={unlinkBusy || !canUnlink}
                         className={`shrink-0 inline-flex items-center gap-2 rounded-lg px-2.5 py-1 text-[11px] font-medium border transition-colors ${
                           canUnlink
                             ? "border-red-500/50 bg-red-500/15 text-red-200 hover:bg-red-500/25"
-                            : "border-neutral-700 bg-neutral-900 text-neutral-400"
+                            : "border-neutral-700 bg-neutral-900 text-neutral-500"
                         } ${unlinkBusy ? "opacity-70" : ""}`}
                         title={
                           canUnlink
                             ? "Unlink this product from service"
-                            : "Link mapping missing. Will auto-refresh on confirm."
+                            : "Linked mapping missing (needs backend link id). Refresh after save."
                         }
                       >
                         {unlinkBusy ? (
@@ -609,7 +622,7 @@ function MedicineDropdown({
             )}
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -617,7 +630,7 @@ function MedicineDropdown({
 export default function EditServicePage() {
   const router = useRouter();
   const params = useParams();
-  const rawId = params?.id;
+  const rawId = (params as any)?.id;
   const id = Array.isArray(rawId) ? rawId[0] : (rawId as string | undefined);
 
   const [loading, setLoading] = useState(true);
@@ -625,20 +638,22 @@ export default function EditServicePage() {
 
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [slugManuallyEdited, setSlugManuallyEdited] = useState(false);
+
   const [description, setDescription] = useState("");
   const [ctaText, setCtaText] = useState("");
 
-  const [viewType, setViewType] = useState("card");
+  const [viewType, setViewType] = useState<"card" | "list">("card");
 
-  // service_type (private / nhs)
   const [serviceType, setServiceType] = useState<"private" | "nhs">("private");
 
   // image preview + file + original path
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [existingImagePath, setExistingImagePath] = useState<string | null>(
-    null
+    null,
   );
+  const serviceImageObjectUrlRef = useRef<string | null>(null);
 
   const [bookingFlow, setBookingFlow] = useState<string[]>([]);
   const [reorderFlow, setReorderFlow] = useState<string[]>([]);
@@ -660,29 +675,24 @@ export default function EditServicePage() {
   const [serviceMedicineRows, setServiceMedicineRows] = useState<
     ServiceMedicineRow[]
   >([]);
+  const [medsLoadError, setMedsLoadError] = useState<string | null>(null);
 
-  // ✅ appointment_medium (offline / online)
+  // appointment_medium (offline / online)
   const [appointmentMedium, setAppointmentMedium] = useState<
     "offline" | "online"
   >("offline");
+
   const [showInHomePage, setShowInHomePage] = useState<"false" | "true">(
-    "false"
+    "false",
   );
 
-  // ------------------- NEW: Clinic forms + assignment state -------------------
+  // ------------------- Clinic forms + assignment state -------------------
   const [clinicForms, setClinicForms] = useState<ClinicFormLite[]>([]);
   const [clinicFormsLoading, setClinicFormsLoading] = useState(false);
   const [onlyActiveForms, setOnlyActiveForms] = useState(true);
   const [assignmentRows, setAssignmentRows] = useState<FormAssignmentRow[]>([]);
 
-  const [medsLoadError, setMedsLoadError] = useState<string | null>(null);
-
-  /**
-   * ✅ Fix continuous requests:
-   * - Keep latest allMedicines in a ref for fallback usage without putting allMedicines in loadMeds deps.
-   * - Abort in-flight calls and ignore stale responses.
-   * - Circuit-break linked endpoint if it returns 404 once.
-   */
+  // ---- stable refs to avoid dependency loops & abort in-flight medicines fetch ----
   const allMedsRef = useRef<Medicine[]>([]);
   useEffect(() => {
     allMedsRef.current = allMedicines;
@@ -691,30 +701,29 @@ export default function EditServicePage() {
   const medsAbortRef = useRef<AbortController | null>(null);
   const medsReqSeqRef = useRef(0);
 
-  const linkedEndpointMissingRef = useRef(false);
-  const loggedLinked404Ref = useRef(false);
-
   useEffect(() => {
     return () => {
       medsAbortRef.current?.abort();
+      if (serviceImageObjectUrlRef.current) {
+        URL.revokeObjectURL(serviceImageObjectUrlRef.current);
+        serviceImageObjectUrlRef.current = null;
+      }
     };
   }, []);
 
+  // ---------- Clinic forms ----------
   const reloadClinicForms = useCallback(async () => {
     try {
       setClinicFormsLoading(true);
       const base = getBackendBase();
-
-      const token =
-        typeof window !== "undefined"
-          ? localStorage.getItem("session_token")
-          : null;
-
+      const token = getTokenSafe();
       const headers: HeadersInit = token
         ? { Authorization: `Bearer ${token}` }
         : {};
 
-      const res = await fetch(`${base}/clinic-forms`, { headers });
+      const res = await fetch(`${base}/clinic-forms`, {
+        headers,
+      });
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
         throw new Error(txt || "Failed to load clinic forms");
@@ -727,7 +736,7 @@ export default function EditServicePage() {
         _id: f._id,
         name: f.name,
         description: f.description,
-        form_type: f.form_type,
+        form_type: normalizeFormType(f.form_type),
         service_slug: f.service_slug,
         service_id: f.service_id,
         treatment_slug: f.treatment_slug,
@@ -746,6 +755,10 @@ export default function EditServicePage() {
     }
   }, []);
 
+  useEffect(() => {
+    reloadClinicForms();
+  }, [reloadClinicForms]);
+
   const clinicFormsFiltered = useMemo(() => {
     const list = clinicForms || [];
     if (!onlyActiveForms) return list;
@@ -755,7 +768,7 @@ export default function EditServicePage() {
   const formTypeOptions = useMemo(() => {
     const set = new Set<string>();
     for (const f of clinicFormsFiltered) {
-      const t = (f.form_type || "").trim();
+      const t = normalizeFormType(f.form_type || "");
       if (t) set.add(t);
     }
     if (set.size === 0) {
@@ -773,7 +786,7 @@ export default function EditServicePage() {
   const formsByType = useMemo(() => {
     const map: Record<string, ClinicFormLite[]> = {};
     for (const f of clinicFormsFiltered) {
-      const t = (f.form_type || "").trim() || "unknown";
+      const t = normalizeFormType(f.form_type || "") || "unknown";
       if (!map[t]) map[t] = [];
       map[t].push(f);
     }
@@ -781,14 +794,14 @@ export default function EditServicePage() {
       map[k] = map[k]
         .slice()
         .sort((a, b) =>
-          String(a.name || "").localeCompare(String(b.name || ""))
+          String(a.name || "").localeCompare(String(b.name || "")),
         );
     });
     return map;
   }, [clinicFormsFiltered]);
 
   const addAssignmentRow = () => {
-    const firstType = formTypeOptions[0] || "raf";
+    const firstType = normalizeFormType(formTypeOptions[0] || "raf");
     setAssignmentRows((prev) => [
       ...prev,
       { id: createId("fa"), form_type: firstType, form_id: "" },
@@ -801,20 +814,28 @@ export default function EditServicePage() {
 
   const updateAssignmentRow = (
     rowId: string,
-    patch: Partial<FormAssignmentRow>
+    patch: Partial<FormAssignmentRow>,
   ) => {
     setAssignmentRows((prev) =>
-      prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r))
+      prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)),
     );
   };
 
   const formsAssignmentObject = useMemo(() => {
-    const out: Record<string, string> = {};
+    const bucket: Record<string, string[]> = {};
+
     for (const row of assignmentRows) {
-      const t = (row.form_type || "").trim();
-      const fid = (row.form_id || "").trim();
+      const t = normalizeFormType(row.form_type);
+      const fid = String(row.form_id || "").trim();
       if (!t || !fid) continue;
-      out[t] = fid;
+      if (!bucket[t]) bucket[t] = [];
+      bucket[t].push(fid);
+    }
+
+    const out: Record<string, string> = {};
+    for (const [t, ids] of Object.entries(bucket)) {
+      const uniq = Array.from(new Set(ids));
+      out[t] = uniq.length <= 1 ? uniq[0] || "" : uniq.join(",");
     }
     return out;
   }, [assignmentRows]);
@@ -828,17 +849,19 @@ export default function EditServicePage() {
   const [medExistingImagePath, setMedExistingImagePath] = useState<
     string | null
   >(null);
+  const medImageObjectUrlRef = useRef<string | null>(null);
+
   const [medSkuManuallyEdited, setMedSkuManuallyEdited] = useState(false);
   const [medSlugManuallyEdited, setMedSlugManuallyEdited] = useState(false);
   const [medSubmitting, setMedSubmitting] = useState(false);
   const [medError, setMedError] = useState<string | null>(null);
   const [medAllowReorder, setMedAllowReorder] = useState<"false" | "true">(
-    "false"
+    "false",
   );
 
-  // ✅ unlink popup state
+  // unlink popup state
   const [unlinkingMedicineId, setUnlinkingMedicineId] = useState<string | null>(
-    null
+    null,
   );
   const [unlinkConfirm, setUnlinkConfirm] = useState<{
     open: boolean;
@@ -855,7 +878,7 @@ export default function EditServicePage() {
         medicineName: med?.name || "this product",
       });
     },
-    [allMedicines]
+    [allMedicines],
   );
 
   const closeUnlinkConfirm = useCallback(() => {
@@ -870,11 +893,15 @@ export default function EditServicePage() {
       try {
         const data = await getServiceApi(id);
 
-        setName(data.name);
-        setSlug(data.slug);
-        setDescription(data.description);
+        setName(data.name || "");
+        setSlug(data.slug || "");
+        setSlugManuallyEdited(true);
+
+        setDescription(data.description || "");
         setCtaText(data.cta_text || "");
-        setViewType(data.view_type);
+        setViewType(
+          (data.view_type === "list" ? "list" : "card") as "card" | "list",
+        );
 
         const st = (data.service_type || data.serviceType || "private") as
           | "private"
@@ -882,24 +909,23 @@ export default function EditServicePage() {
         setServiceType(st === "nhs" ? "nhs" : "private");
 
         const am = String(
-          data.appointment_medium || data.appointmentMedium || "offline"
+          data.appointment_medium || data.appointmentMedium || "offline",
         );
         setAppointmentMedium(am === "online" ? "online" : "offline");
 
         const sh = String(
-          data.show_in_home_page || data.showInHomePage || "false"
+          data.show_in_home_page || data.showInHomePage || "false",
         );
-
         setShowInHomePage(sh === "true" ? "true" : "false");
 
         // IMAGE HANDLING
         if (data.image) {
-          setExistingImagePath(data.image);
-          const baseForImage = getBackendBase().replace(/\/api\/?$/, "");
+          setExistingImagePath(String(data.image));
+          const imgBase = baseForImagesFromApiBase(getBackendBase());
           const fullUrl =
             typeof data.image === "string" && data.image.startsWith("http")
               ? data.image
-              : `${baseForImage}/${String(data.image).replace(/^\/+/, "")}`;
+              : `${imgBase}/${String(data.image).replace(/^\/+/, "")}`;
           setImagePreview(fullUrl);
         } else {
           setExistingImagePath(null);
@@ -914,7 +940,6 @@ export default function EditServicePage() {
           console.warn("Failed to parse booking_flow JSON:", e);
           bookingObj = {};
         }
-
         setBookingFlow(
           [
             bookingObj.step1,
@@ -923,7 +948,7 @@ export default function EditServicePage() {
             bookingObj.step4,
             bookingObj.step5,
             bookingObj.step6,
-          ].filter(Boolean)
+          ].filter(Boolean),
         );
 
         // REORDER FLOW
@@ -934,7 +959,6 @@ export default function EditServicePage() {
           console.warn("Failed to parse reorder_flow JSON:", e);
           reorderObj = {};
         }
-
         setReorderFlow(
           [
             reorderObj.step1,
@@ -943,10 +967,10 @@ export default function EditServicePage() {
             reorderObj.step4,
             reorderObj.step5,
             reorderObj.step6,
-          ].filter(Boolean)
+          ].filter(Boolean),
         );
 
-        // ✅ FORMS ASSIGNMENT (load existing)
+        // FORMS ASSIGNMENT (load existing)
         let formsObj: any = {};
         try {
           const raw =
@@ -966,14 +990,18 @@ export default function EditServicePage() {
           formsObj = {};
         }
 
-        const rowsFromObj: FormAssignmentRow[] = Object.entries(formsObj || {})
-          .filter(([k, v]) => String(k || "").trim() && String(v || "").trim())
-          .map(([k, v]) => ({
-            id: createId("fa"),
-            form_type: String(k),
-            form_id: String(v),
-          }));
-
+        const rowsFromObj: FormAssignmentRow[] = [];
+        for (const [k, v] of Object.entries(formsObj || {})) {
+          const type = normalizeFormType(k);
+          const ids = parseFormIds(v);
+          for (const fid of ids) {
+            rowsFromObj.push({
+              id: createId("fa"),
+              form_type: type,
+              form_id: fid,
+            });
+          }
+        }
         setAssignmentRows(rowsFromObj);
       } catch (err) {
         console.error(err);
@@ -986,43 +1014,28 @@ export default function EditServicePage() {
     loadService();
   }, [id]);
 
-  // ---------- Load clinic forms ----------
-  useEffect(() => {
-    reloadClinicForms();
-  }, [reloadClinicForms]);
-
   /**
-   * ✅ Load medicines + service medicines without infinite loop.
-   * - deps: only [id]
-   * - useEffect: only [id] (NOT [id, loadMeds]) to avoid callback identity loops
-   * - 404 linked endpoint -> disable linked fetch to stop hammering server
+   * Load medicines + service medicines (no infinite loops)
    */
   const loadMeds = useCallback(
     async (opts?: { forceLinked?: boolean }) => {
       if (!id)
         return { all: [] as Medicine[], linked: [] as LinkedServiceMedicine[] };
 
-      // abort previous
       medsAbortRef.current?.abort();
       const ac = new AbortController();
       medsAbortRef.current = ac;
-
       const mySeq = ++medsReqSeqRef.current;
 
       setLoadingMeds(true);
       setMedsLoadError(null);
 
       try {
-        // 1) always load all medicines
+        // 1) all medicines
         let allList: Medicine[] = [];
         try {
           const medsRes = await getMedicinesApi();
-          if (mySeq !== medsReqSeqRef.current) {
-            return {
-              all: [] as Medicine[],
-              linked: [] as LinkedServiceMedicine[],
-            };
-          }
+          if (mySeq !== medsReqSeqRef.current) return { all: [], linked: [] };
           allList = unwrapArray<Medicine>(medsRes);
           setAllMedicines(allList);
         } catch (e) {
@@ -1031,78 +1044,55 @@ export default function EditServicePage() {
           allList = allMedsRef.current || [];
         }
 
-        // 2) load linked medicines (circuit-break on 404)
+        // 2) linked medicines
         let normalized: LinkedServiceMedicine[] = [];
+        try {
+          const base = getBackendBase();
+          const token = getTokenSafe();
+          const headers: HeadersInit = token
+            ? { Authorization: `Bearer ${token}` }
+            : {};
+          const url = `${base}/service-medicines/service/${id}`;
 
-        const shouldTryLinked =
-          opts?.forceLinked === true ? true : !linkedEndpointMissingRef.current;
+          const res = await fetch(url, {
+            method: "GET",
+            headers,
+            signal: ac.signal,
+            credentials: "include",
+          });
 
-        if (shouldTryLinked) {
-          try {
-            const base = getBackendBase();
-            const token =
-              typeof window !== "undefined"
-                ? localStorage.getItem("session_token")
-                : null;
+          if (mySeq !== medsReqSeqRef.current) return { all: [], linked: [] };
 
-            const headers: HeadersInit = token
-              ? { Authorization: `Bearer ${token}` }
-              : {};
-
-            const url = `${base}/service-medicines/service/${id}`;
-
-            const res = await fetch(url, {
-              method: "GET",
-              headers,
-              signal: ac.signal,
-            });
-
-            if (mySeq !== medsReqSeqRef.current) {
-              return {
-                all: [] as Medicine[],
-                linked: [] as LinkedServiceMedicine[],
-              };
-            }
-
-            if (res.status === 404) {
-              linkedEndpointMissingRef.current = true;
-              if (!loggedLinked404Ref.current) {
-                loggedLinked404Ref.current = true;
-                console.warn(
-                  "Linked products endpoint returned 404. Disabling automatic linked fetch.",
-                  url
-                );
-              }
-              setMedsLoadError(
-                (prev) => prev ?? "No product is linked to this service."
-              );
-              normalized = [];
-            } else if (!res.ok) {
-              const txt = await res.text().catch(() => "");
-              console.error("Linked products fetch failed:", res.status, txt);
-              setMedsLoadError(
-                (prev) => prev ?? "Product links could not be loaded."
-              );
-              normalized = [];
-            } else {
-              const json = await res.json().catch(() => null);
-              normalized = normalizeLinkedServiceMedicines(json);
-            }
-          } catch (e: any) {
-            if (e?.name !== "AbortError") {
-              console.error("Linked products fetch error:", e);
-              setMedsLoadError(
-                (prev) => prev ?? "Product links could not be loaded."
-              );
-            }
+          if (res.status === 404) {
+            // treat as "no links" (some backends use 404 for empty)
             normalized = [];
+            setMedsLoadError(
+              (prev) => prev ?? "No product is linked to this service.",
+            );
+          } else if (!res.ok) {
+            const txt = await res.text().catch(() => "");
+            console.error("Linked products fetch failed:", res.status, txt);
+            normalized = [];
+            setMedsLoadError(
+              (prev) => prev ?? "Product links could not be loaded.",
+            );
+          } else {
+            const json = await res.json().catch(() => null);
+            normalized = normalizeLinkedServiceMedicines(json);
           }
+        } catch (e: any) {
+          if (e?.name !== "AbortError") {
+            console.error("Linked products fetch error:", e);
+            setMedsLoadError(
+              (prev) => prev ?? "Product links could not be loaded.",
+            );
+          }
+          normalized = [];
         }
 
         setLinkedServiceMedicines(normalized);
 
         const source = allList.length ? allList : allMedsRef.current || [];
-
         setLinkedMedicines(
           normalized.map((x) => ({
             _id: x.medicineId,
@@ -1115,7 +1105,7 @@ export default function EditServicePage() {
               x.strength ??
               source.find((m) => m._id === x.medicineId)?.strength ??
               null,
-          }))
+          })),
         );
 
         return { all: source, linked: normalized };
@@ -1123,7 +1113,7 @@ export default function EditServicePage() {
         if (mySeq === medsReqSeqRef.current) setLoadingMeds(false);
       }
     },
-    [id]
+    [id],
   );
 
   useEffect(() => {
@@ -1136,20 +1126,20 @@ export default function EditServicePage() {
   const saveService = async () => {
     if (!id) return;
     setSaving(true);
+
     try {
       const formatFlow = (arr: string[]) =>
         Object.fromEntries(
           Array.from({ length: 6 }).map((_, i) => [
             `step${i + 1}`,
             arr[i] ?? null,
-          ])
+          ]),
         );
 
       const booking = formatFlow(bookingFlow);
       const reorder = formatFlow(reorderFlow);
 
       const formData = new FormData();
-
       formData.append("name", name);
       formData.append("slug", slug);
       formData.append("description", description);
@@ -1160,10 +1150,14 @@ export default function EditServicePage() {
       formData.append("appointment_medium", appointmentMedium);
       formData.append("booking_flow", JSON.stringify(booking));
       formData.append("reorder_flow", JSON.stringify(reorder));
+
+      // ✅ be defensive: support either key
       formData.append("showInHomePage", showInHomePage);
+      formData.append("show_in_home_page", showInHomePage);
+
       formData.append(
         "forms_assignment",
-        JSON.stringify(formsAssignmentObject)
+        JSON.stringify(formsAssignmentObject),
       );
 
       if (imageFile) {
@@ -1173,11 +1167,7 @@ export default function EditServicePage() {
       }
 
       const base = getBackendBase();
-      const token =
-        typeof window !== "undefined"
-          ? localStorage.getItem("session_token")
-          : null;
-
+      const token = getTokenSafe();
       const headers: HeadersInit = token
         ? { Authorization: `Bearer ${token}` }
         : {};
@@ -1186,6 +1176,7 @@ export default function EditServicePage() {
         method: "PUT",
         body: formData,
         headers,
+        credentials: "include",
       });
 
       if (!res.ok) {
@@ -1206,7 +1197,6 @@ export default function EditServicePage() {
   };
 
   // ------- Service Medicines handlers -------
-
   const addMedicineRow = () => {
     setServiceMedicineRows((prev) => [
       ...prev,
@@ -1223,10 +1213,10 @@ export default function EditServicePage() {
 
   const updateMedicineRow = (
     key: string,
-    patch: Partial<ServiceMedicineRow>
+    patch: Partial<ServiceMedicineRow>,
   ) => {
     setServiceMedicineRows((prev) =>
-      prev.map((row) => (row.key === key ? { ...row, ...patch } : row))
+      prev.map((row) => (row.key === key ? { ...row, ...patch } : row)),
     );
   };
 
@@ -1259,19 +1249,18 @@ export default function EditServicePage() {
         await createServiceMedicineApi(payload);
       }
 
-      toast.success("Medicines linked to service successfully");
-
+      toast.success("Products linked to service successfully");
       setServiceMedicineRows([]);
-      await loadMeds({ forceLinked: true }); // try refresh after creating links
+      await loadMeds({ forceLinked: true });
     } catch (err) {
       console.error(err);
-      toast.error("Failed to link medicines to this service");
+      toast.error("Failed to link products to this service");
     } finally {
       setSavingMeds(false);
     }
   };
 
-  // ✅ Build mapping: medicineId -> service_medicine_id
+  // medicineId -> service_medicine_id
   const linkedByMedicineId = useMemo(() => {
     const map = new Map<string, string>();
     for (const row of linkedServiceMedicines) {
@@ -1280,7 +1269,7 @@ export default function EditServicePage() {
     return map;
   }, [linkedServiceMedicines]);
 
-  // Linked items that appear linked but missing linkId (rare backend shape)
+  // linked but missing linkId (rare)
   const linkedIdsNoLinkId = useMemo(() => {
     const set = new Set<string>();
     for (const row of linkedServiceMedicines) {
@@ -1291,18 +1280,17 @@ export default function EditServicePage() {
 
   const selectedIds = useMemo(() => {
     return new Set(
-      serviceMedicineRows.map((r) => r.medicineId).filter(Boolean)
+      serviceMedicineRows.map((r) => r.medicineId).filter(Boolean),
     );
   }, [serviceMedicineRows]);
 
-  // ✅ Confirm unlink (intelligent handling)
+  // Confirm unlink
   const confirmUnlinkMedicine = useCallback(async () => {
     const medicineId = unlinkConfirm.medicineId;
     if (!medicineId) return;
 
     let linkId = linkedByMedicineId.get(medicineId);
 
-    // Intelligent recovery: refresh once if mapping missing
     if (!linkId) {
       toast.info("Refreshing product links…");
       const refreshed = await loadMeds({ forceLinked: true });
@@ -1312,7 +1300,7 @@ export default function EditServicePage() {
 
     if (!linkId) {
       toast.error(
-        "Unable to unlink: service_medicine_id not available from backend. Please refresh and try again."
+        "Unable to unlink: service_medicine_id not available from backend. Please refresh and try again.",
       );
       closeUnlinkConfirm();
       return;
@@ -1337,7 +1325,6 @@ export default function EditServicePage() {
     closeUnlinkConfirm,
   ]);
 
-  // If popup is open but item becomes unlinked (after reload), close it
   useEffect(() => {
     if (!unlinkConfirm.open) return;
     const stillLinked =
@@ -1355,13 +1342,17 @@ export default function EditServicePage() {
   // ---------- Inline Medicine Modal handlers ----------
   const openMedCreate = () => {
     setEditingMed(null);
-    setMedForm({
-      ...MED_EMPTY_FORM,
-      variations: [MED_EMPTY_VARIATION],
-    });
+    setMedForm({ ...MED_EMPTY_FORM, variations: [MED_EMPTY_VARIATION] });
+
+    if (medImageObjectUrlRef.current) {
+      URL.revokeObjectURL(medImageObjectUrlRef.current);
+      medImageObjectUrlRef.current = null;
+    }
+
     setMedImageFile(null);
     setMedImagePreview(null);
     setMedExistingImagePath(null);
+
     setMedSkuManuallyEdited(false);
     setMedSlugManuallyEdited(false);
     setMedError(null);
@@ -1394,16 +1385,21 @@ export default function EditServicePage() {
       variations: mappedVariations,
     });
 
-      setMedAllowReorder(med.allow_reorder === "true" ? "true" : "false");
+    setMedAllowReorder(med.allow_reorder === "true" ? "true" : "false");
+
+    if (medImageObjectUrlRef.current) {
+      URL.revokeObjectURL(medImageObjectUrlRef.current);
+      medImageObjectUrlRef.current = null;
+    }
 
     setMedImageFile(null);
     setMedExistingImagePath(med.image || null);
 
     if (med.image) {
-      const baseForImage = getBackendBase().replace(/\/api\/?$/, "");
+      const imgBase = baseForImagesFromApiBase(getBackendBase());
       const fullUrl = med.image.startsWith("http")
         ? med.image
-        : `${baseForImage}/${med.image.replace(/^\/+/, "")}`;
+        : `${imgBase}/${med.image.replace(/^\/+/, "")}`;
       setMedImagePreview(fullUrl);
     } else {
       setMedImagePreview(null);
@@ -1424,7 +1420,7 @@ export default function EditServicePage() {
   const handleMedChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    >,
   ) => {
     const { name, value } = e.target;
 
@@ -1433,25 +1429,16 @@ export default function EditServicePage() {
         const updated: MedFormState = { ...prev, name: value };
         const autoSlug = slugifyMed(value);
 
-        if (!medSlugManuallyEdited) {
-          updated.slug = autoSlug;
-        }
-        if (!medSkuManuallyEdited) {
-          updated.sku = autoSlug;
-        }
+        if (!medSlugManuallyEdited) updated.slug = autoSlug;
+        if (!medSkuManuallyEdited) updated.sku = autoSlug;
 
         return updated;
       });
       return;
     }
 
-    if (name === "slug") {
-      setMedSlugManuallyEdited(true);
-    }
-
-    if (name === "sku") {
-      setMedSkuManuallyEdited(true);
-    }
+    if (name === "slug") setMedSlugManuallyEdited(true);
+    if (name === "sku") setMedSkuManuallyEdited(true);
 
     setMedForm((prev) => ({ ...prev, [name]: value }));
   };
@@ -1459,7 +1446,7 @@ export default function EditServicePage() {
   const handleMedVariationChange = (
     index: number,
     field: keyof MedVariationForm,
-    value: string
+    value: string,
   ) => {
     setMedForm((prev) => {
       const updated = [...prev.variations];
@@ -1473,10 +1460,7 @@ export default function EditServicePage() {
       ...prev,
       variations: [
         ...prev.variations,
-        {
-          ...MED_EMPTY_VARIATION,
-          sort_order: String(prev.variations.length),
-        },
+        { ...MED_EMPTY_VARIATION, sort_order: String(prev.variations.length) },
       ],
     }));
   };
@@ -1490,6 +1474,10 @@ export default function EditServicePage() {
   };
 
   const handleMedRemoveImage = () => {
+    if (medImageObjectUrlRef.current) {
+      URL.revokeObjectURL(medImageObjectUrlRef.current);
+      medImageObjectUrlRef.current = null;
+    }
     setMedImageFile(null);
     setMedImagePreview(null);
     setMedExistingImagePath(null);
@@ -1501,12 +1489,8 @@ export default function EditServicePage() {
     setMedError(null);
 
     try {
-      if (!medForm.name.trim()) {
-        throw new Error("Name is required.");
-      }
-      if (!medForm.sku.trim()) {
-        throw new Error("SKU is required.");
-      }
+      if (!medForm.name.trim()) throw new Error("Name is required.");
+      if (!medForm.sku.trim()) throw new Error("SKU is required.");
 
       const variationsPayload = medForm.variations
         .filter((v) => v.title.trim())
@@ -1519,8 +1503,8 @@ export default function EditServicePage() {
           sort_order: v.sort_order
             ? Number(v.sort_order)
             : Number.isFinite(index)
-            ? index
-            : 0,
+              ? index
+              : 0,
         }));
 
       if (variationsPayload.length === 0) {
@@ -1545,14 +1529,8 @@ export default function EditServicePage() {
         : `${base}/medicines`;
       const method = editingMed?._id ? "PUT" : "POST";
 
-      const token =
-        typeof window !== "undefined"
-          ? localStorage.getItem("session_token")
-          : null;
-
-      if (!token) {
-        throw new Error("No authentication token found.");
-      }
+      const token = getTokenSafe();
+      if (!token) throw new Error("No authentication token found.");
 
       const fd = new FormData();
       fd.append("sku", payload.sku);
@@ -1562,22 +1540,21 @@ export default function EditServicePage() {
       fd.append("status", payload.status);
       fd.append("max_bookable_quantity", String(payload.max_bookable_quantity));
       fd.append("allow_reorder", payload.allow_reorder);
-
       fd.append("is_virtual", String(payload.is_virtual));
       fd.append("variations", JSON.stringify(payload.variations));
 
+      // ✅ important fix: don't send existing path in "image" (file field). Use existingImage.
       if (medImageFile) {
         fd.append("image", medImageFile);
       } else if (medExistingImagePath) {
-        fd.append("image", medExistingImagePath);
+        fd.append("existingImage", medExistingImagePath);
       }
 
       const res = await fetch(url, {
         method,
         body: fd,
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
       });
 
       if (!res.ok) {
@@ -1586,7 +1563,7 @@ export default function EditServicePage() {
       }
 
       await loadMeds({ forceLinked: true });
-      toast.success(editingMed ? "product updated" : "product created");
+      toast.success(editingMed ? "Product updated" : "Product created");
       closeMedModal();
     } catch (err: any) {
       console.error(err);
@@ -1667,14 +1644,17 @@ export default function EditServicePage() {
                   <input
                     value={name}
                     onChange={(e) => {
-                      setName(e.target.value);
-                      setSlug(
-                        e.target.value
-                          .toLowerCase()
-                          .trim()
-                          .replace(/\s+/g, "-")
-                          .replace(/[^a-z0-9\-]/g, "")
-                      );
+                      const v = e.target.value;
+                      setName(v);
+                      if (!slugManuallyEdited) {
+                        setSlug(
+                          v
+                            .toLowerCase()
+                            .trim()
+                            .replace(/\s+/g, "-")
+                            .replace(/[^a-z0-9\-]/g, ""),
+                        );
+                      }
                     }}
                     placeholder="e.g. HIV Vaccination"
                     className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -1687,10 +1667,17 @@ export default function EditServicePage() {
                   </label>
                   <input
                     value={slug}
-                    onChange={(e) => setSlug(e.target.value)}
+                    onChange={(e) => {
+                      setSlugManuallyEdited(true);
+                      setSlug(e.target.value);
+                    }}
                     placeholder="hiv-vaccination"
                     className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                   />
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Tip: if you want auto-slug from name again, clear the slug
+                    and refresh this page.
+                  </p>
                 </div>
 
                 {/* Service Type */}
@@ -1702,7 +1689,7 @@ export default function EditServicePage() {
                     value={serviceType}
                     onChange={(e) =>
                       setServiceType(
-                        e.target.value === "nhs" ? "nhs" : "private"
+                        e.target.value === "nhs" ? "nhs" : "private",
                       )
                     }
                     className="mt-1 w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -1712,7 +1699,7 @@ export default function EditServicePage() {
                   </select>
                 </div>
 
-                {/* ✅ Appointment medium */}
+                {/* Appointment medium */}
                 <div className="sm:col-span-2">
                   <label className="text-xs font-medium text-neutral-300 mr-5">
                     Appointment medium
@@ -1721,7 +1708,7 @@ export default function EditServicePage() {
                     type="button"
                     onClick={() =>
                       setAppointmentMedium((prev) =>
-                        prev === "offline" ? "online" : "offline"
+                        prev === "offline" ? "online" : "offline",
                       )
                     }
                     className={`mt-1 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
@@ -1749,7 +1736,7 @@ export default function EditServicePage() {
                     type="button"
                     onClick={() =>
                       setShowInHomePage((prev) =>
-                        prev === "true" ? "false" : "true"
+                        prev === "true" ? "false" : "true",
                       )
                     }
                     className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
@@ -1819,7 +1806,7 @@ export default function EditServicePage() {
             setSelectedOption={setSelectedReorderOption}
           />
 
-          {/* ---------------- NEW: ASSIGN FORMS SECTION ---------------- */}
+          {/* Assign Forms */}
           <SectionCard
             title="Assign Forms"
             subtitle="Choose which clinic forms this service should use (saved into forms_assignment)."
@@ -1856,41 +1843,49 @@ export default function EditServicePage() {
                 </button>
               </div>
 
-              {clinicFormsLoading && (
+              {clinicFormsLoading ? (
                 <p className="text-xs text-neutral-500">
                   Loading clinic forms…
                 </p>
-              )}
+              ) : null}
 
-              {!clinicFormsLoading && clinicFormsFiltered.length === 0 && (
+              {!clinicFormsLoading && clinicFormsFiltered.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-4 py-3 text-xs text-neutral-500">
                   No clinic forms found. Create forms first, then come back here
                   to assign them.
                 </div>
-              )}
+              ) : null}
 
-              {assignmentRows.length === 0 && (
+              {assignmentRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/60 px-4 py-3 text-xs text-neutral-500">
                   No assignments yet. Click “Add assignment” to map a form type
                   to a clinic form.
                 </div>
-              )}
+              ) : null}
 
               {assignmentRows.map((row) => {
-                const usedTypes = new Set(
-                  assignmentRows
-                    .filter((r) => r.id !== row.id)
-                    .map((r) => (r.form_type || "").trim())
-                    .filter(Boolean)
-                );
-
+                const currentType = normalizeFormType(row.form_type);
                 const availableTypes = Array.from(
                   new Set(
-                    [...(formTypeOptions || []), row.form_type].filter(Boolean)
-                  )
+                    [...(formTypeOptions || []), currentType]
+                      .map((t) => normalizeFormType(t))
+                      .filter(Boolean),
+                  ),
                 );
 
-                const list = formsByType[row.form_type] || [];
+                const list = formsByType[currentType] || [];
+
+                // prevent selecting SAME form twice for the same type
+                const usedFormIdsForThisType = new Set(
+                  assignmentRows
+                    .filter(
+                      (r) =>
+                        r.id !== row.id &&
+                        normalizeFormType(r.form_type) === currentType,
+                    )
+                    .map((r) => String(r.form_id || "").trim())
+                    .filter(Boolean),
+                );
 
                 return (
                   <div
@@ -1917,17 +1912,9 @@ export default function EditServicePage() {
                           Form type
                         </label>
                         <select
-                          value={row.form_type}
+                          value={currentType}
                           onChange={(e) => {
-                            const nextType = e.target.value;
-
-                            if (usedTypes.has(nextType)) {
-                              toast.error(
-                                "This form type is already assigned. Use a different type."
-                              );
-                              return;
-                            }
-
+                            const nextType = normalizeFormType(e.target.value);
                             updateAssignmentRow(row.id, {
                               form_type: nextType,
                               form_id: "",
@@ -1972,7 +1959,11 @@ export default function EditServicePage() {
                               : "";
 
                             return (
-                              <option key={f._id} value={f._id}>
+                              <option
+                                key={f._id}
+                                value={f._id}
+                                disabled={usedFormIdsForThisType.has(f._id)}
+                              >
                                 {(f.name || "Unnamed form") + meta}
                               </option>
                             );
@@ -1998,12 +1989,11 @@ export default function EditServicePage() {
               </div>
             </div>
           </SectionCard>
-          {/* ---------------- END: ASSIGN FORMS SECTION ---------------- */}
 
-          {/* Service Medicines */}
+          {/* Service Products */}
           <SectionCard title="Service Products">
             <div className="space-y-5">
-              {/* Already linked medicines */}
+              {/* Already linked */}
               <div className="space-y-2">
                 {loadingMeds ? (
                   <div className="text-xs text-neutral-500 flex items-center gap-2">
@@ -2011,7 +2001,7 @@ export default function EditServicePage() {
                   </div>
                 ) : linkedMedicines.length === 0 ? (
                   <div className="text-xs text-neutral-500">
-                    No medicines linked to this service yet.
+                    No products linked to this service yet.
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-2">
@@ -2021,23 +2011,24 @@ export default function EditServicePage() {
                         className="inline-flex items-center gap-1 rounded-full bg-neutral-900 px-3 py-1 text-xs text-neutral-100 border border-neutral-700 shadow-sm"
                       >
                         {m.name}
-                        {m.strength && (
+                        {m.strength ? (
                           <span className="text-neutral-400">
                             · {m.strength}
                           </span>
-                        )}
+                        ) : null}
                       </span>
                     ))}
                   </div>
                 )}
               </div>
+
               <div className="h-px bg-neutral-800" />
 
-              {medsLoadError && (
+              {medsLoadError ? (
                 <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                   {medsLoadError}
                 </div>
-              )}
+              ) : null}
 
               {/* New mapping rows */}
               <div className="space-y-3">
@@ -2070,7 +2061,7 @@ export default function EditServicePage() {
                   </div>
                 </div>
 
-                {serviceMedicineRows.length === 0 && (
+                {serviceMedicineRows.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-neutral-700 bg-neutral-900/70 px-4 py-3 text-xs text-neutral-500">
                     No pending product mappings. Click{" "}
                     <span className="font-semibold text-neutral-300">
@@ -2082,7 +2073,7 @@ export default function EditServicePage() {
                     </span>{" "}
                     to start linking products to this service.
                   </div>
-                )}
+                ) : null}
 
                 <div className="space-y-3">
                   {serviceMedicineRows.map((row, idx) => (
@@ -2100,16 +2091,16 @@ export default function EditServicePage() {
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
-                          {row.medicineId && (
+                          {row.medicineId ? (
                             <button
                               type="button"
                               onClick={() => {
                                 const med = allMedicines.find(
-                                  (m) => m._id === row.medicineId
+                                  (m) => m._id === row.medicineId,
                                 );
                                 if (!med) {
                                   toast.error(
-                                    "Selected product not found. Try refreshing."
+                                    "Selected product not found. Try refreshing.",
                                   );
                                   return;
                                 }
@@ -2119,7 +2110,7 @@ export default function EditServicePage() {
                             >
                               Edit product
                             </button>
-                          )}
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => removeMedicineRow(row.key)}
@@ -2132,7 +2123,7 @@ export default function EditServicePage() {
                       </div>
 
                       <div className="grid gap-3 sm:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))_auto] items-end">
-                        {/* ✅ Product dropdown (supports unlink for linked items) */}
+                        {/* Product dropdown */}
                         <div className="sm:col-span-1">
                           <label className="mb-1 block text-xs font-medium text-neutral-300">
                             Product
@@ -2238,7 +2229,7 @@ export default function EditServicePage() {
                   ))}
                 </div>
 
-                {serviceMedicineRows.length > 0 && (
+                {serviceMedicineRows.length > 0 ? (
                   <div className="flex justify-end pt-1">
                     <button
                       type="button"
@@ -2246,13 +2237,13 @@ export default function EditServicePage() {
                       disabled={savingMeds}
                       className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-md hover:bg-blue-500 disabled:opacity-60"
                     >
-                      {savingMeds && (
+                      {savingMeds ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
-                      )}
+                      ) : null}
                       {savingMeds ? "Saving products..." : "Save products"}
                     </button>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </SectionCard>
@@ -2268,9 +2259,8 @@ export default function EditServicePage() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <div
                 className="relative h-44 w-full max-w-[11rem] cursor-pointer overflow-hidden rounded-xl border border-dashed border-neutral-700 bg-neutral-900/80 shadow-inner hover:border-blue-500/70 hover:bg-neutral-800/80 transition-colors"
-                onClick={() =>
-                  !imagePreview && document.getElementById("edit-img")?.click()
-                }
+                onClick={() => document.getElementById("edit-img")?.click()}
+                title="Click to change image"
               >
                 {imagePreview ? (
                   <>
@@ -2281,16 +2271,21 @@ export default function EditServicePage() {
                       alt="Service"
                     />
                     <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/40 to-transparent px-2 py-1.5 text-[11px] text-neutral-100">
-                      Service thumbnail
+                      Click to change
                     </div>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (serviceImageObjectUrlRef.current) {
+                          URL.revokeObjectURL(serviceImageObjectUrlRef.current);
+                          serviceImageObjectUrlRef.current = null;
+                        }
                         setImagePreview(null);
                         setImageFile(null);
                         setExistingImagePath(null);
                       }}
                       className="absolute top-2 right-2 inline-flex h-7 w-7 items-center justify-center rounded-full bg-red-600/90 text-white shadow hover:bg-red-500 transition-colors"
+                      title="Remove image"
                     >
                       <X size={14} />
                     </button>
@@ -2330,8 +2325,19 @@ export default function EditServicePage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
+
+                  // cleanup previous object url
+                  if (serviceImageObjectUrlRef.current) {
+                    URL.revokeObjectURL(serviceImageObjectUrlRef.current);
+                    serviceImageObjectUrlRef.current = null;
+                  }
+
+                  const url = URL.createObjectURL(file);
+                  serviceImageObjectUrlRef.current = url;
+
                   setImageFile(file);
-                  setImagePreview(URL.createObjectURL(file));
+                  setExistingImagePath(null);
+                  setImagePreview(url);
                 }}
               />
             </div>
@@ -2345,7 +2351,9 @@ export default function EditServicePage() {
             <div className="flex flex-col gap-3">
               <select
                 value={viewType}
-                onChange={(e) => setViewType(e.target.value)}
+                onChange={(e) =>
+                  setViewType(e.target.value === "list" ? "list" : "card")
+                }
                 className="w-full rounded-lg bg-neutral-900/80 border border-neutral-700 px-3 py-2 text-sm text-neutral-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
               >
                 <option value="card">Card layout</option>
@@ -2360,8 +2368,8 @@ export default function EditServicePage() {
         </div>
       </div>
 
-      {/* ✅ In-app Confirm Popup for Unlink */}
-      {unlinkConfirm.open && (
+      {/* Confirm Popup for Unlink */}
+      {unlinkConfirm.open ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="w-full max-w-md rounded-2xl border border-neutral-800/80 bg-gradient-to-b from-neutral-900 to-neutral-950 shadow-[0_18px_60px_rgba(0,0,0,0.85)]">
             <div className="flex items-start justify-between gap-3 border-b border-neutral-800 px-5 py-4">
@@ -2424,10 +2432,10 @@ export default function EditServicePage() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* --------- Inline Medicine Modal (create + edit) --------- */}
-      {isMedModalOpen && (
+      {/* Inline Medicine Modal (create + edit) */}
+      {isMedModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="w-full max-w-2xl rounded-2xl bg-gradient-to-b from-neutral-900 to-neutral-950 border border-neutral-800/80 shadow-[0_18px_60px_rgba(0,0,0,0.85)] transform transition-all duration-200 scale-100">
             {/* Header */}
@@ -2458,11 +2466,11 @@ export default function EditServicePage() {
               className="flex flex-col max-h-[78vh]"
             >
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 pr-3">
-                {medError && (
+                {medError ? (
                   <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
                     {medError}
                   </div>
-                )}
+                ) : null}
 
                 {/* Section: Basic details */}
                 <div>
@@ -2554,31 +2562,39 @@ export default function EditServicePage() {
                       <label className="mb-1 block text-xs font-medium text-neutral-300">
                         Allow re-order
                       </label>
-<button
-  type="button"
-  onClick={() => setMedAllowReorder((prev) => (prev === "true" ? "false" : "true"))}
-  className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
-    medAllowReorder === "true"
-      ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
-      : "bg-neutral-800 text-neutral-300 border border-neutral-600"
-  }`}
->
-  <span
-    className={`inline-block h-[10px] w-[10px] rounded-full ${
-      medAllowReorder === "true" ? "bg-emerald-400" : "bg-neutral-500"
-    }`}
-  />
-  {medAllowReorder === "true" ? "Re-order allowed" : "Re-order not allowed"}
-</button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMedAllowReorder((prev) =>
+                            prev === "true" ? "false" : "true",
+                          )
+                        }
+                        className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs font-medium transition-colors ${
+                          medAllowReorder === "true"
+                            ? "bg-emerald-500/15 text-neutral-300 border-neutral-600"
+                            : "bg-neutral-800 text-neutral-300 border border-neutral-600"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block h-[10px] w-[10px] rounded-full ${
+                            medAllowReorder === "true"
+                              ? "bg-emerald-400"
+                              : "bg-neutral-500"
+                          }`}
+                        />
+                        {medAllowReorder === "true"
+                          ? "Re-order allowed"
+                          : "Re-order not allowed"}
+                      </button>
                       <p className="mt-1 text-[11px] text-neutral-500">
                         Toggle to control whether this product can be ordered
-                        again by patients.
+                        again.
                       </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Section: Variations & pricing */}
+                {/* Section: Variations */}
                 <div>
                   <div className="mb-3 flex items-center gap-2">
                     <div className="h-6 w-6 rounded-full bg-amber-500/10 flex items-center justify-center text-[11px] text-amber-400 border border-amber-500/30">
@@ -2606,11 +2622,11 @@ export default function EditServicePage() {
                             <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
                               Variation #{index + 1}
                             </span>
-                            {variation.title && (
+                            {variation.title ? (
                               <span className="text-xs text-neutral-300">
                                 ({variation.title})
                               </span>
-                            )}
+                            ) : null}
                           </div>
                           <button
                             type="button"
@@ -2634,7 +2650,7 @@ export default function EditServicePage() {
                                 handleMedVariationChange(
                                   index,
                                   "title",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               required
@@ -2659,7 +2675,7 @@ export default function EditServicePage() {
                                   handleMedVariationChange(
                                     index,
                                     "price",
-                                    e.target.value
+                                    e.target.value,
                                   )
                                 }
                                 className="w-full bg-transparent text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none"
@@ -2679,7 +2695,7 @@ export default function EditServicePage() {
                                 handleMedVariationChange(
                                   index,
                                   "stock",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -2698,7 +2714,7 @@ export default function EditServicePage() {
                                 handleMedVariationChange(
                                   index,
                                   "max_qty",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -2719,7 +2735,7 @@ export default function EditServicePage() {
                                 handleMedVariationChange(
                                   index,
                                   "sort_order",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -2735,7 +2751,7 @@ export default function EditServicePage() {
                                 handleMedVariationChange(
                                   index,
                                   "status",
-                                  e.target.value
+                                  e.target.value,
                                 )
                               }
                               className="w-full rounded-lg border border-neutral-700 bg-neutral-900/80 px-3 py-2 text-sm text-neutral-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
@@ -2820,7 +2836,7 @@ export default function EditServicePage() {
                               Choose file
                             </button>
 
-                            {(medImagePreview || medExistingImagePath) && (
+                            {medImagePreview || medExistingImagePath ? (
                               <button
                                 type="button"
                                 onClick={handleMedRemoveImage}
@@ -2828,7 +2844,7 @@ export default function EditServicePage() {
                               >
                                 Remove
                               </button>
-                            )}
+                            ) : null}
                           </div>
                           <span className="text-[11px] text-neutral-500">
                             JPG or PNG, a few MB max.
@@ -2843,8 +2859,17 @@ export default function EditServicePage() {
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
+
+                          if (medImageObjectUrlRef.current) {
+                            URL.revokeObjectURL(medImageObjectUrlRef.current);
+                            medImageObjectUrlRef.current = null;
+                          }
+
+                          const url = URL.createObjectURL(file);
+                          medImageObjectUrlRef.current = url;
+
                           setMedImageFile(file);
-                          setMedImagePreview(URL.createObjectURL(file));
+                          setMedImagePreview(url);
                           setMedExistingImagePath(null);
                         }}
                       />
@@ -2887,14 +2912,14 @@ export default function EditServicePage() {
                       ? "Saving..."
                       : "Creating..."
                     : editingMed
-                    ? "Save changes"
-                    : "Create product"}
+                      ? "Save changes"
+                      : "Create product"}
                 </button>
               </div>
             </form>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
