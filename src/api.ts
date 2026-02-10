@@ -92,7 +92,7 @@ function toHeaders(init?: HeadersInit): Headers {
 
 async function jsonFetch<T>(
   url: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
 ): Promise<T> {
   const headers = toHeaders(options.headers);
 
@@ -162,6 +162,7 @@ export async function loginApi(email: string, password: string) {
 
 /* ------------------- Services APIs ------------------- */
 export type AppointmentMedium = "offline" | "online";
+export type ShowHomePage = "false" | "true";
 
 export type ServicePayload = {
   name: string;
@@ -177,6 +178,7 @@ export type ServicePayload = {
   image: string | null;
   service_type?: "private" | "nhs" | string;
   appointment_medium?: AppointmentMedium;
+  showInHomePage?: ShowHomePage;
 };
 
 export async function createServiceApi(payload: ServicePayload) {
@@ -186,6 +188,7 @@ export async function createServiceApi(payload: ServicePayload) {
     ...payload,
     service_type: payload.service_type ?? "private",
     appointment_medium: payload.appointment_medium ?? "offline",
+    showInHomePage: payload.showInHomePage ?? "false",
   };
 
   return jsonFetch<any>(`${base}/services`, {
@@ -203,7 +206,7 @@ export async function getServiceApi(id: string | string[]) {
 
 export async function updateServiceApi(
   id: string | string[],
-  payload: ServicePayload
+  payload: ServicePayload,
 ) {
   const base = getBackendBase();
 
@@ -211,6 +214,7 @@ export async function updateServiceApi(
     ...payload,
     service_type: payload.service_type ?? "private",
     appointment_medium: payload.appointment_medium ?? "offline",
+    showInHomePage: payload.showInHomePage ?? "false",
   };
 
   return jsonFetch<any>(`${base}/services/${id}`, {
@@ -240,7 +244,7 @@ export type PharmacistPayload = {
 
 export async function createPharmacistApi(
   subdomain: string,
-  payload: PharmacistPayload
+  payload: PharmacistPayload,
 ) {
   const protocol =
     typeof window !== "undefined" ? window.location.protocol : "http:";
@@ -287,7 +291,7 @@ export async function updateTenantIntegrationApi(
     clickanddrop_defaultService: string;
     clickanddrop_defaultPackage: string;
     clickanddrop_minWeightG: number;
-  }
+  },
 ) {
   const protocol =
     typeof window !== "undefined" ? window.location.protocol : "http:";
@@ -366,7 +370,7 @@ export type MedicineDto = {
 async function formDataRequest<T>(
   url: string,
   method: "POST" | "PUT",
-  payload: MedicinePayload
+  payload: MedicinePayload,
 ): Promise<T> {
   const formData = new FormData();
 
@@ -378,7 +382,7 @@ async function formDataRequest<T>(
 
   formData.append(
     "max_bookable_quantity",
-    String(payload.max_bookable_quantity ?? 2)
+    String(payload.max_bookable_quantity ?? 2),
   );
   formData.append("allow_reorder", String(payload.allow_reorder ?? true));
   formData.append("is_virtual", String(payload.is_virtual ?? false));
@@ -444,7 +448,7 @@ export async function updateMedicineApi(id: string, payload: MedicinePayload) {
 
 // GET /service-medicines/service/:service_id -> medicines linked to a service
 export async function getServiceMedicinesByServiceApi(
-  serviceId: string
+  serviceId: string,
 ): Promise<MedicineDto[]> {
   const base = getBackendBase();
   const url = `${base}/service-medicines/service/${serviceId}`;
@@ -462,7 +466,7 @@ export type ServiceMedicinePayload = {
 };
 
 export async function createServiceMedicineApi(
-  payload: ServiceMedicinePayload
+  payload: ServiceMedicinePayload,
 ) {
   const base = getBackendBase();
 
@@ -670,7 +674,7 @@ export async function updateUserApi(userId: string, payload: any) {
 export async function updateUserWithFormDataApi(
   userId: string,
   payload: Record<string, any>,
-  signatureFile?: File | null
+  signatureFile?: File | null,
 ) {
   const base = getBackendBase();
   const url = `${base}/users/${userId}`;
@@ -856,7 +860,7 @@ export async function getClinicFormsApi() {
 
 export async function updateClinicFormApi(
   id: string,
-  payload: Partial<ClinicFormPayload>
+  payload: Partial<ClinicFormPayload>,
 ) {
   const base = getBackendBase();
   return jsonFetch<any>(`${base}/clinic-forms/${id}`, {
@@ -970,7 +974,7 @@ export async function updatePageApi(id: string, payload: PageFormPayload) {
   fd.append("meta", JSON.stringify(payload.meta || {}));
 
   (payload.galleryExisting || []).forEach((g) =>
-    fd.append("gallery_existing", g)
+    fd.append("gallery_existing", g),
   );
   (payload.galleryFiles || []).forEach((file) => fd.append("gallery", file));
 
@@ -1010,7 +1014,7 @@ export async function deletePageApi(id: string) {
 }
 
 export async function uploadPageImageApi(
-  file: File
+  file: File,
 ): Promise<PageImageUploadResponse> {
   const base = getBackendBase();
   const url = `${base}/pages/upload-image`;
@@ -1148,7 +1152,7 @@ export type OrdersQuery = {
  * Example: getOrdersApi({ page: 1, limit: 20 })
  */
 export async function getOrdersApi(
-  query: OrdersQuery = {}
+  query: OrdersQuery = {},
 ): Promise<OrdersListResponse> {
   const base = getBackendBase(); // e.g. http://localhost:8000/api
 
@@ -1207,7 +1211,7 @@ export type UpdateOrderPayload = {
 
 export async function updateOrderStatusApi(
   id: string,
-  payload: UpdateOrderPayload
+  payload: UpdateOrderPayload,
 ) {
   const base = getBackendBase();
 
@@ -1296,7 +1300,7 @@ export type UpdateAppointmentPayload = {
 
 export async function updateAppointmentApi(
   id: string,
-  payload: UpdateAppointmentPayload
+  payload: UpdateAppointmentPayload,
 ) {
   const base = getBackendBase();
 
@@ -1320,7 +1324,7 @@ export async function updateAppointmentApi(
 }
 
 export async function getAppointmentByIdApi(
-  id: string
+  id: string,
 ): Promise<AppointmentDto> {
   const base = getBackendBase();
   const url = `${base}/appointments/${id}`;
@@ -1374,7 +1378,7 @@ export async function getPlatformTenantsApi(): Promise<PlatformTenantDto[]> {
 }
 
 export async function getPlatformTenantBySlugApi(
-  slug: string
+  slug: string,
 ): Promise<PlatformTenantDto | PlatformTenantDto[]> {
   const base = getMasterBase();
   // your current backend returns an array even for /platform-tenants/kfc,
@@ -1480,7 +1484,7 @@ export type DynamicHomePageContent = {
  * Used in admin UI to load current home-page JSON (navbar, hero, footer, etc.)
  */
 export async function getDynamicHomePageApi(
-  slug: string
+  slug: string,
 ): Promise<DynamicHomePageContent> {
   const base = getBackendBase();
   const url = `${base}/dynamicHomePages/${encodeURIComponent(slug)}`;
@@ -1505,7 +1509,7 @@ export async function getDynamicHomePageApi(
  */
 export async function updateDynamicHomePageApi(
   slug: string,
-  payload: Partial<DynamicHomePageContent>
+  payload: Partial<DynamicHomePageContent>,
 ): Promise<DynamicHomePageContent> {
   const base = getBackendBase();
   const url = `${base}/dynamicHomePages/${encodeURIComponent(slug)}`;
@@ -1693,7 +1697,7 @@ export type UpdateNhsServicePayload = {
  */
 export async function updateNhsServiceApi(
   id: string,
-  payload: UpdateNhsServicePayload
+  payload: UpdateNhsServicePayload,
 ): Promise<NhsServiceRequestDto> {
   const base = getBackendBase();
   const url = `${base}/nhsService/${encodeURIComponent(id)}`;
@@ -1768,7 +1772,7 @@ export type RevenueBookingsAnalyticsResponse = {
  * If start/end are provided, they take precedence over last.
  */
 export async function getRevenueBookingsAnalyticsApi(
-  params: RevenueBookingsAnalyticsParams = {}
+  params: RevenueBookingsAnalyticsParams = {},
 ): Promise<RevenueBookingsAnalyticsResponse> {
   const base = getBackendBase();
 
@@ -1857,7 +1861,7 @@ export type AnalyticsSummaryResponse = {
 };
 
 export async function getAnalyticsSummaryApi(
-  params: AnalyticsCommonParams = {}
+  params: AnalyticsCommonParams = {},
 ): Promise<AnalyticsSummaryResponse> {
   const base = getBackendBase();
 
@@ -1913,7 +1917,7 @@ export type AnalyticsByServiceResponse = {
 };
 
 export async function getAnalyticsByServiceApi(
-  params: AnalyticsCommonParams = {}
+  params: AnalyticsCommonParams = {},
 ): Promise<AnalyticsByServiceResponse> {
   const base = getBackendBase();
 
@@ -1978,7 +1982,7 @@ export type ZoomMeetingDto = {
  * Creates a Zoom meeting via your backend.
  */
 export async function createZoomMeetingApi(
-  payload: ZoomCreateMeetingPayload
+  payload: ZoomCreateMeetingPayload,
 ): Promise<ZoomMeetingDto> {
   const base = getBackendBase();
   const res = await jsonFetch<any>(`${base}/zoom/meetings`, {
@@ -2020,7 +2024,7 @@ export async function deleteTenantApi(tenantSlug: string) {
 // Function to delete a pharmacist for a particular tenant
 export async function deletePharmacistApi(
   tenantSlug: string,
-  pharmacistId: string
+  pharmacistId: string,
 ) {
   const base = ENV_BASE_URL || "http://localhost:8000/api"; // Use ENV_BASE_URL directly for this API
   const url = `${base}/platform-tenants/${tenantSlug}/pharmacist/${pharmacistId}`;
@@ -2059,7 +2063,7 @@ export async function changePasswordApi(
   userId: string,
   currentPassword: string,
   newPassword: string,
-  confirmPassword: string
+  confirmPassword: string,
 ) {
   const base = getBackendBase(); // Get the backend base URL dynamically
   const url = `${base}/users/changePassword/${userId}`;

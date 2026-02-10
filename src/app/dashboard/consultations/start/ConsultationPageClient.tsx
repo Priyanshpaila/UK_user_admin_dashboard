@@ -335,7 +335,7 @@ type PharmacistDeclarationPdf = {
 };
 
 function extractPharmacistDeclarationForPdf(
-  order: OrderDto
+  order: OrderDto,
 ): PharmacistDeclarationPdf {
   const meta: any = order.meta || {};
   const decMeta: any = meta.pharmacistDeclaration || {};
@@ -415,7 +415,7 @@ function extractPharmacistDeclarationForPdf(
   }
 
   const declarationDate = formatDateOnly(
-    decMeta.saved_at || new Date().toISOString()
+    decMeta.saved_at || new Date().toISOString(),
   );
 
   return {
@@ -460,7 +460,7 @@ async function loadImageAsDataUrl(url?: string | null): Promise<string | null> {
 async function generateRecordOfSupplyPdf(
   order: OrderDto,
   record: any,
-  consult: ConsultPatientLS | null
+  consult: ConsultPatientLS | null,
 ): Promise<File> {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -527,7 +527,7 @@ async function generateRecordOfSupplyPdf(
         margin,
         headerTopY - 18,
         48,
-        18
+        18,
       );
     } catch {}
   }
@@ -591,7 +591,7 @@ async function generateRecordOfSupplyPdf(
     doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(
       String(v || ""),
-      cardWidth - labelWidthLeft - 24
+      cardWidth - labelWidthLeft - 24,
     );
     doc.text(lines, xLeft + labelWidthLeft, yLeft);
 
@@ -601,7 +601,7 @@ async function generateRecordOfSupplyPdf(
   putRowLeft("Name:", pharmacy.name || "—");
   putRowLeft(
     "Address:",
-    pharmacy.addressLines?.length ? pharmacy.addressLines : "—"
+    pharmacy.addressLines?.length ? pharmacy.addressLines : "—",
   );
   if (pharmacy.phone) putRowLeft("Tel:", pharmacy.phone);
   if (pharmacy.email) putRowLeft("Email:", pharmacy.email);
@@ -639,7 +639,7 @@ async function generateRecordOfSupplyPdf(
     doc.setFont("helvetica", "normal");
     const lines = doc.splitTextToSize(
       String(v || ""),
-      cardWidth - labelWidthRight - 24
+      cardWidth - labelWidthRight - 24,
     );
     doc.text(lines, xRight + labelWidthRight, yRight);
 
@@ -757,7 +757,7 @@ async function generateRecordOfSupplyPdf(
 
   const wrappedDecl = doc.splitTextToSize(
     declarationParagraph,
-    contentWidth - 16
+    contentWidth - 16,
   );
   doc.text(wrappedDecl, margin + 8, y);
   y += lineHeight * wrappedDecl.length + 6;
@@ -806,7 +806,7 @@ async function generateRecordOfSupplyPdf(
           sigX,
           sigY,
           sigWidth,
-          sigHeight
+          sigHeight,
         );
       } catch (err) {
         console.error("Failed to add signature image to PDF:", err);
@@ -822,7 +822,7 @@ async function generateRecordOfSupplyPdf(
     `This record of supply was generated from your consultation at ${brandName}.`,
     margin,
     footerY,
-    { maxWidth: contentWidth }
+    { maxWidth: contentWidth },
   );
 
   const blob = doc.output("blob");
@@ -839,7 +839,7 @@ async function generateRecordOfSupplyPdf(
 
 async function generateInvoicePdfFromOrder(
   order: OrderDto,
-  consult: ConsultPatientLS | null
+  consult: ConsultPatientLS | null,
 ): Promise<File> {
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -929,7 +929,7 @@ async function generateInvoicePdfFromOrder(
         margin,
         headerTopY - 18,
         48,
-        18
+        18,
       );
     } catch {}
   }
@@ -1002,7 +1002,7 @@ async function generateInvoicePdfFromOrder(
   // Address lines (if missing, show —)
   putRowLeft(
     "Address:",
-    pharmacy.addressLines?.length ? pharmacy.addressLines : "—"
+    pharmacy.addressLines?.length ? pharmacy.addressLines : "—",
   );
 
   if (pharmacy.phone) putRowLeft("Tel:", pharmacy.phone);
@@ -1074,7 +1074,7 @@ async function generateInvoicePdfFromOrder(
     desc: string,
     qty: number,
     unitMinor: number,
-    totalMinorLine: number
+    totalMinorLine: number,
   ) => {
     doc.setDrawColor(lightBorder.r, lightBorder.g, lightBorder.b);
     doc.rect(margin, currentY, contentWidth, rowHeight, "S");
@@ -1095,7 +1095,7 @@ async function generateInvoicePdfFromOrder(
       consult?.serviceName || order.service_name || "Service",
       1,
       totalMinor,
-      totalMinor
+      totalMinor,
     );
   } else {
     items.forEach((it) => {
@@ -1172,7 +1172,7 @@ async function generateInvoicePdfFromOrder(
 async function sendConsultationSummaryEmail(
   order: OrderDto,
   record: any,
-  consult: ConsultPatientLS | null
+  consult: ConsultPatientLS | null,
 ) {
   const email =
     consult?.patient?.email || order.email || consult?.patient?.name || "";
@@ -1183,6 +1183,11 @@ async function sendConsultationSummaryEmail(
     });
     return;
   }
+
+  const home = await getDynamicHomePageApi("home");
+  const companyName = home?.navbar?.companyName ?? null;
+
+  const supportEmail = home?.navbar?.supportEmail ?? null;
 
   const patientName =
     consult?.patient?.name || getDisplayPatientName(order) || "Customer";
@@ -1197,8 +1202,6 @@ async function sendConsultationSummaryEmail(
     process.env.NEXT_PUBLIC_LOGIN_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "https://safescript.co.uk";
-  const supportEmail =
-    process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@safescript.co.uk";
 
   let recordPdf: File | null = null;
   let invoicePdf: File | null = null;
@@ -1233,6 +1236,7 @@ async function sendConsultationSummaryEmail(
       appointmentAt,
       loginUrl,
       supportEmail,
+      companyName,
       year: new Date().getFullYear().toString(),
     },
     attachments: attachments.length ? attachments : undefined,
@@ -1299,7 +1303,7 @@ export default function ConsultationPageClient() {
 
   const baseStorageKey = useCallback(
     () => (order ? `consultation_${order._id}` : ""),
-    [order]
+    [order],
   );
 
   // End consultation: gather all data from localStorage & send to backend + email
@@ -1453,7 +1457,7 @@ export default function ConsultationPageClient() {
         await sendConsultationSummaryEmail(
           updatedOrder,
           record,
-          consultPatient
+          consultPatient,
         );
       } catch (err) {
         console.error("Failed to send consultation summary email", err);
@@ -1469,7 +1473,7 @@ export default function ConsultationPageClient() {
       }
 
       setEndSuccess(
-        "Consultation data saved, order marked as completed and email sent to patient."
+        "Consultation data saved, order marked as completed and email sent to patient.",
       );
 
       router.push("/dashboard/approved-orders");
@@ -1552,7 +1556,7 @@ export default function ConsultationPageClient() {
             Appointment:{" "}
             <span className="text-neutral-100">
               {formatDateTime(
-                order.meta?.appointment_start_at || order.start_at
+                order.meta?.appointment_start_at || order.start_at,
               )}
             </span>
           </p>
