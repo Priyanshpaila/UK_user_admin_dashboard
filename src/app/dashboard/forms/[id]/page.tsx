@@ -14,7 +14,11 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { getBackendBase, updateClinicFormApi } from "../../../../api";
+import {
+  getBackendBase,
+  updateClinicFormApi,
+  getServiceMedicinesByServiceApi,
+} from "../../../../api";
 
 /* ---------- Types aligned with backend ---------- */
 
@@ -82,6 +86,8 @@ type ServiceLite = {
   slug: string;
 };
 
+type MedicineLite = { _id: string; sku: string; name: string };
+
 /* ---------- Palette ---------- */
 
 const FIELD_PALETTE: { type: FieldType; label: string }[] = [
@@ -125,8 +131,8 @@ function defaultShowIf(): ShowIf {
 function optionLabelToValue(label: string) {
   return label
     .trim()
-    .replace(/[^A-Za-z0-9]+/g, "_")
-    .replace(/_+/g, "_")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .replace(/_+/g, " ")
     .replace(/^_+|_+$/g, "");
 }
 
@@ -170,6 +176,12 @@ export default function EditClinicFormPage() {
   const [serviceId, setServiceId] = useState("");
 
   const [treatmentSlug, setTreatmentSlug] = useState("");
+
+  // ✅ Treatment dropdown (linked medicines by service)
+  const [linkedMeds, setLinkedMeds] = useState<MedicineLite[]>([]);
+  const [linkedMedsLoading, setLinkedMedsLoading] = useState(false);
+  const [treatmentMode, setTreatmentMode] = useState<"sku" | "custom">("sku");
+  const [treatmentModeTouched, setTreatmentModeTouched] = useState(false);
 
   // Form type with dynamic options
   const [formTypeOptions, setFormTypeOptions] = useState<string[]>([
@@ -233,9 +245,13 @@ export default function EditClinicFormPage() {
   }, []);
 
   const handleServiceChange = (value: string) => {
+    setTreatmentModeTouched(false);
+
     if (value === "global") {
       setServiceId("");
       setServiceSlug("");
+      setLinkedMeds([]);
+      setTreatmentMode("custom"); // no service => manual
       return;
     }
     const svc = services.find((s) => s._id === value);
@@ -243,6 +259,70 @@ export default function EditClinicFormPage() {
     setServiceId(svc._id);
     setServiceSlug(svc.slug);
   };
+
+  /* ---------- load linked medicines for treatment dropdown ---------- */
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLinkedMedicines = async () => {
+      if (!serviceId) {
+        setLinkedMeds([]);
+        setLinkedMedsLoading(false);
+        return;
+      }
+
+      try {
+        setLinkedMedsLoading(true);
+
+        const meds = await getServiceMedicinesByServiceApi(serviceId);
+        if (cancelled) return;
+
+        const lite: MedicineLite[] = (meds || [])
+          .map((m: any) => ({
+            _id: String(m._id || ""),
+            sku: String(m.sku || "").trim(),
+            name: String(m.name || "").trim(),
+          }))
+          .filter((m) => m.sku);
+
+        lite.sort((a, b) => a.sku.localeCompare(b.sku));
+        setLinkedMeds(lite);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setLinkedMeds([]);
+          toast.error("Failed to load linked medicines for this service");
+        }
+      } finally {
+        if (!cancelled) setLinkedMedsLoading(false);
+      }
+    };
+
+    loadLinkedMedicines();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId]);
+
+  // ✅ Decide initial mode on edit load (only until user touches the mode)
+  useEffect(() => {
+    if (treatmentModeTouched) return;
+
+    if (!serviceId) {
+      setTreatmentMode("custom");
+      return;
+    }
+
+    if (!treatmentSlug) {
+      setTreatmentMode("sku");
+      return;
+    }
+
+    const found = linkedMeds.some((m) => m.sku === treatmentSlug);
+    setTreatmentMode(found ? "sku" : "custom");
+  }, [serviceId, linkedMeds, treatmentSlug, treatmentModeTouched]);
 
   /* ---------- parse backend schema -> FormField[] ---------- */
 
@@ -478,6 +558,9 @@ export default function EditClinicFormPage() {
         setRafStatus(form.raf_status ?? "draft");
         setFormType(form.form_type || "raf");
 
+        // reset mode auto-selection after load
+        setTreatmentModeTouched(false);
+
         // ensure current form_type is in options
         if (form.form_type && !formTypeOptions.includes(form.form_type)) {
           setFormTypeOptions((prev) => [...prev, form.form_type]);
@@ -593,9 +676,7 @@ export default function EditClinicFormPage() {
           options: opts.map((o) => {
             if (o.id !== optionId) return o;
 
-            // ✅ Requirement: when label changes, auto-fill value (same casing),
-            // unless the user manually edited value (valueTouched === true),
-            // or caller explicitly sets patch.value.
+            // ✅ label -> value auto-sync unless valueTouched or explicit patch.value
             if (typeof patch.label === "string") {
               const nextLabel = patch.label;
               const explicitValueProvided = patch.value != null;
@@ -946,7 +1027,6 @@ export default function EditClinicFormPage() {
             };
 
           default:
-            // text/email/number/date (text-based)
             return {
               type: "text",
               data: {
@@ -1009,9 +1089,6 @@ export default function EditClinicFormPage() {
     try {
       const parsed = JSON.parse(importJson);
 
-      // Allow importing either:
-      // 1) Full payload: { name, description, schema: [...] , ... }
-      // 2) Schema-only array: [ ...schemaItems ]
       const schemaArr = Array.isArray(parsed) ? parsed : parsed?.schema;
 
       if (!Array.isArray(schemaArr)) {
@@ -1027,7 +1104,10 @@ export default function EditClinicFormPage() {
         if (typeof parsed.description === "string")
           setDescription(parsed.description);
 
-        if (typeof parsed.service_id === "string") setServiceId(parsed.service_id);
+        if (typeof parsed.service_id === "string") {
+          setServiceId(parsed.service_id);
+          setTreatmentModeTouched(false);
+        }
         if (typeof parsed.service_slug === "string") setServiceSlug(parsed.service_slug);
         if (typeof parsed.treatment_slug === "string")
           setTreatmentSlug(parsed.treatment_slug);
@@ -1045,7 +1125,6 @@ export default function EditClinicFormPage() {
         }
       }
 
-      // Replace fields using your existing parser
       const parsedFields: FormField[] = schemaArr.map(parseBackendFieldToFormField);
 
       setFields(parsedFields);
@@ -1377,7 +1456,10 @@ export default function EditClinicFormPage() {
                 </label>
                 <input
                   value={serviceId}
-                  onChange={(e) => setServiceId(e.target.value)}
+                  onChange={(e) => {
+                    setServiceId(e.target.value);
+                    setTreatmentModeTouched(false);
+                  }}
                   placeholder="691d55e233f9d5d1a248163b"
                   className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-1.5 text-xs text-neutral-100"
                 />
@@ -1387,16 +1469,93 @@ export default function EditClinicFormPage() {
 
           {/* Treatment + Form type */}
           <div className="space-y-3">
+            {/* ✅ Treatment slug dropdown */}
             <div>
               <label className="text-xs font-medium text-neutral-300">
-                Treatment slug (optional)
+                Treatment slug (linked medicine SKU)
               </label>
-              <input
-                value={treatmentSlug}
-                onChange={(e) => setTreatmentSlug(e.target.value)}
-                placeholder=""
-                className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
-              />
+
+              {serviceId ? (
+                <>
+                  <select
+                    value={
+                      treatmentMode === "custom"
+                        ? "__custom__"
+                        : (treatmentSlug || "")
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTreatmentModeTouched(true);
+
+                      if (v === "__custom__") {
+                        setTreatmentMode("custom");
+                        setTreatmentSlug("");
+                        return;
+                      }
+
+                      setTreatmentMode("sku");
+                      setTreatmentSlug(v);
+                    }}
+                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                  >
+                    <option value="">— None —</option>
+                    <option value="__custom__">Custom (type manually)</option>
+
+                    {linkedMedsLoading && (
+                      <option value="" disabled>
+                        Loading linked medicines...
+                      </option>
+                    )}
+
+                    {!linkedMedsLoading && linkedMeds.length === 0 && (
+                      <option value="" disabled>
+                        No linked medicines for this service
+                      </option>
+                    )}
+
+                    {!linkedMedsLoading &&
+                      linkedMeds.map((m) => (
+                        <option key={m._id} value={m.sku}>
+                          {m.sku} {m.name ? `— ${m.name}` : ""}
+                        </option>
+                      ))}
+                  </select>
+
+                  {treatmentMode === "custom" && (
+                    <input
+                      value={treatmentSlug}
+                      onChange={(e) => {
+                        setTreatmentSlug(e.target.value);
+                        setTreatmentModeTouched(true);
+                      }}
+                      placeholder="Enter custom treatment slug"
+                      className="mt-2 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                    />
+                  )}
+
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Loaded from{" "}
+                    <code>/service-medicines/service/:serviceId</code> using{" "}
+                    <code>sku</code>.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <input
+                    value={treatmentSlug}
+                    onChange={(e) => {
+                      setTreatmentSlug(e.target.value);
+                      setTreatmentModeTouched(true);
+                    }}
+                    placeholder="Enter treatment slug (optional)"
+                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                  />
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Select a service to choose treatment from linked medicine
+                    SKUs.
+                  </p>
+                </>
+              )}
             </div>
 
             <div>
@@ -1907,7 +2066,6 @@ export default function EditClinicFormPage() {
                           <input
                             value={opt.label}
                             onChange={(e) =>
-                              // ✅ label change auto-fills value unless valueTouched
                               updateOption(selectedField.id, opt.id, {
                                 label: e.target.value,
                               })
@@ -1918,7 +2076,6 @@ export default function EditClinicFormPage() {
                           <input
                             value={opt.value}
                             onChange={(e) =>
-                              // ✅ manual value edit => lock auto-sync
                               updateOption(selectedField.id, opt.id, {
                                 value: e.target.value,
                                 valueTouched: true,

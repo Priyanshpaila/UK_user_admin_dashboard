@@ -14,7 +14,11 @@ import {
 } from "lucide-react";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { createClinicFormApi, getBackendBase } from "../../../../api";
+import {
+  createClinicFormApi,
+  getBackendBase,
+  getServiceMedicinesByServiceApi,
+} from "../../../../api";
 import Link from "next/link";
 
 /* ---------- Types aligned with backend ---------- */
@@ -171,8 +175,8 @@ function defaultShowIf(): ShowIf {
 function optionLabelToValue(label: string) {
   return label
     .trim()
-    .replace(/[^A-Za-z0-9]+/g, "_") // spaces & special chars -> "_"
-    .replace(/_+/g, "_") // collapse
+    .replace(/[^A-Za-z0-9]+/g, " ") // spaces & special chars -> "_"
+    .replace(/_+/g, " ") // collapse
     .replace(/^_+|_+$/g, ""); // trim underscores
 }
 
@@ -276,6 +280,64 @@ export default function Page() {
   const [serviceId, setServiceId] = useState("");
 
   const [treatmentSlug, setTreatmentSlug] = useState("");
+  type MedicineLite = { _id: string; sku: string; name: string };
+
+  const [linkedMeds, setLinkedMeds] = useState<MedicineLite[]>([]);
+  const [linkedMedsLoading, setLinkedMedsLoading] = useState(false);
+
+  // optional: allow manual override
+  const [treatmentMode, setTreatmentMode] = useState<"sku" | "custom">("sku");
+
+  useEffect(() => {
+    // when service changes, default back to sku dropdown mode
+    setTreatmentMode("sku");
+  }, [serviceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLinkedMedicines = async () => {
+      if (!serviceId) {
+        setLinkedMeds([]);
+        setLinkedMedsLoading(false);
+        return;
+      }
+
+      try {
+        setLinkedMedsLoading(true);
+
+        const meds = await getServiceMedicinesByServiceApi(serviceId);
+
+        if (cancelled) return;
+
+        const lite: MedicineLite[] = (meds || [])
+          .map((m: any) => ({
+            _id: String(m._id || ""),
+            sku: String(m.sku || "").trim(),
+            name: String(m.name || "").trim(),
+          }))
+          .filter((m) => m.sku);
+
+        lite.sort((a, b) => a.sku.localeCompare(b.sku));
+
+        setLinkedMeds(lite);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setLinkedMeds([]);
+          toast.error("Failed to load linked medicines for this service");
+        }
+      } finally {
+        if (!cancelled) setLinkedMedsLoading(false);
+      }
+    };
+
+    loadLinkedMedicines();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serviceId]);
 
   // Form type with dynamic options
   const [formTypeOptions, setFormTypeOptions] = useState<string[]>([
@@ -305,7 +367,7 @@ export default function Page() {
 
   const selectedField = useMemo(
     () => fields.find((f) => f.id === selectedFieldId) || null,
-    [fields, selectedFieldId]
+    [fields, selectedFieldId],
   );
 
   /* ---------- Import JSON (NEW) ---------- */
@@ -340,7 +402,7 @@ export default function Page() {
   // A) Full payload (same shape as formPayload) -> { name, description, schema: [...] , ... }
   // B) Raw schema array -> [ {type, data}, ... ]
   function extractSchemaAndMeta(
-    input: any
+    input: any,
   ): { meta?: Record<string, any>; schema: any[] } | null {
     if (Array.isArray(input)) {
       return { schema: input };
@@ -394,7 +456,7 @@ export default function Page() {
       !isPlainObject(item.data)
     ) {
       throw new Error(
-        'Invalid format: schema items must be like { "type": "...", "data": { ... } }'
+        'Invalid format: schema items must be like { "type": "...", "data": { ... } }',
       );
     }
 
@@ -419,8 +481,8 @@ export default function Page() {
           d.help != null
             ? String(d.help)
             : d.helpText != null
-            ? String(d.helpText)
-            : "",
+              ? String(d.helpText)
+              : "",
         showIf,
         hidden: Boolean(d.hidden),
         disabled: Boolean(d.disabled),
@@ -434,7 +496,10 @@ export default function Page() {
 
       case "textarea": {
         const f = makeBase("textarea");
-        return { ...f, placeholder: d.placeholder != null ? String(d.placeholder) : "" };
+        return {
+          ...f,
+          placeholder: d.placeholder != null ? String(d.placeholder) : "",
+        };
       }
 
       case "date": {
@@ -499,11 +564,14 @@ export default function Page() {
           inputTypeRaw === "email"
             ? "email"
             : inputTypeRaw === "number"
-            ? "number"
-            : "text";
+              ? "number"
+              : "text";
 
         const f = makeBase(uiType);
-        return { ...f, placeholder: d.placeholder != null ? String(d.placeholder) : "" };
+        return {
+          ...f,
+          placeholder: d.placeholder != null ? String(d.placeholder) : "",
+        };
       }
 
       default:
@@ -511,8 +579,12 @@ export default function Page() {
     }
   }
 
-  function applyImportedPayload(meta: Record<string, any> | undefined, schema: any[]) {
-    if (!Array.isArray(schema)) throw new Error("Invalid format: schema must be an array.");
+  function applyImportedPayload(
+    meta: Record<string, any> | undefined,
+    schema: any[],
+  ) {
+    if (!Array.isArray(schema))
+      throw new Error("Invalid format: schema must be an array.");
 
     const nextFields = schema.map(schemaItemToField);
 
@@ -523,12 +595,15 @@ export default function Page() {
     // Optional meta application (does not change save flow; just fills inputs)
     if (meta) {
       if (typeof meta.name === "string") setFormName(meta.name);
-      if (typeof meta.description === "string") setDescription(meta.description);
+      if (typeof meta.description === "string")
+        setDescription(meta.description);
 
-      if (typeof meta.service_slug === "string") setServiceSlug(meta.service_slug);
+      if (typeof meta.service_slug === "string")
+        setServiceSlug(meta.service_slug);
       if (typeof meta.service_id === "string") setServiceId(meta.service_id);
 
-      if (typeof meta.treatment_slug === "string") setTreatmentSlug(meta.treatment_slug);
+      if (typeof meta.treatment_slug === "string")
+        setTreatmentSlug(meta.treatment_slug);
 
       if (typeof meta.is_active === "boolean") setIsActive(meta.is_active);
 
@@ -560,7 +635,7 @@ export default function Page() {
 
       if (!extracted) {
         failImport(
-          'Invalid format: expected either a full payload with "schema": [...] or a raw schema array.'
+          'Invalid format: expected either a full payload with "schema": [...] or a raw schema array.',
         );
         return;
       }
@@ -575,7 +650,9 @@ export default function Page() {
     }
   }
 
-  async function handleImportFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleImportFileChange(
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) {
     const file = e.target.files?.[0] || null;
     e.target.value = ""; // allow re-upload same file
     if (!file) return;
@@ -671,7 +748,7 @@ export default function Page() {
 
   const updateField = (id: string, patch: Partial<FormField>) => {
     setFields((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...patch } : f))
+      prev.map((f) => (f.id === id ? { ...f, ...patch } : f)),
     );
   };
 
@@ -681,7 +758,7 @@ export default function Page() {
         if (f.id !== id) return f;
         const current = f.showIf || defaultShowIf();
         return { ...f, showIf: { ...current, ...patch } };
-      })
+      }),
     );
   };
 
@@ -717,14 +794,14 @@ export default function Page() {
           valueTouched: false,
         };
         return { ...f, options: [...opts, newOption] };
-      })
+      }),
     );
   };
 
   const updateOption = (
     fieldId: string,
     optionId: string,
-    patch: Partial<Option>
+    patch: Partial<Option>,
   ) => {
     setFields((prev) =>
       prev.map((f) => {
@@ -739,7 +816,8 @@ export default function Page() {
             // Only auto-sync if user has NOT manually edited value (valueTouched !== true)
             if (typeof patch.label === "string") {
               const nextLabel = patch.label;
-              const shouldAutoSyncValue = !o.valueTouched && patch.value == null;
+              const shouldAutoSyncValue =
+                !o.valueTouched && patch.value == null;
 
               if (shouldAutoSyncValue) {
                 return {
@@ -753,7 +831,7 @@ export default function Page() {
             return { ...o, ...patch };
           }),
         };
-      })
+      }),
     );
   };
 
@@ -763,7 +841,7 @@ export default function Page() {
         if (f.id !== fieldId) return f;
         const opts = f.options || [];
         return { ...f, options: opts.filter((o) => o.id !== optionId) };
-      })
+      }),
     );
   };
 
@@ -1007,7 +1085,7 @@ export default function Page() {
             };
         }
       }),
-    [fields]
+    [fields],
   );
 
   const formPayload = useMemo(
@@ -1035,7 +1113,7 @@ export default function Page() {
       isActive,
       rafStatus,
       formType,
-    ]
+    ],
   );
 
   const copySchema = async () => {
@@ -1179,7 +1257,9 @@ export default function Page() {
           </h1>
           <p className="text-sm text-neutral-400">
             Design a dynamic form and save it directly to{" "}
-            <span className="font-semibold text-neutral-100">/clinic-forms</span>
+            <span className="font-semibold text-neutral-100">
+              /clinic-forms
+            </span>
             .
           </p>
         </div>
@@ -1308,14 +1388,86 @@ export default function Page() {
           <div className="space-y-3">
             <div>
               <label className="text-xs font-medium text-neutral-300">
-                Treatment slug (optional)
+                Treatment slug (linked medicine SKU)
               </label>
-              <input
-                value={treatmentSlug}
-                onChange={(e) => setTreatmentSlug(e.target.value)}
-                placeholder=""
-                className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
-              />
+
+              {/* If service selected => show dropdown */}
+              {serviceId ? (
+                <>
+                  <select
+                    value={
+                      treatmentMode === "custom"
+                        ? "__custom__"
+                        : treatmentSlug || ""
+                    }
+                    onChange={(e) => {
+                      const v = e.target.value;
+
+                      if (v === "__custom__") {
+                        setTreatmentMode("custom");
+                        setTreatmentSlug("");
+                        return;
+                      }
+
+                      setTreatmentMode("sku");
+                      setTreatmentSlug(v);
+                    }}
+                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                  >
+                    <option value="">— None —</option>
+                    <option value="__custom__">Custom (type manually)</option>
+
+                    {linkedMedsLoading && (
+                      <option value="" disabled>
+                        Loading linked medicines...
+                      </option>
+                    )}
+
+                    {!linkedMedsLoading && linkedMeds.length === 0 && (
+                      <option value="" disabled>
+                        No linked medicines for this service
+                      </option>
+                    )}
+
+                    {!linkedMedsLoading &&
+                      linkedMeds.map((m) => (
+                        <option key={m._id} value={m.sku}>
+                          {m.sku} {m.name ? `— ${m.name}` : ""}
+                        </option>
+                      ))}
+                  </select>
+
+                  {/* Manual override input */}
+                  {treatmentMode === "custom" && (
+                    <input
+                      value={treatmentSlug}
+                      onChange={(e) => setTreatmentSlug(e.target.value)}
+                      placeholder="Enter custom treatment slug"
+                      className="mt-2 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                    />
+                  )}
+
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    This dropdown is populated from{" "}
+                    <code>/service-medicines/service/:serviceId</code> using
+                    each medicine <code>sku</code>.
+                  </p>
+                </>
+              ) : (
+                /* If no service => fallback to manual input */
+                <>
+                  <input
+                    value={treatmentSlug}
+                    onChange={(e) => setTreatmentSlug(e.target.value)}
+                    placeholder="Enter treatment slug (optional)"
+                    className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-700 px-3 py-2 text-xs text-neutral-100"
+                  />
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Select a service to choose treatment from linked medicine
+                    SKUs.
+                  </p>
+                </>
+              )}
             </div>
 
             <div>
@@ -1518,7 +1670,7 @@ export default function Page() {
                         )}
 
                         {["text", "email", "number", "date"].includes(
-                          field.type
+                          field.type,
                         ) && (
                           <input
                             disabled
@@ -1532,7 +1684,9 @@ export default function Page() {
                             disabled
                             className="mt-1 w-full rounded-md bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 text-xs text-neutral-400"
                             rows={2}
-                            placeholder={field.placeholder || "Textarea preview"}
+                            placeholder={
+                              field.placeholder || "Textarea preview"
+                            }
                           />
                         )}
 
@@ -1715,7 +1869,7 @@ export default function Page() {
 
                 {/* Placeholder */}
                 {["text", "email", "number", "textarea", "date"].includes(
-                  selectedField.type
+                  selectedField.type,
                 ) && (
                   <div>
                     <label className="text-xs font-medium text-neutral-300">
@@ -1752,7 +1906,7 @@ export default function Page() {
 
                 {/* Multiple for select/dropdown/checkbox */}
                 {["select", "dropdown", "checkbox"].includes(
-                  selectedField.type
+                  selectedField.type,
                 ) && (
                   <div className="flex items-center gap-2">
                     <input
@@ -1800,7 +1954,7 @@ export default function Page() {
 
                 {/* Options */}
                 {["select", "dropdown", "radio", "checkbox"].includes(
-                  selectedField.type
+                  selectedField.type,
                 ) && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -2006,7 +2160,8 @@ export default function Page() {
             {/* JSON preview */}
             <div className="pt-4 border-t border-neutral-800 mt-4">
               <p className="text-xs font-semibold text-neutral-300 mb-2">
-                Payload preview (what will be sent to <code>/clinic-forms</code>)
+                Payload preview (what will be sent to <code>/clinic-forms</code>
+                )
               </p>
               <pre className="max-h-60 overflow-auto rounded-md bg-neutral-950 border border-neutral-800 p-2 text-[10px] leading-relaxed text-neutral-300">
                 {JSON.stringify(formPayload, null, 2)}
@@ -2032,8 +2187,8 @@ export default function Page() {
                   Import form JSON
                 </p>
                 <p className="text-[11px] text-neutral-500">
-                  Accepts either full payload (with <code>schema</code>) or a raw
-                  schema array.
+                  Accepts either full payload (with <code>schema</code>) or a
+                  raw schema array.
                 </p>
               </div>
 
