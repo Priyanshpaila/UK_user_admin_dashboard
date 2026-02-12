@@ -1058,7 +1058,6 @@ export default function EditServicePage() {
             method: "GET",
             headers,
             signal: ac.signal,
-            credentials: "include",
           });
 
           if (mySeq !== medsReqSeqRef.current) return { all: [], linked: [] };
