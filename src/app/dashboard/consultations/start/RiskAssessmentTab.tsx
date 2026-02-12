@@ -101,7 +101,9 @@ const slugify = (s: string) =>
  * We must read only before "_" to get the field type.
  */
 function getFieldTypeFromRafKey(key: string): QuestionType {
-  const raw = String(key || "").trim().toLowerCase();
+  const raw = String(key || "")
+    .trim()
+    .toLowerCase();
   const i = raw.indexOf("_");
   const prefix = (i === -1 ? raw : raw.slice(0, i)).trim();
 
@@ -127,6 +129,7 @@ function getFieldTypeFromRafKey(key: string): QuestionType {
       return "radio";
     case "date":
     case "datepicker":
+    case "signature":
       return "date";
     case "file":
     case "upload":
@@ -156,11 +159,11 @@ function isFileLikeValue(value: any): boolean {
     if (typeof item !== "object") return false;
     return Boolean(
       item.url ||
-        item.path ||
-        item.location ||
-        item.href ||
-        item.downloadUrl ||
-        item.src
+      item.path ||
+      item.location ||
+      item.href ||
+      item.downloadUrl ||
+      item.src,
     );
   });
 }
@@ -254,8 +257,7 @@ function extractShowIf(input: any): VisibilityCond | undefined {
   const out: VisibilityCond = { field: String(field) };
   if (equals !== undefined) out.equals = equals;
   if (notEquals !== undefined) out.notEquals = notEquals;
-  if (inList !== undefined)
-    out.in = Array.isArray(inList) ? inList : [inList];
+  if (inList !== undefined) out.in = Array.isArray(inList) ? inList : [inList];
   if (truthy !== undefined) out.truthy = !!truthy;
 
   return out;
@@ -264,7 +266,7 @@ function extractShowIf(input: any): VisibilityCond | undefined {
 function mapFieldType(
   rawType: string,
   wantsMulti: boolean,
-  input: any
+  input: any,
 ): {
   mappedType: QuestionType;
   htmlInputType?: string;
@@ -361,6 +363,7 @@ function mapFieldType(
 
     case "file":
     case "file_upload":
+    case "signature":
     case "file-upload":
       mapped = "file";
       break;
@@ -368,11 +371,6 @@ function mapFieldType(
     case "email":
       mapped = "text";
       htmlInputType = "email";
-      break;
-
-    case "signature":
-      mapped = "text";
-      htmlInputType = "text";
       break;
 
     default:
@@ -434,9 +432,7 @@ function toQuestionArray(input: any): Question[] {
 
       // Section
       if (t === "section") {
-        const title = String(
-          x.label ?? x.data?.label ?? x.title ?? "Section"
-        );
+        const title = String(x.label ?? x.data?.label ?? x.title ?? "Section");
         curSectionTitle = title;
         curSectionKey = String(x.key ?? x.data?.key ?? slugify(title));
         return;
@@ -455,18 +451,18 @@ function toQuestionArray(input: any): Question[] {
               : {
                   value: String(o.value ?? o.id ?? o),
                   label: String(o.label ?? o.name ?? o),
-                }
+                },
           )
         : Array.isArray(x.data?.options)
-        ? x.data.options.map((o: any) =>
-            typeof o === "string"
-              ? { value: o, label: o }
-              : {
-                  value: String(o.value ?? o.id ?? o),
-                  label: String(o.label ?? o.name ?? o),
-                }
-          )
-        : undefined;
+          ? x.data.options.map((o: any) =>
+              typeof o === "string"
+                ? { value: o, label: o }
+                : {
+                    value: String(o.value ?? o.id ?? o),
+                    label: String(o.label ?? o.name ?? o),
+                  },
+            )
+          : undefined;
 
       const label =
         x.label ??
@@ -485,7 +481,7 @@ function toQuestionArray(input: any): Question[] {
         x.sectionTitle ??
           x.data?.sectionTitle ??
           curSectionTitle ??
-          (sKey ? "Section" : "")
+          (sKey ? "Section" : ""),
       );
 
       items.push({
@@ -619,7 +615,7 @@ export default function RiskAssessmentTab({ order }: Props) {
 
             // Prefer raw when available; file uploads live here as structured objects.
             const hasRaw = qa.raw !== undefined && qa.raw !== null;
-            const value = hasRaw ? qa.raw : qa.answer ?? "";
+            const value = hasRaw ? qa.raw : (qa.answer ?? "");
 
             return {
               key: String(key),
@@ -687,7 +683,7 @@ export default function RiskAssessmentTab({ order }: Props) {
             console.error("Failed to fetch RAF clinic form", err);
             if (!cancelled) {
               setError(
-                err?.message || "Failed to load risk assessment form schema."
+                err?.message || "Failed to load risk assessment form schema.",
               );
             }
           }
@@ -806,9 +802,9 @@ export default function RiskAssessmentTab({ order }: Props) {
             "radio",
             "date",
             "file",
-          ].includes(q.type)
+          ].includes(q.type),
       ),
-    [visibleQuestions]
+    [visibleQuestions],
   );
 
   if (loading) {
@@ -897,11 +893,14 @@ export default function RiskAssessmentTab({ order }: Props) {
         )}
 
         <div className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-4 py-3">
-          <p className="text-sm text-neutral-200 font-medium">Saved RAF answers</p>
+          <p className="text-sm text-neutral-200 font-medium">
+            Saved RAF answers
+          </p>
           <p className="mt-1 text-xs text-neutral-400 leading-relaxed">
-            Schema for this form wasn’t available, so answers are shown in a simplified view.
-            File uploads are rendered from{" "}
-            <span className="text-neutral-200">raw</span> data and are not editable here.
+            Schema for this form wasn’t available, so answers are shown in a
+            simplified view. File uploads are rendered from{" "}
+            <span className="text-neutral-200">raw</span> data and are not
+            editable here.
           </p>
         </div>
 
@@ -1029,7 +1028,7 @@ function FallbackEditor({
             e.target.value
               .split(",")
               .map((s) => s.trim())
-              .filter(Boolean)
+              .filter(Boolean),
           )
         }
         placeholder="Enter values separated by commas…"
@@ -1042,8 +1041,8 @@ function FallbackEditor({
       typeof value === "number"
         ? String(value)
         : typeof value === "string"
-        ? value
-        : "";
+          ? value
+          : "";
     return (
       <input
         type="number"
@@ -1083,7 +1082,7 @@ function FallbackEditor({
     <input
       type="text"
       className={baseInput}
-      value={typeof value === "string" ? value : value ?? ""}
+      value={typeof value === "string" ? value : (value ?? "")}
       onChange={(e) => onChange(e.target.value)}
       placeholder="Answer…"
     />
@@ -1094,7 +1093,13 @@ function FallbackEditor({
 /* File Attachments (renders from raw structured data)                 */
 /* ------------------------------------------------------------------ */
 
-function FileAttachments({ value }: { value: any }) {
+function FileAttachments({
+  value,
+  isSignature,
+}: {
+  value: any;
+  isSignature?: boolean;
+}) {
   const files = normalizeFilesValue(value);
 
   if (!files.length) {
@@ -1103,9 +1108,11 @@ function FileAttachments({ value }: { value: any }) {
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-neutral-400">
-        File uploads are shown from saved raw data (not editable here).
-      </p>
+      {!isSignature && (
+        <p className="text-xs text-neutral-400">
+          File uploads are shown from saved raw data (not editable here).
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-3">
         {files.map((file, i) => {
@@ -1126,12 +1133,26 @@ function FileAttachments({ value }: { value: any }) {
                 className="group block"
                 title="Open image"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={url}
-                  alt={file.name || `Attachment ${i + 1}`}
-                  className="h-32 w-48 rounded-lg border border-neutral-800 bg-neutral-950 object-contain group-hover:border-emerald-500"
-                />
+                {/* white bg ONLY for signature */}
+                <div
+                  className={
+                    isSignature
+                      ? "h-32 w-48 rounded-lg border border-neutral-700 bg-white p-2"
+                      : "h-32 w-48 rounded-lg border border-neutral-800 bg-neutral-950"
+                  }
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt={file.name || `Attachment ${i + 1}`}
+                    className={
+                      isSignature
+                        ? "h-full w-full object-contain"
+                        : "h-full w-full object-contain"
+                    }
+                  />
+                </div>
+
                 <div className="mt-1 max-w-[12rem] truncate text-xs text-neutral-300">
                   {file.name || `Attachment ${i + 1}`}
                 </div>
@@ -1172,6 +1193,7 @@ function QuestionRow({
   onChange: (val: any) => void;
 }) {
   const q = question;
+  const isSignature = (q.key || "").toLowerCase().startsWith("signature_");
   const baseInput =
     "w-full rounded-md bg-neutral-950 border border-neutral-700 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500";
 
@@ -1188,7 +1210,9 @@ function QuestionRow({
     return (
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-2 text-sm font-semibold text-neutral-100">{q.label}</p>
+          <p className="mb-2 text-sm font-semibold text-neutral-100">
+            {q.label}
+          </p>
         )}
         {q.contentHtml ? (
           <div
@@ -1209,7 +1233,9 @@ function QuestionRow({
     return (
       <div className="rounded-lg border border-neutral-800 bg-neutral-900/80 px-4 py-3">
         {q.label && (
-          <p className="mb-2 text-sm font-semibold text-neutral-100">{q.label}</p>
+          <p className="mb-2 text-sm font-semibold text-neutral-100">
+            {q.label}
+          </p>
         )}
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -1219,9 +1245,13 @@ function QuestionRow({
             className="max-h-72 w-auto rounded-lg border border-neutral-800 object-contain bg-neutral-950"
           />
         ) : (
-          <p className="text-sm text-neutral-500">No image configured for this block.</p>
+          <p className="text-sm text-neutral-500">
+            No image configured for this block.
+          </p>
         )}
-        {q.helpText && <p className="mt-2 text-sm text-neutral-400">{q.helpText}</p>}
+        {q.helpText && (
+          <p className="mt-2 text-sm text-neutral-400">{q.helpText}</p>
+        )}
       </div>
     );
   }
@@ -1267,7 +1297,9 @@ function QuestionRow({
       </label>
 
       {q.helpText && (
-        <p className="mb-3 text-sm text-neutral-400 leading-relaxed">{q.helpText}</p>
+        <p className="mb-3 text-sm text-neutral-400 leading-relaxed">
+          {q.helpText}
+        </p>
       )}
 
       {q.type === "text" && (
@@ -1416,9 +1448,11 @@ function QuestionRow({
       {q.type === "file" && (
         <div className="space-y-2">
           <p className="text-xs text-neutral-400">
-            File uploads are not editable from this view.
+            {isSignature
+              ? "Signature preview (saved image)"
+              : "File uploads are not editable from this view."}
           </p>
-          <FileAttachments value={value} />
+          <FileAttachments value={value} isSignature={isSignature} />
         </div>
       )}
     </div>
