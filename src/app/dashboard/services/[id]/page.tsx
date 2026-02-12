@@ -1175,7 +1175,7 @@ export default function EditServicePage() {
         method: "PUT",
         body: formData,
         headers,
-        credentials: "include",
+        
       });
 
       if (!res.ok) {
@@ -1553,7 +1553,7 @@ export default function EditServicePage() {
         method,
         body: fd,
         headers: { Authorization: `Bearer ${token}` },
-        credentials: "include",
+        
       });
 
       if (!res.ok) {

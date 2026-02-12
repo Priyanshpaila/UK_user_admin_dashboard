@@ -64,19 +64,78 @@ function parseMaybeJsonObject(val: any): Record<string, any> | null {
   return null;
 }
 
+/** Parse single id / comma separated ids / array / mongo objects into a unique string[] */
+function parseIdList(val: any): string[] {
+  if (!val) return [];
+
+  if (Array.isArray(val)) {
+    return Array.from(
+      new Set(
+        val
+          .map((x) => extractId(x))
+          .map((s) => String(s).trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  if (typeof val === "string") {
+    const s = val.trim();
+    if (!s) return [];
+
+    // JSON array string
+    if (s.startsWith("[") && s.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(s);
+        return parseIdList(parsed);
+      } catch {
+        // fallthrough
+      }
+    }
+
+    return Array.from(
+      new Set(
+        s
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
+  const single = extractId(val);
+  return single ? [single] : [];
+}
+
+/** Always take SKU from first line item (fallback to items[0]) */
+function getPrimarySkuFromOrder(order: any): string {
+  const meta = order?.meta || {};
+  const skuFromLines = meta?.lines?.[0]?.sku;
+  if (skuFromLines) return String(skuFromLines);
+
+  const skuFromItems = meta?.items?.[0]?.sku;
+  if (skuFromItems) return String(skuFromItems);
+
+  return "";
+}
+
+function normSlug(s: any): string {
+  return String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/_+/g, "-");
+}
+
 /**
- * Find Pharmacist Advice form id from a Service document's form assignments.
- *
- * Your DB example:
- *  forms_assignment: "{\"raf\":\"...\",\"advice\":\"...\",\"pharmacist_declaration\":\"...\"}"
- *
- * So we:
- *  1) parse forms_assignment if it's JSON string
- *  2) read advice key from that map
- *  3) fallback to other shapes (arrays / other maps)
+ * Find Pharmacist Advice form id(s) from a Service document's form assignments.
+ * Supports:
+ *  - single id
+ *  - comma separated ids (multiple forms)
+ *  - arrays / other shapes (kept compatible)
  */
-function pickAdviceFormIdFromService(service: any): string | null {
-  if (!service) return null;
+function pickAdviceFormIdsFromService(service: any): string[] {
+  if (!service) return [];
 
   // ✅ 0) Your actual field: forms_assignment (often JSON string)
   const directMapsToTry = [
@@ -96,7 +155,6 @@ function pickAdviceFormIdFromService(service: any): string | null {
     const m = parseMaybeJsonObject(candidate);
     if (!m) continue;
 
-    // keys your system uses
     const keysToTry = [
       "advice",
       "pharmacist_advice",
@@ -108,8 +166,8 @@ function pickAdviceFormIdFromService(service: any): string | null {
     ];
 
     for (const k of keysToTry) {
-      const id = extractId((m as any)[k]);
-      if (id) return id;
+      const ids = parseIdList((m as any)[k]);
+      if (ids.length) return ids;
     }
   }
 
@@ -169,7 +227,7 @@ function pickAdviceFormIdFromService(service: any): string | null {
       if (!isWanted) continue;
 
       const id = readRowId(row);
-      if (id) return id;
+      if (id) return [id];
     }
   }
 
@@ -200,12 +258,12 @@ function pickAdviceFormIdFromService(service: any): string | null {
     ];
 
     for (const k of keysToTry) {
-      const id = extractId((mm as any)[k]);
-      if (id) return id;
+      const ids = parseIdList((mm as any)[k]);
+      if (ids.length) return ids;
     }
   }
 
-  return null;
+  return [];
 }
 
 /**
@@ -384,17 +442,17 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
           service = await fetchServiceBySlugFallback(effectiveSlug);
         }
 
-        // ✅ assigned form id from service.forms_assignment JSON string
-        let assignedAdviceFormId = pickAdviceFormIdFromService(service);
+        // ✅ advice can be single id OR comma-separated multiple ids
+        const adviceIds = pickAdviceFormIdsFromService(service);
 
-        // (optional safety fallback) if service has no assignment, fallback to old logic
-        // to avoid blocking consultation UI completely
         const res = await getClinicFormsApi();
         const forms: ClinicForm[] = Array.isArray(res)
           ? res
           : (res?.data as ClinicForm[]) || [];
 
-        if (!assignedAdviceFormId) {
+        let assignedForm: ClinicForm | null = null;
+
+        if (!adviceIds.length) {
           // fallback: match by service_id + form_type
           const fallback =
             forms.find((f: any) => {
@@ -420,13 +478,42 @@ export default function PharmacistAdviceTab({ orderId, serviceId }: Props) {
             return;
           }
 
-          // if fallback found, use it
-          assignedAdviceFormId = extractId((fallback as any)._id);
-        }
+          const assignedAdviceFormId = extractId((fallback as any)._id);
+          assignedForm =
+            forms.find((f: any) => extractId(f?._id) === assignedAdviceFormId) ||
+            null;
+        } else {
+          // resolve assigned forms in the SAME order as adviceIds
+          const byId = new Map<string, ClinicForm>();
+          forms.forEach((f: any) => byId.set(extractId(f?._id), f));
 
-        const assignedForm =
-          forms.find((f: any) => extractId(f?._id) === assignedAdviceFormId) ||
-          null;
+          const assignedFormsInOrder: ClinicForm[] = adviceIds
+            .map((id) => byId.get(id))
+            .filter((x): x is ClinicForm => !!x);
+
+          if (!assignedFormsInOrder.length) {
+            if (!cancelled) {
+              setForm(null);
+              setError("Assigned Pharmacist Advice form(s) not found (or deleted).");
+            }
+            return;
+          }
+
+          if (assignedFormsInOrder.length === 1) {
+            assignedForm = assignedFormsInOrder[0];
+          } else {
+            // ✅ multiple advice forms: use SKU from order.meta.lines[0].sku and match treatment_slug
+            const sku = getPrimarySkuFromOrder(order);
+            const skuNorm = normSlug(sku);
+
+            assignedForm =
+              assignedFormsInOrder.find((f: any) => {
+                const tslug =
+                  (f as any).treatment_slug ?? (f as any).treatmentSlug ?? "";
+                return skuNorm && normSlug(tslug) === skuNorm;
+              }) || assignedFormsInOrder[0]; // fallback: first id in assignment
+          }
+        }
 
         if (!assignedForm) {
           if (!cancelled) {
